@@ -1,17 +1,17 @@
+import Utilities.Key as Key
+import brother_ql
+from brother_ql.raster import BrotherQLRaster
+from brother_ql.backends.helpers import send
 from PIL import Image, ImageDraw, ImageFont
 from barcode import Code128
 from barcode.writer import ImageWriter
 import requests
 import json
-import brother_ql
-from brother_ql.raster import BrotherQLRaster
-from brother_ql.backends.helpers import send
 import os
-import Key
 
 
 # API URL of Snipe-IT Server -- this one includes the specific API call of listing hardware info by asset tag
-url =  Key.API_URL_Base + "hardware/bytag/"
+url = Key.API_URL_Base + "hardware/bytag/"
 
 # API Key which can be created in your SnipeIT Account, place it inbetween quotes as one line
 # REF: https://snipe-it.readme.io/reference/generating-api-tokens

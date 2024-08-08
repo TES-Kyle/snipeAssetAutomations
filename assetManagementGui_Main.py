@@ -1,9 +1,10 @@
-import os.path
+from Utilities.labelPrinting import sendToPrinter
+from Utilities.otherApiBits import getAssetInfo
+from assetManagementFunctionsRouting import func_list, func_listTXT
 import tkinter as tk
 from tkinter import messagebox
+import os.path
 import re
-from assetManagementFunctions import func_list, getAssetInfo, func_listTXT
-from labelPrinting import sendToPrinter
 
 
 def reprint():
