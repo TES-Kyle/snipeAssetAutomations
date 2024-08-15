@@ -11,7 +11,7 @@ import os
 def sendToPrinter(path):
     settings = json.loads(open(str(os.path.dirname(os.path.realpath(__file__)))+"/settings.json").read())
     filename = path
-    printer = BrotherQLRaster(settings["printer"])
+    printer = BrotherQLRaster(settings["printerType"])
     print_data = brother_ql.brother_ql_create.convert(printer, [filename], settings["labelName"])
     for i in range(int(settings["labelsPerPrint"])):
         send(print_data, settings["printerIP"])
