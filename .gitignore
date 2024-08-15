@@ -5,3 +5,4 @@ __pycache__/
 Vent/
 .DS_Store
 .idea/
+Utilities/settings.json

@@ -1,13 +1,14 @@
 from Utilities.labelPrinting import sendToPrinter
 from Utilities.otherApiBits import getAssetInfo
+from Utilities.settings import settingsMenu
 from assetManagementFunctionsRouting import func_list, func_listTXT
 import tkinter as tk
 from tkinter import messagebox
-import os.path
+import os
 import re
 
 
-def reprint():
+def labelPrint():
     if os.path.isfile(str(os.path.dirname(os.path.realpath(__file__))) + "/" + "barcode-label.jpg"):
         sendToPrinter(str(os.path.dirname(os.path.realpath(__file__))) + "/" + "barcode-label.jpg")
 
@@ -31,7 +32,7 @@ class MainApp:
         button_frame.pack(padx=10, pady=20, anchor='center')
         self.enter_button = tk.Button(button_frame, text="Enter", command=self.process_asset, font=('Arial', 20))
         self.enter_button.pack(side='left', padx=20, pady=20)
-        self.reprint_button = tk.Button(button_frame, text="Re-Print Last", command=reprint, font=('Arial', 20))
+        self.reprint_button = tk.Button(button_frame, text="Print Label", command=labelPrint, font=('Arial', 20))
         self.reprint_button.pack(side='left', padx=20, pady=20)
 
         func_frame = tk.LabelFrame(main_frame, text='Functions', font=('Arial', 20))  # LabelFrame to have a box around
@@ -51,6 +52,11 @@ class MainApp:
         self.result_text = tk.StringVar()
         self.result_label = tk.Label(main_frame, textvariable=self.result_text, font=('Arial', 20))
         self.result_label.pack(pady=20)
+
+        settings_frame = tk.Frame(rootWindow)
+        settings_frame.place(relx=1.0, rely=0.0, anchor='ne')
+        self.settings_button = tk.Button(settings_frame, text="⚙️", command=settingsMenu, font=('Arial', 20))
+        self.settings_button.pack(padx=20, pady=20)
 
     def clear_radiobuttons(self):
         self.func_var.set(-1)
