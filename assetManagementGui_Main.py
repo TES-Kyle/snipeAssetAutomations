@@ -9,8 +9,8 @@ import re
 
 
 def labelPrint():
-    if os.path.isfile(str(os.path.dirname(os.path.realpath(__file__))) + "Utilities/" + "barcode-label.jpg"):
-        sendToPrinter(str(os.path.dirname(os.path.realpath(__file__))) + "Utilities/" + "barcode-label.jpg")
+    if os.path.isfile(str(os.path.dirname(os.path.realpath(__file__))) + "Utilities/barcode-label.jpg"):
+        sendToPrinter(str(os.path.dirname(os.path.realpath(__file__))) + "Utilities/barcode-label.jpg")
 
 
 class MainApp:
