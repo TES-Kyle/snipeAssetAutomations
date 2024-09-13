@@ -84,7 +84,7 @@ def backFromApple(asset_tag):
     except (KeyError, IndexError):
         notes = ""
 
-    fault = "At Fault: Yes" in notes
+    fault = "At Fault: Yes" in (notes or "")
     charge_frame = tk.Frame(repair_window)
     charge_frame.pack(fill='x', padx=10, pady=5)
 
