@@ -69,7 +69,7 @@ def createImage(values):
 
     # Save the image as JPEG
     image = image.rotate(-90, expand=True)
-    image.save(str(os.path.dirname(os.path.realpath(__file__))) + "/" + "barcode-label.jpg", "JPEG")
+    image.save(str(os.path.dirname(os.path.dirname((os.path.realpath(__file__))))) + "/barcode-label.jpg", "JPEG")
 
 
 def get_font_path():
