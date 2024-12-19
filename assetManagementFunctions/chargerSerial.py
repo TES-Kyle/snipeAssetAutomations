@@ -13,14 +13,13 @@ from Utilities import Key  # Import credentials from the key.py file
 JAMF_URL = "https://trinityes.jamfcloud.com"  # No trailing slash
 jamfURL = "trinityes.jamfcloud.com"
 
-BEARER_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJhdXRoZW50aWNhdGVkLWFwcCI6IkdFTkVSSUMiLCJhdXRoZW50aWNhdGlvbi10eXBlIjoiTERBUCIsImdyb3VwcyI6W10sInN1YmplY3QtdHlwZSI6IkpTU19VU0VSX0lEIiwidG9rZW4tdXVpZCI6IjIzNzA4YTc0LWVlZjYtNDE4ZS05MGU2LTIwZWFlMGEyNTM3YiIsImxkYXAtc2VydmVyLWlkIjotMSwic3ViIjoiMTEiLCJleHAiOjE3MzQ1MzQzOTZ9.bWE2u5os8P3FIYYWYn_m8P_xfKTN-4_FoZKFOPHtQMk"  # Ideally, fetch from environment or use a token generation process
 
 # The extension attribute that holds charger serial info
 CHARGER_EA_NAME = "chargerSerial"
 
 # The charger serial number we are looking for
 #TARGET_CHARGER_SERIAL = "C4H31930BPBLV74AQ"  # Example from your snippet
-assetTag = "6245"
+#assetTag = "6245"
 
 
 def get_computer_inventory_results():
