@@ -1,38 +1,27 @@
-import requests
-import json
 import os
+import json
 from datetime import datetime
-from Utilities.otherApiBits import getAssetInfoSerialAssignedTo
-from Utilities.otherApiBits import getAssetInfo
+import tkinter as tk
+from tkinter import ttk
 from jamf_pro_sdk import JamfProClient, SessionConfig
 from jamf_pro_sdk.clients.auth import ApiClientCredentialsProvider
 from jamf_pro_sdk.clients.pro_api.pagination import FilterField, SortField
-from Utilities import Key  # Import credentials from the key.py file
+from Utilities.otherApiBits import getAssetInfoSerialAssignedTo, getAssetInfo
+from Utilities import Key
 
-# Configuration - replace these with your own details
 JAMF_URL = "https://trinityes.jamfcloud.com"  # No trailing slash
 jamfURL = "trinityes.jamfcloud.com"
 
-
-# The extension attribute that holds charger serial info
 CHARGER_EA_NAME = "chargerSerial"
-
-# The charger serial number we are looking for
-#TARGET_CHARGER_SERIAL = "C4H31930BPBLV74AQ"  # Example from your snippet
-#assetTag = "6245"
-
 
 def get_computer_inventory_results():
     """
     Fetches a set of computer inventory records from Jamf Pro using the Jamf Pro SDK.
-    Adjust pagination parameters if needed.
     """
     jamfClient = JamfProClient(
         server=jamfURL,
         credentials=ApiClientCredentialsProvider(Key.jamfClientID, Key.jamfClientSecret),
-        session_config=SessionConfig(
-            **{"timeout": 30, "max_retries": 5, "max_concurrency": 25}
-        ),
+        session_config=SessionConfig(timeout=30, max_retries=5, max_concurrency=25),
     )
 
     response = jamfClient.pro_api.get_computer_inventory_v1(
@@ -40,10 +29,8 @@ def get_computer_inventory_results():
         page_size=700,  # Adjust as needed
         sort_expression=SortField("general.name").asc()
     )
-
-    # response.results should now be a list of Computer objects
+    # response is a list of Computer objects
     return response
-
 
 def parse_charger_info(values_str):
     entries = []
@@ -76,24 +63,19 @@ def parse_charger_info(values_str):
         entries.append((dt, charger_serial))
     return entries
 
-
 def chargerSerial(assetTag):
+    # This function now returns the formatted result string instead of printing directly
     computers = get_computer_inventory_results()
-
-    junk, assetInfo = getAssetInfo(assetTag)
+    _, assetInfo = getAssetInfo(assetTag)
     TARGET_CHARGER_SERIAL = assetInfo["serial"]
-    print(f"Charger Serial = {TARGET_CHARGER_SERIAL}")
 
     charger_matches = []
     for comp in computers:
         hardware = comp.hardware
-        #print(f"{hardware}")
         if not hardware:
             continue
         comp_serial = hardware.serialNumber or "UNKNOWN"
-        #print(f"{comp_serial}")
         
-        # hardware.extension_attributes is a list of ComputerExtensionAttribute objects
         if hardware.extensionAttributes:
             for ea in hardware.extensionAttributes:
                 if ea.name == CHARGER_EA_NAME:
@@ -110,9 +92,36 @@ def chargerSerial(assetTag):
     # Sort by datetime descending
     charger_matches.sort(key=lambda x: x[0], reverse=True)
 
-    # Print the 5 most recent matches
-    print(f"5 Most Recent Uses of Charger {TARGET_CHARGER_SERIAL}:")
+    # Build a result string
+    result_str = f"5 Most Recent Uses of Charger {TARGET_CHARGER_SERIAL}:\n\n"
     for dt, dev_serial, assigned in charger_matches[:5]:
-        print(f"{dt} - Device Serial: {dev_serial} - Assigned To: {assigned}")
-    
-    return f"Running Check Charger on {assetTag}"
+        result_str += f"{dt} - Device Serial: {dev_serial} - Assigned To: {assigned}\n"
+
+    if not charger_matches:
+        result_str += "No recent uses found."
+
+    return result_str
+
+def show_charger_results_tk(assetTag):
+    # Create a new window (Toplevel) so it doesn't block the main window
+    top = tk.Toplevel()
+    top.title("Charger Usage Results")
+
+    # Get the charger usage info
+    results = chargerSerial(assetTag)
+
+    # Use a Text widget to display results
+    text_widget = tk.Text(top, wrap="word", width=80, height=20)
+    text_widget.insert("1.0", results)
+    text_widget.config(state="disabled")  # make read-only
+    text_widget.pack(padx=10, pady=10)
+
+    # Optionally add a close button
+    close_button = ttk.Button(top, text="Close", command=top.destroy)
+    close_button.pack(pady=5)
+
+    # The user can also close the window using the window's close button
+
+# Example usage:
+# Suppose this is triggered by another tkinter window passing an assetTag:
+# show_charger_results_tk("6245")
