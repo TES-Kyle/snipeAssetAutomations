@@ -66,3 +66,19 @@ def getAssetInfo(assetTag):
         var_list.append(("Box Number", assetData["custom_fields"]["Box Number"]["value"]))
 
     return var_list, assetData
+
+def getAssetInfoSerialAssignedTo(serialNum):
+    url = Key.API_URL_Base + "hardware/byserial/"
+    response = requests.get(url + serialNum, headers=headers)
+    assetData = json.loads(response.text)
+    
+    # Safely navigate through the nested structure
+    rows = assetData.get("rows")
+    if rows and len(rows) > 0:
+        assigned_to = rows[0].get("assigned_to")
+        if assigned_to and "name" in assigned_to:
+            return assigned_to["name"]
+    
+    # If we get here, it means something wasn't present
+    return None
+
