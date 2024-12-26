@@ -6,3 +6,5 @@ Vent/
 .DS_Store
 .idea/
 Utilities/settings.json
+venv/
+.venv/
