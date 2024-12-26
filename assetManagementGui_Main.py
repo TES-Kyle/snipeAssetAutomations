@@ -107,7 +107,7 @@ class SecondWindow:
         self.button_frame = tk.Frame(self.top)
         self.button_frame.pack(side="bottom", fill="both")
 
-        for i in range(len(func_list)):
+        for i in range(len(func_listTXT)):
             row, col = divmod(i, 4)
             button = tk.Button(self.button_frame, text=func_listTXT[i],
                                command=lambda j=i: self.run_func(j, asset_tag), height=2)

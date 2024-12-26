@@ -95,7 +95,7 @@ def chargerSerial(assetTag):
     # Build a result string
     result_str = f"5 Most Recent Uses of Charger {TARGET_CHARGER_SERIAL}:\n\n"
     for dt, dev_serial, assigned in charger_matches[:5]:
-        result_str += f"{dt} - Device Serial: {dev_serial} - Assigned To: {assigned}\n"
+        result_str += f"{dt} - Device Serial: {dev_serial} - Last Used By: {assigned}\n"
 
     if not charger_matches:
         result_str += "No recent uses found."
