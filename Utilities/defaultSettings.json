@@ -4,5 +4,6 @@
   "labelHeight": "696",
   "labelWidth": "1200",
   "labelName": "62",
-  "printerType": "QL-720NW"
+  "printerType": "QL-720NW",
+  "Default Print (BOOL)": "1"
 }
