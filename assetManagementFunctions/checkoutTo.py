@@ -58,6 +58,14 @@ def checkoutTo(asset_tag):
             return f"Asset {asset_number.get()}  successfully checked out to {userID}"
 
     def fetch_users(query):
+        """
+        Fetch a list of users based on a search query.
+        Args:
+            query (str): The search query to filter users.
+        Returns:
+            dict: A dictionary where the keys are user names and the values are user IDs.
+                  Returns an empty dictionary if the request fails or no users are found.
+        """
         response = requests.get(url + f"/users?search={query}&limit=5", headers=headers)
 
         if response.status_code != 200:

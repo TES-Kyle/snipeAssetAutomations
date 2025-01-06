@@ -16,6 +16,15 @@ def makeCharger(asset_tag):
     ignore_name = False
 
     def get_charger_serial_number():
+        """
+        Retrieves the serial number of the charger on macOS systems.
+        This function uses the `system_profiler` command to fetch the charger information
+        and extracts the serial number from the output.
+        Returns:
+            str: The serial number of the charger if found, otherwise an empty string.
+        Raises:
+            OSError: If the operating system is not macOS (Darwin).
+        """
         os_type = platform.system()
 
         if os_type == "Darwin":  # macOS
@@ -39,6 +48,14 @@ def makeCharger(asset_tag):
         submit()
 
     def submit():
+        """
+        Handles the submission process for creating a new charger asset.
+        This function retrieves asset information, validates input fields, constructs a payload for the asset,
+        and sends a POST request to create the asset. If the asset already exists, it shows an error message.
+        If the asset is successfully created, it optionally checks out the asset to a user and updates the UI.
+        Returns:
+            str: A message indicating the result of the function, or None if the process is successful.
+        """
         var_list, assetData = getAssetInfo(asset_number.get())
         try:
             exists = assetData['messages'] != 'Asset does not exist.'

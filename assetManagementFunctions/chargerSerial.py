@@ -33,6 +33,19 @@ def get_computer_inventory_results():
     return response
 
 def parse_charger_info(values_str):
+    """
+    Parses a string containing charger information and returns a list of tuples with datetime objects and charger serial numbers.
+    Args:
+        values_str (str): A string containing charger information with each entry on a new line. Each line should contain a date/time string followed by a charger serial number.
+    Returns:
+        list of tuples: A list where each tuple contains a datetime object and a charger serial number.
+    Example:
+        Input:
+            "Mon Jan 1 12:34:56 2023 ABC123\nTue Feb 2 23:45:01 2023 XYZ789"
+        Output:
+            [(datetime.datetime(2023, 1, 1, 12, 34, 56), 'ABC123'), 
+             (datetime.datetime(2023, 2, 2, 23, 45, 1), 'XYZ789')]
+    """
     entries = []
     lines = values_str.split('\n')
     for line in lines:
@@ -64,6 +77,15 @@ def parse_charger_info(values_str):
     return entries
 
 def chargerSerial(assetTag):
+    """
+    Retrieves and formats the 5 most recent uses of a charger based on the given asset tag.
+    Args:
+        assetTag (str): The asset tag of the charger to look up.
+    Returns:
+        str: A formatted string listing the 5 most recent uses of the charger, including the date/time,
+             device serial number, and the user assigned to the device. If no recent uses are found,
+             a message indicating this is included in the result.
+    """
     # This function now returns the formatted result string instead of printing directly
     computers = get_computer_inventory_results()
     _, assetInfo = getAssetInfo(assetTag)
@@ -103,6 +125,17 @@ def chargerSerial(assetTag):
     return result_str
 
 def show_charger_results_tk(assetTag):
+    """
+    Display charger usage results in a new Tkinter window.
+    This function creates a new Toplevel window to display the charger usage
+    results for a given asset tag. The results are fetched using the 
+    `chargerSerial` function and displayed in a read-only Text widget. 
+    A close button is also provided to close the window.
+    Parameters:
+    assetTag (str): The asset tag for which to fetch and display charger usage results.
+    Returns:
+    None
+    """
     # Create a new window (Toplevel) so it doesn't block the main window
     top = tk.Toplevel()
     top.title("Charger Usage Results")

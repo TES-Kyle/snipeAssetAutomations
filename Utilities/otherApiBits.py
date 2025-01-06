@@ -16,6 +16,19 @@ headers = {
 
 
 def getAssetInfo(assetTag):
+    """
+    Retrieves asset information from the Snipe-IT server based on the provided asset tag.
+    Args:
+        assetTag (str): The asset tag of the hardware to retrieve information for.
+    Returns:
+        tuple: A tuple containing:
+            - var_list (list): A list of tuples with asset information in the format (key, value).
+            - assetData (dict): The raw JSON response from the API containing detailed asset information.
+    Notes:
+        - The function makes an API request to the Snipe-IT server to retrieve hardware information.
+        - The response is parsed and specific fields are extracted and added to var_list.
+        - The function checks for the presence of various fields in the response and handles missing fields appropriately.
+    """
     # API URL of Snipe-IT Server -- this one includes the specific API call of listing hardware info by asset tag
     url = Key.API_URL_Base + "hardware/bytag/"
 

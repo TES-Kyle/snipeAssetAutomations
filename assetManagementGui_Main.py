@@ -9,12 +9,36 @@ import re
 
 
 def labelPrint():
+    """
+    Checks if a barcode label image file exists in the same directory as the script.
+    If the file exists, it sends the image to the printer.
+
+    The barcode label image file is expected to be named 'barcode-label.jpg'.
+
+    Returns:
+        None
+    """
     if os.path.isfile(os.path.join(os.path.dirname(os.path.realpath(__file__)), "barcode-label.jpg")):
         sendToPrinter(os.path.join(os.path.dirname(os.path.realpath(__file__)), "barcode-label.jpg"))
 
 
 class MainApp:
     def __init__(self, rootWindow):
+        """
+        Initializes the AssetManagementGui_Main class.
+        Args:
+            rootWindow (tk.Tk): The root window of the Tkinter application.
+        Attributes:
+            root (tk.Tk): The root window of the Tkinter application.
+            asset_entry (tk.Entry): Entry widget for asset input.
+            enter_button (tk.Button): Button to process the asset input.
+            reprint_button (tk.Button): Button to print the label.
+            func_var (tk.IntVar): Variable to store the selected function.
+            clear_button (tk.Button): Button to clear the selected radiobuttons.
+            result_text (tk.StringVar): Variable to store the result text.
+            result_label (tk.Label): Label to display the result text.
+            settings_button (tk.Button): Button to open the settings menu.
+        """
         self.root = rootWindow
         self.root.title("Asset Management Gui")
         self.root.state('zoomed')  # This line makes the window fullscreen
@@ -62,6 +86,23 @@ class MainApp:
         self.func_var.set(-1)
 
     def process_asset(self, event=None):
+        """
+        Processes the asset based on the input from the asset entry field.
+
+        Args:
+            event (optional): The event that triggered the function call. Defaults to None.
+
+        Functionality:
+            - Retrieves the asset tag from the asset entry field.
+            - Clears the asset entry field.
+            - Checks if the asset tag is a 4-digit number.
+            - If the asset tag is valid and a function is selected, calls the selected function with the asset tag and sets the result.
+            - If no function is selected, opens a second window with the asset tag.
+            - If the asset tag is invalid, shows an error message.
+
+        Raises:
+            messagebox.showerror: If the asset tag is not a 4-digit number.
+        """
         asset_tag = self.asset_entry.get()
         self.asset_entry.delete(0, tk.END)
         if re.match("^\d{4}$", asset_tag):
@@ -75,6 +116,25 @@ class MainApp:
 
 
 class SecondWindow:
+    """
+    A class to create a secondary window for asset management GUI.
+    Attributes:
+    -----------
+    top : tk.Toplevel
+        The top-level window for the secondary window.
+    check_vars : list
+        A list to store checkbutton variables.
+    var_frame : tk.Frame
+        A frame to hold the variables.
+    button_frame : tk.Frame
+        A frame to hold the buttons.
+    Methods:
+    --------
+    __init__(parent, asset_tag):
+        Initializes the secondary window with asset information and buttons.
+    run_func(func_index, asset_tag):
+        Executes a function from func_list based on the selected checkbutton variables.
+    """
     def __init__(self, parent, asset_tag):
         self.top = tk.Toplevel(parent)
         self.top.title("Asset Management Gui")
