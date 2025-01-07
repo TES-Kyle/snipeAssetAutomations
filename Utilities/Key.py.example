@@ -1,3 +1,4 @@
+"""
 API_Key = ""
 tech_email_info = [“EMAIL ADDRESS, “PASSWORD”]
 operations_email = “EMAIL ADDRESS”
@@ -7,3 +8,4 @@ API_URL_Base = "https://ASSET API”
 jamfClientID = “CLIENTID”
 jamfClientSecret = “CLIENTSECRET”
 testEmail = “TEST EMAIL”
+"""
