@@ -39,6 +39,8 @@ def getAssetInfo(assetTag):
     # Returns the parsed JSON data back to where the function was called
     var_list = []
 
+    print(f"Asset Data: {assetData}")
+
     if "asset_tag" in assetData:
         var_list.append(("Asset Tag", assetData["asset_tag"]))
     else:

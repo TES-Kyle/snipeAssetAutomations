@@ -5,7 +5,10 @@ from tkcalendar import DateEntry
 from tkinter import messagebox
 import requests
 from assetManagementFunctions.checkIn import checkIn
+import threading
 
+debounce_timer = None
+user_cache = {}
 
 def checkoutTo(asset_tag):
     url = "https://trinityes.snipe-it.io/api/v1"
@@ -76,13 +79,30 @@ def checkoutTo(asset_tag):
         return users
 
     def update_user_list(event):
+        global debounce_timer
         query = checkout_to_var.get()
+
+        if debounce_timer:
+            debounce_timer.cancel()
+
         if len(query) < 1:
             return
 
-        users = fetch_users(query)
-        if users:
-            user_combobox['values'] = list(users.keys())
+        debounce_timer = threading.Timer(0.3, lambda: fetch_users_async(query))
+        debounce_timer.start()
+
+    def fetch_users_async(query):
+        if query in user_cache:
+            user_combobox['values'] = list(user_cache[query].keys())
+            return
+
+        def fetch():
+            users = fetch_users(query)
+            if users:
+                user_cache[query] = users
+                user_combobox['values'] = list(users.keys())
+
+        threading.Thread(target=fetch).start()
 
     def fetch_statuses(filter_str=None):
 

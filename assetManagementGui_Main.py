@@ -49,6 +49,7 @@ class MainApp:
         self.asset_entry = tk.Entry(main_frame, font=('Arial', 20), width=30)
         self.asset_entry.pack(pady=20)
         self.asset_entry.bind('<Return>', self.process_asset)
+        self.asset_entry.bind('<KP_Enter>', self.process_asset)  # Bind keypad Enter key
         self.asset_entry.focus_set()
 
         button_frame = tk.Frame(main_frame)
