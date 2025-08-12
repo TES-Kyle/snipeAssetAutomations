@@ -106,14 +106,14 @@ class MainApp:
         """
         asset_tag = self.asset_entry.get()
         self.asset_entry.delete(0, tk.END)
-        if re.match("^\d{4}$", asset_tag):
+        if re.match(r"^\d{4,5}$", asset_tag):
             if self.func_var.get() != -1:
                 result = func_list[self.func_var.get()](asset_tag)
                 self.result_text.set(result)
             else:
                 SecondWindow(self.root, asset_tag)
         else:
-            messagebox.showerror("Error", "Dumb dumb, only 4 digit numbers")
+            messagebox.showerror("Error", "Dumb dumb, only 4 or 5 digit numbers")
 
 
 class SecondWindow:
