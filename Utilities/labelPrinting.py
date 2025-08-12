@@ -2,7 +2,7 @@ import brother_ql
 from brother_ql.raster import BrotherQLRaster
 from brother_ql.backends.helpers import send
 from PIL import Image, ImageDraw, ImageFont
-from barcode import Code128
+from barcode.codex import Code128
 from barcode.writer import ImageWriter
 import json
 import os
