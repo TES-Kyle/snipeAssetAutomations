@@ -166,7 +166,7 @@ class SecondWindow:
         self.var_frame.grid_columnconfigure(2, weight=1)
 
         self.button_frame = tk.Frame(self.top)
-        self.button_frame.pack(side="bottom", fill="both")
+        self.button_frame.pack(side="top", fill="both")
 
         for i in range(len(func_listTXT)):
             row, col = divmod(i, 4)
@@ -174,8 +174,8 @@ class SecondWindow:
                                command=lambda j=i: self.run_func(j, asset_tag), height=2)
             button.grid(row=row, column=col, sticky='ew')
 
-        close_button = tk.Button(self.button_frame, text="Close", command=self.top.destroy)
-        close_button.grid(row=2, column=1, columnspan=2, sticky='ew')
+        close_button = tk.Button(self.top, text="Close", command=self.top.destroy, width=15)
+        close_button.pack(side="top", fill="none")
 
         # Update window size
         self.top.update()

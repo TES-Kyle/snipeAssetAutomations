@@ -13,8 +13,12 @@ def sendToPrinter(path):
     filename = path
     printer = BrotherQLRaster(settings["printerType"])
     print_data = brother_ql.brother_ql_create.convert(printer, [filename], settings["labelName"])
-    for i in range(int(settings["labelsPerPrint"])):
-        send(print_data, settings["printerIP"])
+    try:
+        for i in range(int(settings["labelsPerPrint"])):
+            send(print_data, settings["printerIP"])
+    except Exception as e:
+        print("Unable to print label. Error:", e)
+
 
 
 def createImage(values):

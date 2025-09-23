@@ -41,44 +41,47 @@ def getAssetInfo(assetTag):
 
     print(f"Asset Data: {assetData}")
 
-    if "asset_tag" in assetData:
-        var_list.append(("Asset Tag", assetData["asset_tag"]))
-    else:
-        var_list.append(("Asset Tag", "null"))
-    if "serial" in assetData:
+    # Asset Tag
+    var_list.append(("Asset Tag", assetData.get("asset_tag", "null")))
+
+    # Serial Number
+    if assetData.get("serial"):
         var_list.append(("Serial Number", assetData["serial"]))
-    if "name" in assetData:
+
+    # Asset Name
+    if assetData.get("name"):
         var_list.append(("Asset Name", assetData["name"]))
-    if "status_label" in assetData and "name" in assetData["status_label"]:
-        var_list.append(("Status", assetData["status_label"]["name"]))
-    if (
-            "custom_fields" in assetData
-            and "hingeWeak" in assetData["custom_fields"]
-            and "value" in assetData["custom_fields"]["hingeWeak"]
-            and len(assetData["custom_fields"]["hingeWeak"]["value"]) != 0
-    ):
-        var_list.append(("Hinge Weak?", assetData["custom_fields"]["hingeWeak"]["value"]))
-    if (
-            "custom_fields" in assetData
-            and "chargerInGoodCondition" in assetData["custom_fields"]
-            and "value" in assetData["custom_fields"]["chargerInGoodCondition"]
-            and len(assetData["custom_fields"]["chargerInGoodCondition"]["value"]) != 0
-    ):
-        var_list.append(("Charger in Good Condition?", assetData["custom_fields"]["chargerInGoodCondition"]["value"]))
-    if (
-            "custom_fields" in assetData
-            and "batteryData" in assetData["custom_fields"]
-            and "value" in assetData["custom_fields"]["batteryData"]
-            and len(assetData["custom_fields"]["batteryData"]["value"]) != 0
-    ):
-        var_list.append(("Battery Stats", assetData["custom_fields"]["batteryData"]["value"]))
-    if (
-            "custom_fields" in assetData
-            and "Box Number" in assetData["custom_fields"]
-            and "value" in assetData["custom_fields"]["Box Number"]
-            and len(assetData["custom_fields"]["Box Number"]["value"]) != 0
-    ):
-        var_list.append(("Box Number", assetData["custom_fields"]["Box Number"]["value"]))
+
+    # Status
+    status_label = assetData.get("status_label", {})
+    if status_label.get("name"):
+        var_list.append(("Status", status_label["name"]))
+
+    # Assigned To
+    assigned_to = assetData.get("assigned_to") or {}
+    if assigned_to.get("name"):
+        var_list.append(("Assigned to User", assigned_to["name"]))
+    if assigned_to.get("username"):
+        var_list.append(("Assigned to Email", assigned_to["username"]))
+
+    # Custom Fields
+    custom_fields = assetData.get("custom_fields", {})
+
+    hinge_weak = custom_fields.get("hingeWeak", {}).get("value")
+    if hinge_weak:
+        var_list.append(("Hinge Weak?", hinge_weak))
+
+    charger_good = custom_fields.get("chargerInGoodCondition", {}).get("value")
+    if charger_good:
+        var_list.append(("Charger in Good Condition?", charger_good))
+
+    battery_data = custom_fields.get("batteryData", {}).get("value")
+    if battery_data:
+        var_list.append(("Battery Stats", battery_data))
+
+    box_number = custom_fields.get("Box Number", {}).get("value")
+    if box_number:
+        var_list.append(("Box Number", box_number))
 
     return var_list, assetData
 
@@ -97,3 +100,17 @@ def getAssetInfoSerialAssignedTo(serialNum):
     # If we get here, it means something wasn't present
     return None
 
+def getLatestCheckinName(asset_id, email=False):
+    activity_url = Key.API_URL_Base + f'reports/activity?limit=1&offset=0&item_type=asset&item_id={asset_id}&action_type=checkin%20from&order=desc&sort=created_at'
+    activity_response = requests.get(activity_url, headers=headers)
+    activity_data = activity_response.json()
+    try:
+        if email:
+            user_url = Key.API_URL_Base + f"users/{activity_data['rows'][0]['target']['id']}"
+            user_response = requests.get(user_url, headers=headers)
+            user_data = user_response.json()
+            return user_data['username']
+        else:
+            return activity_data['rows'][0]['target']['name']
+    except (KeyError, IndexError):
+        return None

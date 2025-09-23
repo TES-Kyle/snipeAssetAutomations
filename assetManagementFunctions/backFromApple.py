@@ -1,41 +1,44 @@
 from Utilities.otherApiBits import *
-from Utilities.Key import tech_email_info as email_info, operations_email as fine_erEmail, support_email
+from Utilities.Key import *
 import tkinter as tk
 from tkinter import messagebox
-from datetime import date
-from email.message import EmailMessage
-import smtplib
+from datetime import date, timedelta
+from Utilities.messaging import message, ready_no_fine, ready_fine
 
 
 def sendFineEmail(name, charge, assetTag, divert=False):
     if name is not None and divert is False:
-        msg = EmailMessage()
-        msg.set_content(f"The following Student needs to be charged ${charge} for breaking their laptop:\n" + name)
-        msg['Subject'] = 'Laptop Repair Fine'
-        msg['From'] = email_info[0]
-        msg['To'] = fine_erEmail
+        content = f"The following Student needs to be charged ${charge} for breaking their laptop:\n" + name
+        message(content, operations_email, subject='Laptop Repair Fine')
     else:
-        msg = EmailMessage()
-        msg.set_content(f"Failed to find name for fine email.\nCharge: {charge}\nAsset Tag: {assetTag}")
-        msg['Subject'] = 'Laptop Repair Fine Email Failed'
-        msg['From'] = email_info[0]
-        msg['To'] = support_email
-
-    # Send the message via our own SMTP server.
-    s = smtplib.SMTP_SSL(host='smtp.gmail.com', port=465)
-    s.login(*email_info)
-    s.send_message(msg)
-    s.quit()
+        content = f"Failed to find name for fine email.\nCharge: {charge}\nAsset Tag: {assetTag}"
+        message(content, support_email, subject='Laptop Repair Fine Email Failed')
 
 
-def getLatestCheckinName(asset_id):
-    activity_url = Key.API_URL_Base + f'reports/activity?limit=1&offset=0&item_type=asset&item_id={asset_id}&action_type=checkin%20from&order=desc&sort=created_at'
-    activity_response = requests.get(activity_url, headers=headers)
-    activity_data = activity_response.json()
-    try:
-        return activity_data['rows'][0]['target']['name']
-    except (KeyError, IndexError):
-        return None
+def set_loan_checkin(email):
+    if email:
+        user_data = requests.get(Key.API_URL_Base + f"users?username= {email}", headers=headers).json()
+
+        if user_data['total'] == 1: #fix this
+            user_assets = requests.get(Key.API_URL_Base + f"users/{user_data['rows'][0]['id']}/assets", headers=headers).json()
+            asset_id = []
+            for row in user_assets['rows']:
+                if row['category']['id'] == 24 and row['status_label']['id'] == 31:
+                    asset_id.append(row['id'])
+
+            if len(asset_id) == 1:
+                payload = {
+                    "expected_checkin": (date.today() + timedelta(days=1)).isoformat()
+                }
+                res = requests.patch(Key.API_URL_Base + f"hardware/{asset_id[0]}", json=payload, headers=headers).json()
+                return True
+            else:
+                return False
+        else:
+            return False
+    else:
+        return False
+
 
 
 def backFromApple(asset_tag):
@@ -48,9 +51,36 @@ def backFromApple(asset_tag):
             print(f"D Number: {d_number}")
             print(f"Repair Notes: {repair_notes}")
             updateMaintenance(asset_tag, d_number, repair_notes, fault.get())
+            name = getLatestCheckinName(assetData["id"])
+
             if fault.get() and int(charge_entry.get().strip()) > 0:
-                name = getLatestCheckinName(assetData["id"])
                 sendFineEmail(name, int(charge_entry.get().strip()), asset_tag, divert=divert.get())
+
+            if "Send Emails: True" in notes:
+                subject ="Computer Ready for Pickup"
+                fine_email = ready_fine(name, int(charge_entry.get().strip()))
+                no_fine_email = ready_no_fine(name)
+
+                if fault.get() and (int(charge_entry.get().strip()) > 0):
+                    content = fine_email
+                else:
+                    content = no_fine_email
+
+                if  name is not None and divert.get() is False:
+                    recipient = getLatestCheckinName(assetData["id"], email=True)
+                else:
+                    recipient = support_email
+                    if name is None:
+                        subject = "Error name not found: " + subject
+                    if divert.get():
+                        subject = "Error email diverted: " + subject
+
+                message(content, recipient, subject=subject, text=("Text Student: True" in notes), parent=("Email Parent: True" in notes))
+
+            loan_checkin = set_loan_checkin(getLatestCheckinName(assetData["id"], email=True))
+            if not loan_checkin:
+                messagebox.showinfo("Warning", "Loan computer check-in date not set.")
+
             repair_window.destroy()  # Close the window after submitting
         else:
             messagebox.showerror("Error", "Dumb dumb, only numbers")
