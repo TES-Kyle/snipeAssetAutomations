@@ -169,8 +169,3 @@ Thank you for your attention.
 Sincerely,
 Trinity Episcopal School IT Department
 """
-
-
-if __name__ == '__main__':
-    #message("Hello Kyle,\nThis should (at least theoretically) be a better test with HTML formatting!\nAlthough the images dont exist for it just yet.", "johnlockwood@contractor.trinityes.org", subject="Better Test")
-    print(get_parents('brandonadair@trinityes.org'))
