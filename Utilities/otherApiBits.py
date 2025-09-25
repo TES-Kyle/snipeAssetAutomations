@@ -100,12 +100,17 @@ def getAssetInfoSerialAssignedTo(serialNum):
     # If we get here, it means something wasn't present
     return None
 
-def getLatestCheckinName(asset_id, email=False):
+def getLatestCheckinName(asset_id, email=False, username=False):
     activity_url = Key.API_URL_Base + f'reports/activity?limit=1&offset=0&item_type=asset&item_id={asset_id}&action_type=checkin%20from&order=desc&sort=created_at'
     activity_response = requests.get(activity_url, headers=headers)
     activity_data = activity_response.json()
     try:
         if email:
+            user_url = Key.API_URL_Base + f"users/{activity_data['rows'][0]['target']['id']}"
+            user_response = requests.get(user_url, headers=headers)
+            user_data = user_response.json()
+            return user_data['email']
+        elif username:
             user_url = Key.API_URL_Base + f"users/{activity_data['rows'][0]['target']['id']}"
             user_response = requests.get(user_url, headers=headers)
             user_data = user_response.json()

@@ -131,17 +131,17 @@ def newRepair(asset_tag):
         issue_description += " Text Student: " + str(text_var.get())
         issue_description += " Email Parent: " + str(parent_var.get())
 
-        if email_var.get() and assetData.get("assigned_to", {}).get("username"):
+        if email_var.get() and assetData.get("assigned_to", {}).get("email"):
             full_name = assetData["assigned_to"]["name"]
 
-            if remove_fine_warning(assetData["assigned_to"]["username"]):
+            if remove_fine_warning(assetData["assigned_to"]["email"]):
                 content = repair_notice_no_fine(full_name)
                 issue_description += " Remove Charge: True"
             else:
                 content = repair_notice(full_name)
 
             subject = "Repair Notice"
-            recipient = assetData["assigned_to"]["username"]
+            recipient = assetData["assigned_to"]["email"]
 
             if not is_email(recipient):
                 subject = "Error email not valid: " + subject

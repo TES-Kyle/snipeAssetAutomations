@@ -15,9 +15,9 @@ def sendFineEmail(name, charge, assetTag, divert=False):
         message(content, support_email, subject='Laptop Repair Fine Email Failed')
 
 
-def set_loan_checkin(email):
-    if email:
-        user_data = requests.get(Key.API_URL_Base + f"users?username= {email}", headers=headers).json()
+def set_loan_checkin(username):
+    if username:
+        user_data = requests.get(Key.API_URL_Base + f"users?username= {username}", headers=headers).json()
 
         if user_data['total'] == 1: #fix this
             user_assets = requests.get(Key.API_URL_Base + f"users/{user_data['rows'][0]['id']}/assets", headers=headers).json()
@@ -53,6 +53,7 @@ def backFromApple(asset_tag):
             updateMaintenance(asset_tag, d_number, repair_notes, fault.get())
             name = getLatestCheckinName(assetData["id"])
             email = getLatestCheckinName(assetData["id"], email=True)
+            username = getLatestCheckinName(assetData["id"], username=True)
             charge = int(charge_entry.get().strip())
 
             if fault.get() and charge > 0:
@@ -82,7 +83,7 @@ def backFromApple(asset_tag):
 
                 message(content, recipient, subject=subject, text=("Text Student: True" in notes), parent=("Email Parent: True" in notes))
 
-            loan_checkin = set_loan_checkin(email)
+            loan_checkin = set_loan_checkin(username)
             if not loan_checkin:
                 messagebox.showinfo("Warning", "Loan computer check-in date not set.")
 
