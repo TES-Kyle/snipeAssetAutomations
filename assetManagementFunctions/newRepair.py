@@ -141,7 +141,15 @@ def newRepair(asset_tag):
                 content = repair_notice(full_name)
 
             subject = "Repair Notice"
-            message(content, assetData["assigned_to"]["username"], subject=subject, text=text_var.get(), parent=parent_var.get())
+            recipient = assetData["assigned_to"]["username"]
+
+            if not is_email(recipient):
+                subject = "Error email not valid: " + subject
+                recipient = support_email
+
+            message(content, recipient, subject=subject, text=text_var.get(), parent=parent_var.get())
+
+
 
         today = str(date.today())
         payload1 = {

@@ -199,3 +199,10 @@ def remove_fine_warning(student_email):
                 return messagebox.askyesno("Warning", f"This repair is emailing {email}, which matches warning pattern {pattern}, would you like to remove this fine?")
 
     return False
+
+def is_email(email):
+    email = str(email)
+    if re.match(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", email):
+        return True
+    else:
+        return False

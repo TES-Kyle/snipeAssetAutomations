@@ -69,7 +69,7 @@ def backFromApple(asset_tag):
                 else:
                     content = ready_no_fine(name)
 
-                if  name is not None and divert.get() is False:
+                if  name is not None and divert.get() is False and is_email(email):
                     recipient = email
                 else:
                     recipient = support_email
@@ -77,6 +77,8 @@ def backFromApple(asset_tag):
                         subject = "Error name not found: " + subject
                     if divert.get():
                         subject = "Error email diverted: " + subject
+                    if not is_email(email):
+                        subject = "Error email not valid: " + subject
 
                 message(content, recipient, subject=subject, text=("Text Student: True" in notes), parent=("Email Parent: True" in notes))
 
