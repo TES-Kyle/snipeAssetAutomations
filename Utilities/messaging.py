@@ -5,6 +5,9 @@ from email.message import EmailMessage
 import smtplib
 import paramiko
 import csv
+import json
+import os
+import re
 
 def get_parents(email):
     trying = True
@@ -51,7 +54,7 @@ def get_parents(email):
             return result
 
         except SSHException as e:
-            trying = messagebox.askretrycancel("Error", "Failed to connect to server")
+            trying = messagebox.askretrycancel("Error", f"Failed to connect to server\nError: {e}")
             if not trying:
                 return []
 
@@ -137,6 +140,22 @@ Trinity Episcopal School IT Department
 """
 
 
+def repair_notice_no_fine(full_name):
+    return f"""Hello,
+
+This email is to let you know that {full_name} has submitted their computer for repair.
+
+Please note that there may be a fine associated with this repair. Manufacturing defects are covered, but accidental damage is not. If any charges apply, you will be notified when the computer is ready for pickup.
+
+We will send you another update once the computer repair is complete and available for pickup.
+
+Thank you for your attention.
+
+Sincerely,
+Trinity Episcopal School IT Department
+"""
+
+
 def ready_no_fine(full_name):
     return f"""Hello,
 
@@ -169,3 +188,14 @@ Thank you for your attention.
 Sincerely,
 Trinity Episcopal School IT Department
 """
+
+def remove_fine_warning(student_email):
+    settings = json.loads(open(str(os.path.dirname(os.path.realpath(__file__))) + "/settings.json").read())
+    warn_patterns = settings["emailWarnPattern"].split(";")
+    emails = [student_email] + get_parents(student_email)
+    for email in emails:
+        for pattern in warn_patterns:
+            if re.match(pattern.strip(), email.strip()):
+                return messagebox.askyesno("Warning", f"This repair is emailing {email}, which matches warning pattern {pattern}, would you like to remove this fine?")
+
+    return False

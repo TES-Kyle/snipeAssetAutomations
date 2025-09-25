@@ -9,8 +9,7 @@ from jamf_pro_sdk.clients.pro_api.pagination import FilterField, SortField
 from Utilities.otherApiBits import getAssetInfoSerialAssignedTo, getAssetInfo
 from Utilities import Key
 
-JAMF_URL = "https://trinityes.jamfcloud.com"  # No trailing slash
-jamfURL = "trinityes.jamfcloud.com"
+jamfURL = Key.jamfURL # No trailing slash
 
 CHARGER_EA_NAME = "chargerSerial"
 

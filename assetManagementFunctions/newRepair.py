@@ -1,6 +1,6 @@
 from Utilities.otherApiBits import *
 from Utilities.labelPrinting import createImage
-from Utilities.messaging import message, repair_notice
+from Utilities.messaging import *
 import tkinter as tk
 from datetime import date
 
@@ -130,11 +130,17 @@ def newRepair(asset_tag):
         issue_description += " Send Emails: " + str(email_var.get())
         issue_description += " Text Student: " + str(text_var.get())
         issue_description += " Email Parent: " + str(parent_var.get())
-        full_name = getLatestCheckinName(assetData["id"])
 
         if email_var.get() and assetData.get("assigned_to", {}).get("username"):
+            full_name = assetData["assigned_to"]["name"]
+
+            if remove_fine_warning(assetData["assigned_to"]["username"]):
+                content = repair_notice_no_fine(full_name)
+                issue_description += " Remove Charge: True"
+            else:
+                content = repair_notice(full_name)
+
             subject = "Repair Notice"
-            content = repair_notice(full_name)
             message(content, assetData["assigned_to"]["username"], subject=subject, text=text_var.get(), parent=parent_var.get())
 
         today = str(date.today())

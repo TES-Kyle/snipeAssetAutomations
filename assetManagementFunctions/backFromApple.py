@@ -3,7 +3,7 @@ from Utilities.Key import *
 import tkinter as tk
 from tkinter import messagebox
 from datetime import date, timedelta
-from Utilities.messaging import message, ready_no_fine, ready_fine
+from Utilities.messaging import *
 
 
 def sendFineEmail(name, charge, assetTag, divert=False):
@@ -52,22 +52,25 @@ def backFromApple(asset_tag):
             print(f"Repair Notes: {repair_notes}")
             updateMaintenance(asset_tag, d_number, repair_notes, fault.get())
             name = getLatestCheckinName(assetData["id"])
+            email = getLatestCheckinName(assetData["id"], email=True)
+            charge = int(charge_entry.get().strip())
 
-            if fault.get() and int(charge_entry.get().strip()) > 0:
-                sendFineEmail(name, int(charge_entry.get().strip()), asset_tag, divert=divert.get())
+            if fault.get() and charge > 0:
+                if remove_fine_warning(email):
+                    charge = 0
+                else:
+                    sendFineEmail(name, charge, asset_tag, divert=divert.get())
 
             if "Send Emails: True" in notes:
                 subject ="Computer Ready for Pickup"
-                fine_email = ready_fine(name, int(charge_entry.get().strip()))
-                no_fine_email = ready_no_fine(name)
 
-                if fault.get() and (int(charge_entry.get().strip()) > 0):
-                    content = fine_email
+                if fault.get() and (charge > 0):
+                    content = ready_fine(name, charge)
                 else:
-                    content = no_fine_email
+                    content = ready_no_fine(name)
 
                 if  name is not None and divert.get() is False:
-                    recipient = getLatestCheckinName(assetData["id"], email=True)
+                    recipient = email
                 else:
                     recipient = support_email
                     if name is None:
@@ -77,7 +80,7 @@ def backFromApple(asset_tag):
 
                 message(content, recipient, subject=subject, text=("Text Student: True" in notes), parent=("Email Parent: True" in notes))
 
-            loan_checkin = set_loan_checkin(getLatestCheckinName(assetData["id"], email=True))
+            loan_checkin = set_loan_checkin(email)
             if not loan_checkin:
                 messagebox.showinfo("Warning", "Loan computer check-in date not set.")
 
@@ -129,7 +132,7 @@ def backFromApple(asset_tag):
     charge_label = tk.Label(charge_frame, text="Charge: $")
     charge_label.pack(side='left')
     charge_entry = tk.Entry(charge_frame, width=10)  # Text entry for charge
-    charge_entry.insert(0, "100")
+    charge_entry.insert(0, "100" if "Remove Charge: True" not in notes else "0")
     charge_entry.pack(side='left', expand=True, fill='x')
     charge_entry.bind('<Return>', on_enter_pressed)  # Bind Enter key to shift focus
 
