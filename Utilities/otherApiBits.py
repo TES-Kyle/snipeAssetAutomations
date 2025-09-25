@@ -61,8 +61,8 @@ def getAssetInfo(assetTag):
     assigned_to = assetData.get("assigned_to") or {}
     if assigned_to.get("name"):
         var_list.append(("Assigned to User", assigned_to["name"]))
-    if assigned_to.get("username"):
-        var_list.append(("Assigned to Email", assigned_to["username"]))
+    if assigned_to.get("email"):
+        var_list.append(("Assigned to Email", assigned_to["email"]))
 
     # Custom Fields
     custom_fields = assetData.get("custom_fields", {})
