@@ -195,7 +195,7 @@ def create_main_window(root):
     tk.Button(button_frame, text="Print Label", command=print_label, font=('Arial', 20)).pack(side='left', padx=20,
                                                                                               pady=20)
 
-    func_frame = tk.LabelFrame(tab1, text='Functions', font=('Arial', 20))
+    func_frame = tk.LabelFrame(tab1, text='Asset Functions', font=('Arial', 20))
     func_frame.pack(pady=20)
 
     app_state['func_var'] = tk.IntVar(value=-1)
@@ -212,7 +212,15 @@ def create_main_window(root):
 
     # --- Tab 2: Other Functions ---
     tab2 = app_state['tab2_frame']
-    tk.Label(tab2, text="This is the screen for other functions.", font=('Arial', 24)).pack(padx=100, pady=100)
+
+    other_frame = tk.LabelFrame(tab2, text='Other Functions', font=('Arial', 20))
+    other_frame.pack(pady=20)
+
+    for i, text in enumerate(other_func_listTXT):
+        row, col = divmod(i, 4)
+        button = tk.Button(other_frame, text=text, command=other_func_list[i], height=2, font=('Arial', 20))
+        button.grid(row=row, column=col, sticky='ew', padx=10, pady=10)
+
 
     show_frame(app_state['tab1_frame'])
 
