@@ -1,209 +1,229 @@
+import os
+import re
+import tkinter as tk
+from tkinter import messagebox
+
 from Utilities.labelPrinting import sendToPrinter
 from Utilities.otherApiBits import getAssetInfo
 from Utilities.settings import settingsMenu
-from assetManagementFunctionsRouting import func_list, func_listTXT
-import tkinter as tk
-from tkinter import messagebox
-import os
-import re
+from assetFunctionsRouting import func_list, func_listTXT
+from otherFunctionsRouting import other_func_list, other_func_listTXT
 
 
-def labelPrint():
+def print_label():
+    """Checks for and sends the barcode label image to the printer.
+
+    The image file is expected to be named 'barcode-label.jpg' and located
+    in the same directory as this script.
     """
-    Checks if a barcode label image file exists in the same directory as the script.
-    If the file exists, it sends the image to the printer.
+    script_dir = os.path.dirname(os.path.realpath(__file__))
+    label_path = os.path.join(script_dir, "barcode-label.jpg")
+    if os.path.isfile(label_path):
+        sendToPrinter(label_path)
 
-    The barcode label image file is expected to be named 'barcode-label.jpg'.
 
-    Returns:
-        None
+def open_second_window(parent, asset_tag, main_app_state):
+    """Creates a secondary window to display asset info and select functions.
+
+    This window appears when an asset is entered on the main screen without
+    a function pre-selected.
+
+    Args:
+        parent (tk.Tk | tk.Toplevel): The parent window.
+        asset_tag (str): The asset tag entered by the user.
+        main_app_state (dict): The state dictionary from the main window, used
+                               to update the result label.
     """
-    if os.path.isfile(os.path.join(os.path.dirname(os.path.realpath(__file__)), "barcode-label.jpg")):
-        sendToPrinter(os.path.join(os.path.dirname(os.path.realpath(__file__)), "barcode-label.jpg"))
+    top = tk.Toplevel(parent)
+    top.title("Asset Detail Functions")
+
+    # This nested function handles the logic when a function button is clicked.
+    def run_func(func_index, asset_tag):
+        """Executes a function with the selected asset and parameters."""
+        checked_values = [value for var, value in check_vars if var.get()]
+        checked_values.insert(0, asset_tag)
+
+        result = func_list[func_index](asset_tag, checked_values)
+        main_app_state['result_text'].set(result)
+        top.destroy()
+
+    # --- Widget Layout ---
+    var_list, _ = getAssetInfo(asset_tag)
+    check_vars = []
+
+    var_frame = tk.Frame(top)
+    var_frame.pack(side="top", fill="both", expand=True, padx=10, pady=10)
+    for i, (name, value) in enumerate(var_list):
+        check_var = tk.BooleanVar()
+        if i != 0:
+            tk.Checkbutton(var_frame, variable=check_var).grid(row=i, column=0, sticky='ew')
+
+        tk.Label(var_frame, text=name, relief='solid', borderwidth=1, anchor='e').grid(row=i, column=1, sticky='ew',
+                                                                                       padx=5, pady=5)
+        tk.Label(var_frame, text=value, relief='solid', borderwidth=1, anchor='w').grid(row=i, column=2, sticky='ew',
+                                                                                        padx=5, pady=5)
+        check_vars.append((check_var, value))
+
+    var_frame.grid_columnconfigure(0, weight=1)
+    var_frame.grid_columnconfigure(1, weight=1)
+    var_frame.grid_columnconfigure(2, weight=1)
+
+    button_frame = tk.Frame(top)
+    button_frame.pack(side="top", fill="both", padx=10, pady=5)
+    for i, text in enumerate(func_listTXT):
+        row, col = divmod(i, 4)
+        button = tk.Button(button_frame, text=text, command=lambda j=i: run_func(j, asset_tag), height=2)
+        button.grid(row=row, column=col, sticky='ew')
+
+    tk.Button(top, text="Close", command=top.destroy, width=15).pack(side="top", pady=10)
+
+    # --- Center Window on Screen ---
+    top.update_idletasks()
+    screen_width = top.winfo_screenwidth()
+    screen_height = top.winfo_screenheight()
+    x = (screen_width / 2) - (top.winfo_width() / 2)
+    y = (screen_height / 2) - (top.winfo_height() / 2)
+    top.geometry(f"+{int(x)}+{int(y)}")
 
 
-class MainApp:
-    def __init__(self, rootWindow):
-        """
-        Initializes the AssetManagementGui_Main class.
-        Args:
-            rootWindow (tk.Tk): The root window of the Tkinter application.
-        Attributes:
-            root (tk.Tk): The root window of the Tkinter application.
-            asset_entry (tk.Entry): Entry widget for asset input.
-            enter_button (tk.Button): Button to process the asset input.
-            reprint_button (tk.Button): Button to print the label.
-            func_var (tk.IntVar): Variable to store the selected function.
-            clear_button (tk.Button): Button to clear the selected radiobuttons.
-            result_text (tk.StringVar): Variable to store the result text.
-            result_label (tk.Label): Label to display the result text.
-            settings_button (tk.Button): Button to open the settings menu.
-        """
-        self.root = rootWindow
-        self.root.title("Asset Management Gui")
-        self.root.state('zoomed')  # This line makes the window fullscreen
+def create_main_window(root):
+    """Initializes and builds the main application window.
 
-        main_frame = tk.Frame(rootWindow)
-        main_frame.place(relx=0.5, rely=0.5, anchor='center')
+    Args:
+        root (tk.Tk): The root Tkinter object.
+    """
+    root.title("Asset Management GUI")
+    root.state('zoomed')
 
-        self.asset_entry = tk.Entry(main_frame, font=('Arial', 20), width=30)
-        self.asset_entry.pack(pady=20)
-        self.asset_entry.bind('<Return>', self.process_asset)
-        self.asset_entry.bind('<KP_Enter>', self.process_asset)  # Bind keypad Enter key
-        self.asset_entry.focus_set()
+    app_state = {}
 
-        button_frame = tk.Frame(main_frame)
+    # Define colors for active and inactive tabs for cross-platform consistency.
+    ACTIVE_TAB_COLOR = "#d9d9d9"  # A light gray for the active tab
+    INACTIVE_TAB_COLOR = "#f0f0f0"  # The default light gray for inactive tabs
 
-        button_frame.pack(padx=10, pady=20, anchor='center')
-        self.enter_button = tk.Button(button_frame, text="Enter", command=self.process_asset, font=('Arial', 20))
-        self.enter_button.pack(side='left', padx=20, pady=20)
-        self.reprint_button = tk.Button(button_frame, text="Print Label", command=labelPrint, font=('Arial', 20))
-        self.reprint_button.pack(side='left', padx=20, pady=20)
+    # =========================================================================
+    # == Nested Functions (Callbacks and Helpers)
+    # =========================================================================
 
-        func_frame = tk.LabelFrame(main_frame, text='Functions', font=('Arial', 20))  # LabelFrame to have a box around
-        func_frame.pack(pady=20)
+    def show_frame(frame_to_show):
+        """Raises the selected frame and updates button styles to show the active tab."""
+        # Reset all tab buttons to the inactive style (raised border, inactive color)
+        for button in app_state['tab_buttons'].values():
+            button.config(relief='raised', bg=INACTIVE_TAB_COLOR)
 
-        self.func_var = tk.IntVar(value=-1)
-        for i in range(len(func_listTXT)):
-            row, col = divmod(i, 4)
-            lf = tk.Frame(func_frame)
-            rb = tk.Radiobutton(lf, text=func_listTXT[i], variable=self.func_var, value=i, font=('Arial', 20))
-            rb.pack(anchor='w')
-            lf.grid(row=row, column=col, padx=10, pady=10)  # use grid for arranging in rows of 4
+        # Set the active tab's button to the active style (sunken border, active color)
+        for frame, button in app_state['tab_buttons'].items():
+            if frame == frame_to_show:
+                button.config(relief='sunken', bg=ACTIVE_TAB_COLOR)
+                break
 
-        self.clear_button = tk.Button(main_frame, text="Clear", command=self.clear_radiobuttons, font=('Arial', 20))
-        self.clear_button.pack(pady=20)
+        frame_to_show.tkraise()
 
-        self.result_text = tk.StringVar()
-        self.result_label = tk.Label(main_frame, textvariable=self.result_text, font=('Arial', 20))
-        self.result_label.pack(pady=20)
+    def clear_radiobuttons():
+        """Resets the radio button selection."""
+        app_state['func_var'].set(-1)
 
-        settings_frame = tk.Frame(rootWindow)
-        settings_frame.place(relx=1.0, rely=0.0, anchor='ne')
-        self.settings_button = tk.Button(settings_frame, text="⚙️", command=settingsMenu, font=('Arial', 20))
-        self.settings_button.pack(padx=20, pady=20)
+    def process_asset(event=None):
+        """Processes the entered asset tag based on the selected function."""
+        asset_tag = app_state['asset_entry'].get()
+        app_state['asset_entry'].delete(0, tk.END)
 
-    def clear_radiobuttons(self):
-        self.func_var.set(-1)
-
-    def process_asset(self, event=None):
-        """
-        Processes the asset based on the input from the asset entry field.
-
-        Args:
-            event (optional): The event that triggered the function call. Defaults to None.
-
-        Functionality:
-            - Retrieves the asset tag from the asset entry field.
-            - Clears the asset entry field.
-            - Checks if the asset tag is a 4-digit number.
-            - If the asset tag is valid and a function is selected, calls the selected function with the asset tag and sets the result.
-            - If no function is selected, opens a second window with the asset tag.
-            - If the asset tag is invalid, shows an error message.
-
-        Raises:
-            messagebox.showerror: If the asset tag is not a 4-digit number.
-        """
-        asset_tag = self.asset_entry.get()
-        self.asset_entry.delete(0, tk.END)
         if re.match(r"^\d{4,5}$", asset_tag):
-            if self.func_var.get() != -1:
-                result = func_list[self.func_var.get()](asset_tag)
-                self.result_text.set(result)
+            selected_func_index = app_state['func_var'].get()
+            if selected_func_index != -1:
+                result = func_list[selected_func_index](asset_tag)
+                app_state['result_text'].set(result)
             else:
-                SecondWindow(self.root, asset_tag)
+                open_second_window(root, asset_tag, app_state)
         else:
-            messagebox.showerror("Error", "Dumb dumb, only 4 or 5 digit numbers")
+            messagebox.showerror("Invalid Input", "Please enter a 4 or 5 digit asset tag.")
+
+    # =========================================================================
+    # == Main Window UI Construction
+    # =========================================================================
+
+    tab_button_frame = tk.Frame(root)
+    tab_button_frame.place(relx=0.0, x=20, rely=0.0, anchor='nw')
+
+    main_container = tk.Frame(root)
+    main_container.place(relx=0.5, rely=0.5, anchor='center')
+
+    app_state['tab1_frame'] = tk.Frame(main_container)
+    app_state['tab2_frame'] = tk.Frame(main_container)
+
+    app_state['tab1_frame'].grid(row=0, column=0, sticky="nsew")
+    app_state['tab2_frame'].grid(row=0, column=0, sticky="nsew")
+
+    # --- Create custom tab "buttons" using tk.Label for full style control ---
+    tab1_label_button = tk.Label(tab_button_frame, text="Asset Functions", font=('Arial', 20),
+                                 borderwidth=2, relief='raised', padx=5, pady=5)
+    tab1_label_button.pack(side='left', padx=0, pady=20)
+    # Bind the left mouse click (<Button-1>) to the show_frame function
+    tab1_label_button.bind("<Button-1>", lambda event: show_frame(app_state['tab1_frame']))
+
+    tab2_label_button = tk.Label(tab_button_frame, text="Other Functions", font=('Arial', 20),
+                                 borderwidth=2, relief='raised', padx=5, pady=5)
+    tab2_label_button.pack(side='left', padx=0, pady=20)
+    tab2_label_button.bind("<Button-1>", lambda event: show_frame(app_state['tab2_frame']))
+
+    # Map frames to their custom label-buttons
+    app_state['tab_buttons'] = {
+        app_state['tab1_frame']: tab1_label_button,
+        app_state['tab2_frame']: tab2_label_button
+    }
+
+    settings_frame = tk.Frame(root)
+    settings_frame.place(relx=1.0, rely=0.0, anchor='ne')
+    tk.Button(settings_frame, text="⚙️", command=settingsMenu, font=('Arial', 20)).pack(padx=20, pady=20)
+
+    # --- Tab 1: Asset Functions ---
+    tab1 = app_state['tab1_frame']
+    app_state['asset_entry'] = tk.Entry(tab1, font=('Arial', 20), width=30)
+    app_state['asset_entry'].pack(pady=20)
+    app_state['asset_entry'].bind('<Return>', process_asset)
+    app_state['asset_entry'].bind('<KP_Enter>', process_asset)
+    app_state['asset_entry'].focus_set()
+
+    button_frame = tk.Frame(tab1)
+    button_frame.pack(padx=10, pady=20, anchor='center')
+    tk.Button(button_frame, text="Enter", command=process_asset, font=('Arial', 20)).pack(side='left', padx=20, pady=20)
+    tk.Button(button_frame, text="Print Label", command=print_label, font=('Arial', 20)).pack(side='left', padx=20,
+                                                                                              pady=20)
+
+    func_frame = tk.LabelFrame(tab1, text='Asset Functions', font=('Arial', 20))
+    func_frame.pack(pady=20)
+
+    app_state['func_var'] = tk.IntVar(value=-1)
+    for i, text in enumerate(func_listTXT):
+        row, col = divmod(i, 4)
+        lf = tk.Frame(func_frame)
+        tk.Radiobutton(lf, text=text, variable=app_state['func_var'], value=i, font=('Arial', 20)).pack(anchor='w')
+        lf.grid(row=row, column=col, padx=10, pady=10)
+
+    tk.Button(tab1, text="Clear", command=clear_radiobuttons, font=('Arial', 20)).pack(pady=20)
+
+    app_state['result_text'] = tk.StringVar()
+    tk.Label(tab1, textvariable=app_state['result_text'], font=('Arial', 20)).pack(pady=20)
+
+    # --- Tab 2: Other Functions ---
+    tab2 = app_state['tab2_frame']
+
+    other_frame = tk.LabelFrame(tab2, text='Other Functions', font=('Arial', 20))
+    other_frame.pack(side="top", fill="both", padx=10, pady=5)
+
+    for i, text in enumerate(other_func_listTXT):
+        row, col = divmod(i, 4)
+        button = tk.Button(other_frame, text=text, command=other_func_list[i], height=2)
+        button.grid(row=row, column=col, sticky='ew')
 
 
-class SecondWindow:
-    """
-    A class to create a secondary window for asset management GUI.
-    Attributes:
-    -----------
-    top : tk.Toplevel
-        The top-level window for the secondary window.
-    check_vars : list
-        A list to store checkbutton variables.
-    var_frame : tk.Frame
-        A frame to hold the variables.
-    button_frame : tk.Frame
-        A frame to hold the buttons.
-    Methods:
-    --------
-    __init__(parent, asset_tag):
-        Initializes the secondary window with asset information and buttons.
-    run_func(func_index, asset_tag):
-        Executes a function from func_list based on the selected checkbutton variables.
-    """
-    def __init__(self, parent, asset_tag):
-        self.top = tk.Toplevel(parent)
-        self.top.title("Asset Management Gui")
-
-        var_list, junk = getAssetInfo(asset_tag)
-
-        self.check_vars = []  # list to store checkbutton variables
-
-        self.var_frame = tk.Frame(self.top)  # create a frame for the variables
-        self.var_frame.pack(side="top", fill="both", expand=True)
-
-        for i, (name, value) in enumerate(var_list):
-            check_var = tk.BooleanVar()  # create a variable to link to the checkbutton
-            if i != 0:
-                check_button = tk.Checkbutton(self.var_frame, variable=check_var)
-                check_button.grid(row=i, column=0, sticky='ew')  # add the checkbutton to the grid
-
-            label_name = tk.Label(self.var_frame, text=name, relief='solid', borderwidth=1, anchor='e')
-            label_name.grid(row=i, column=1, sticky='ew', padx=5, pady=5)  # add the name label to the grid
-
-            label_value = tk.Label(self.var_frame, text=value, relief='solid', borderwidth=1, anchor='w')
-            label_value.grid(row=i, column=2, sticky='ew', padx=5, pady=5)  # add the value label to the grid
-
-            self.check_vars.append((check_var, value))  # add the variable to the list
-
-        self.var_frame.grid_columnconfigure(0, weight=1)
-        self.var_frame.grid_columnconfigure(1, weight=1)
-        self.var_frame.grid_columnconfigure(2, weight=1)
-
-        self.button_frame = tk.Frame(self.top)
-        self.button_frame.pack(side="top", fill="both")
-
-        for i in range(len(func_listTXT)):
-            row, col = divmod(i, 4)
-            button = tk.Button(self.button_frame, text=func_listTXT[i],
-                               command=lambda j=i: self.run_func(j, asset_tag), height=2)
-            button.grid(row=row, column=col, sticky='ew')
-
-        close_button = tk.Button(self.top, text="Close", command=self.top.destroy, width=15)
-        close_button.pack(side="top", fill="none")
-
-        # Update window size
-        self.top.update()
-        width = self.top.winfo_width()
-        height = self.top.winfo_height()
-
-        # Get screen size
-        screen_width = self.top.winfo_screenwidth()
-        screen_height = self.top.winfo_screenheight()
-
-        # Calculate position of window in pixels for centering
-        x = (screen_width / 2) - (width / 2)
-        y = (screen_height / 2) - (height / 2)
-
-        # Set the position of the window to the center of the screen
-        self.top.geometry(f"{width}x{height}+{int(x)}+{int(y)}")
-
-    def run_func(self, func_index, asset_tag):
-        checked_vars = [value for var, value in self.check_vars if var.get()]
-        # Prepend asset_tag to the list
-        checked_vars.insert(0, asset_tag)
-        print("Checked variables:", checked_vars)
-        result = func_list[func_index](asset_tag, checked_vars)
-        self.top.destroy()
-        app.result_text.set(result)
+    show_frame(app_state['tab1_frame'])
 
 
-root = tk.Tk()
-root.geometry("400x240")
-app = MainApp(root)
-root.mainloop()
+# =========================================================================
+# == Application Entry Point
+# =========================================================================
+if __name__ == "__main__":
+    main_window = tk.Tk()
+    create_main_window(main_window)
+    main_window.mainloop()
