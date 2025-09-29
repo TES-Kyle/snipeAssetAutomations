@@ -97,9 +97,8 @@ def create_main_window(root):
 
     app_state = {}
 
-    # Define colors for active and inactive tabs for cross-platform consistency.
-    ACTIVE_TAB_COLOR = "#d9d9d9"  # A light gray for the active tab
-    INACTIVE_TAB_COLOR = "#f0f0f0"  # The default light gray for inactive tabs
+    ACTIVE_TAB_COLOR = "#d9d9d9"
+    INACTIVE_TAB_COLOR = "#f0f0f0"
 
     # =========================================================================
     # == Nested Functions (Callbacks and Helpers)
@@ -107,11 +106,9 @@ def create_main_window(root):
 
     def show_frame(frame_to_show):
         """Raises the selected frame and updates button styles to show the active tab."""
-        # Reset all tab buttons to the inactive style (raised border, inactive color)
         for button in app_state['tab_buttons'].values():
             button.config(relief='raised', bg=INACTIVE_TAB_COLOR)
 
-        # Set the active tab's button to the active style (sunken border, active color)
         for frame, button in app_state['tab_buttons'].items():
             if frame == frame_to_show:
                 button.config(relief='sunken', bg=ACTIVE_TAB_COLOR)
@@ -120,11 +117,9 @@ def create_main_window(root):
         frame_to_show.tkraise()
 
     def clear_radiobuttons():
-        """Resets the radio button selection."""
         app_state['func_var'].set(-1)
 
     def process_asset(event=None):
-        """Processes the entered asset tag based on the selected function."""
         asset_tag = app_state['asset_entry'].get()
         app_state['asset_entry'].delete(0, tk.END)
 
@@ -142,39 +137,49 @@ def create_main_window(root):
     # == Main Window UI Construction
     # =========================================================================
 
-    tab_button_frame = tk.Frame(root)
-    tab_button_frame.place(relx=0.0, x=20, rely=0.0, anchor='nw')
+    # --- NEW: Top bar to hold tabs and settings button ---
+    top_bar_frame = tk.Frame(root)
+    top_bar_frame.pack(side="top", fill="x", padx=10, pady=5)
 
+    # MODIFIED: Frame for tabs is now packed inside the top_bar_frame
+    tab_button_frame = tk.Frame(top_bar_frame)
+    tab_button_frame.pack(side="left")
+
+    # MODIFIED: Settings frame is now packed inside the top_bar_frame
+    settings_frame = tk.Frame(top_bar_frame)
+    settings_frame.pack(side="right")
+
+    # MODIFIED: Main content container is now packed to fill the remaining space
     main_container = tk.Frame(root)
-    main_container.place(relx=0.5, rely=0.5, anchor='center')
+    main_container.pack(side="top", fill="both", expand=True)
 
     app_state['tab1_frame'] = tk.Frame(main_container)
     app_state['tab2_frame'] = tk.Frame(main_container)
 
+    # The grid layout for stacking the tab frames remains the same
     app_state['tab1_frame'].grid(row=0, column=0, sticky="nsew")
     app_state['tab2_frame'].grid(row=0, column=0, sticky="nsew")
+    main_container.grid_rowconfigure(0, weight=1)
+    main_container.grid_columnconfigure(0, weight=1)
 
     # --- Create custom tab "buttons" using tk.Label for full style control ---
     tab1_label_button = tk.Label(tab_button_frame, text="Asset Functions", font=('Arial', 20),
                                  borderwidth=2, relief='raised', padx=5, pady=5)
-    tab1_label_button.pack(side='left', padx=0, pady=20)
-    # Bind the left mouse click (<Button-1>) to the show_frame function
+    tab1_label_button.pack(side='left', padx=0, pady=10)  # Reduced pady
     tab1_label_button.bind("<Button-1>", lambda event: show_frame(app_state['tab1_frame']))
 
     tab2_label_button = tk.Label(tab_button_frame, text="Other Functions", font=('Arial', 20),
                                  borderwidth=2, relief='raised', padx=5, pady=5)
-    tab2_label_button.pack(side='left', padx=0, pady=20)
+    tab2_label_button.pack(side='left', padx=0, pady=10)  # Reduced pady
     tab2_label_button.bind("<Button-1>", lambda event: show_frame(app_state['tab2_frame']))
 
-    # Map frames to their custom label-buttons
     app_state['tab_buttons'] = {
         app_state['tab1_frame']: tab1_label_button,
         app_state['tab2_frame']: tab2_label_button
     }
 
-    settings_frame = tk.Frame(root)
-    settings_frame.place(relx=1.0, rely=0.0, anchor='ne')
-    tk.Button(settings_frame, text="⚙️", command=settingsMenu, font=('Arial', 20)).pack(padx=20, pady=20)
+    # MODIFIED: Settings button is now packed inside its pre-packed frame
+    tk.Button(settings_frame, text="⚙️", command=settingsMenu, font=('Arial', 20)).pack(pady=5)
 
     # --- Tab 1: Asset Functions ---
     tab1 = app_state['tab1_frame']
@@ -190,7 +195,7 @@ def create_main_window(root):
     tk.Button(button_frame, text="Print Label", command=print_label, font=('Arial', 20)).pack(side='left', padx=20,
                                                                                               pady=20)
 
-    func_frame = tk.LabelFrame(tab1, text='Asset Functions', font=('Arial', 20))
+    func_frame = tk.LabelFrame(tab1, text='Functions', font=('Arial', 20))
     func_frame.pack(pady=20)
 
     app_state['func_var'] = tk.IntVar(value=-1)
@@ -207,15 +212,7 @@ def create_main_window(root):
 
     # --- Tab 2: Other Functions ---
     tab2 = app_state['tab2_frame']
-
-    other_frame = tk.LabelFrame(tab2, text='Other Functions', font=('Arial', 20))
-    other_frame.pack(side="top", fill="both", padx=10, pady=5)
-
-    for i, text in enumerate(other_func_listTXT):
-        row, col = divmod(i, 4)
-        button = tk.Button(other_frame, text=text, command=other_func_list[i], height=2)
-        button.grid(row=row, column=col, sticky='ew')
-
+    tk.Label(tab2, text="This is the screen for other functions.", font=('Arial', 24)).pack(padx=100, pady=100)
 
     show_frame(app_state['tab1_frame'])
 
