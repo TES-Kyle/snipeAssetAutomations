@@ -1,4 +1,4 @@
-from Utilities.otherApiBits import *
+from utilities.otherApiBits import *
 import tkinter as tk
 from tkinter import ttk
 from tkcalendar import DateEntry

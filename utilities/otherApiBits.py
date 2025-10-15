@@ -1,4 +1,4 @@
-from Utilities import Key
+from utilities import Key
 import requests
 import json
 
@@ -119,3 +119,111 @@ def getLatestCheckinName(asset_id, email=False, username=False):
             return activity_data['rows'][0]['target']['name']
     except (KeyError, IndexError):
         return None
+
+
+def _get_paged(url: str, headers: dict, limit: int = 500, extra_params: str = ""):
+    """Yield all rows from a paginated Snipe-IT endpoint."""
+    base = Key.API_URL_Base.rstrip("/")
+    offset = 0
+    rows_all = []
+    while True:
+        try:
+            sep = "&" if "?" in url else "?"
+            page_url = f"{base}{url}{sep}limit={limit}&offset={offset}"
+            if extra_params:
+                page_url += f"&{extra_params.lstrip('&')}"
+            r = requests.get(page_url, headers=headers, timeout=20)
+            data = r.json()
+            rows = data.get("rows") or data.get("data") or []
+        except Exception:
+            break
+        rows_all.extend(rows)
+        if len(rows) < limit:
+            break
+        offset += limit
+    return rows_all
+
+def getAllStatusOptions():
+    """
+    All asset status labels as:
+      {"label": <status name>, "id": <status id>, "meta": {...}}
+    """
+    # /api/v1/statuslabels?type=asset is the endpoint
+    rows = _get_paged("/statuslabels", headers, extra_params="type=asset")
+    out = []
+    for st in rows:
+        out.append({
+            "label": (st.get("name") or "").strip(),
+            "id": st.get("id"),
+            "meta": st,
+        })
+    # unique & sorted
+    seen, uniq = set(), []
+    for o in out:
+        if o["id"] in seen:
+            continue
+        seen.add(o["id"])
+        uniq.append(o)
+    return sorted(uniq, key=lambda o: o["label"].lower())
+
+def getAllAssigneeOptions():
+    """
+    Unified list of users + locations:
+      {"label": str, "id": int, "type": "user"|"location",
+       "username": str, "email": str, "meta": dict}
+    """
+    users = _get_paged("/users", headers)
+    locs  = _get_paged("/locations", headers)
+
+    out = []
+    for u in users:
+        label = (u.get("name") or u.get("username") or "").strip()
+        out.append({
+            "label": label,
+            "id": u.get("id"),
+            "type": "user",
+            "username": (u.get("username") or "").strip(),
+            "email": (u.get("email") or "").strip(),
+            "meta": u,
+        })
+    for l in locs:
+        out.append({
+            "label": (l.get("name") or "").strip(),
+            "id": l.get("id"),
+            "type": "location",
+            "username": "",
+            "email": "",
+            "meta": l,
+        })
+
+    # unique by (type,id) & sorted
+    seen, uniq = set(), []
+    for o in out:
+        k = (o["type"], o["id"])
+        if k in seen:
+            continue
+        seen.add(k)
+        uniq.append(o)
+    return sorted(uniq, key=lambda o: o["label"].lower())
+
+def getAllModelOptions():
+    """
+    All asset models as:
+      {"label": <model name>, "id": <model id>, "meta": {...}}
+    """
+    rows = _get_paged("/models", headers)
+    out = []
+    for m in rows:
+        out.append({
+            "label": (m.get("name") or "").strip(),
+            "id": m.get("id"),
+            "meta": m,
+        })
+    # unique by id & sorted by label
+    seen, uniq = set(), []
+    for o in out:
+        if o["id"] in seen:
+            continue
+        seen.add(o["id"])
+        uniq.append(o)
+    return sorted(uniq, key=lambda o: o["label"].lower())

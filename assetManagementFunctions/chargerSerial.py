@@ -6,8 +6,8 @@ from tkinter import ttk
 from jamf_pro_sdk import JamfProClient, SessionConfig
 from jamf_pro_sdk.clients.auth import ApiClientCredentialsProvider
 from jamf_pro_sdk.clients.pro_api.pagination import FilterField, SortField
-from Utilities.otherApiBits import getAssetInfoSerialAssignedTo, getAssetInfo
-from Utilities import Key
+from utilities.otherApiBits import getAssetInfoSerialAssignedTo, getAssetInfo
+from utilities import Key
 
 jamfURL = Key.jamfURL # No trailing slash
 

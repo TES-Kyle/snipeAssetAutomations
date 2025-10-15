@@ -1,0 +1,55 @@
+[
+  {
+    "profile_name": "Macbook default name",
+    "priority": 50,
+    "conditions": {
+      "category.id": "24"
+    },
+    "defaults": {
+      "name": "{username}-{serial}"
+    }
+  },
+  {
+    "profile_name": "Macbook loan name",
+    "priority": 60,
+    "conditions": {
+      "category.id": "24",
+      "status": "Loan Fleet"
+    },
+    "defaults": {
+      "name": "Loan-{serial}"
+    }
+  },
+  {
+    "profile_name": "In Storage defaults",
+    "priority": 70,
+    "conditions": {
+      "status": "In Storage"
+    },
+    "defaults": {
+      "Name": "{empty}",
+      "assigned_to": "{empty}"
+    }
+  },
+  {
+    "profile_name": "Available defaults",
+    "priority": 70,
+    "conditions": {
+      "status": "Available"
+    },
+    "defaults": {
+      "Name": "{empty}",
+      "assigned_to": "{empty}"
+    }
+  },
+  {
+    "profile_name": "deployed needs assignee",
+    "priority": 100,
+    "conditions": {
+      "status": "Deployed"
+    },
+    "defaults": {
+      "assigned_to": "{has_value}"
+    }
+  }
+]
