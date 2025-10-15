@@ -3,9 +3,9 @@ import re
 import tkinter as tk
 from tkinter import messagebox
 
-from Utilities.labelPrinting import sendToPrinter
-from Utilities.otherApiBits import getAssetInfo
-from Utilities.settings import settingsMenu
+from utilities.labelPrinting import sendToPrinter
+from utilities.otherApiBits import getAssetInfo
+from utilities.settings import settingsMenu
 from assetFunctionsRouting import func_list, func_listTXT
 from otherFunctionsRouting import other_func_list, other_func_listTXT
 

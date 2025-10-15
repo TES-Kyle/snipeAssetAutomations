@@ -1,4 +1,4 @@
-from Utilities.otherApiBits import *
+from utilities.otherApiBits import *
 
 
 def pantsShipping(asset_tag, *args):

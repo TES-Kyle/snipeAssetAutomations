@@ -7,7 +7,7 @@
 #   and the SDK's classic request method for reliable updates.
 
 import time
-from Utilities import Key
+from utilities import Key
 from requests import Session, adapters
 from urllib3.util import Retry
 
@@ -16,7 +16,7 @@ from jamf_pro_sdk import JamfProClient, SessionConfig
 from jamf_pro_sdk.clients.auth import ApiClientCredentialsProvider
 
 # --- CONFIGURATION ---
-# Your API details are imported from the Utilities.Key module.
+# Your API details are imported from the utilities.Key module.
 
 # Jamf Pro API Details
 # IMPORTANT: Key.jamfURL should be the hostname ONLY, without https://

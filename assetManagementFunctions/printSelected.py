@@ -1,5 +1,5 @@
-from Utilities.otherApiBits import *
-from Utilities.labelPrinting import createImage
+from utilities.otherApiBits import *
+from utilities.labelPrinting import createImage
 
 
 def printSelected(asset_tag, *args):

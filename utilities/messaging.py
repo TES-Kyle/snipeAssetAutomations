@@ -1,6 +1,6 @@
 from paramiko import SSHException
 from tkinter import messagebox
-from Utilities.Key import *
+from utilities.Key import *
 from email.message import EmailMessage
 import smtplib
 import paramiko

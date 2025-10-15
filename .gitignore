@@ -1,10 +1,10 @@
-Utilities/Key.py
+utilities/Key.py
 barcode-label.jpg
 Test.py
 __pycache__/
 Vent/
 .DS_Store
 .idea/
-Utilities/settings.json
+utilities/settings.json
 venv/
 .venv/

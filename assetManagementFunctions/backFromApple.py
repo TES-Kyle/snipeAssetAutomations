@@ -1,9 +1,9 @@
-from Utilities.otherApiBits import *
-from Utilities.Key import *
+from utilities.otherApiBits import *
+from utilities.Key import *
 import tkinter as tk
 from tkinter import messagebox
 from datetime import date, timedelta
-from Utilities.messaging import *
+from utilities.messaging import *
 
 
 def sendFineEmail(name, charge, assetTag, divert=False):

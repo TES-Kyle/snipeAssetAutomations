@@ -1,6 +1,6 @@
-from Utilities.otherApiBits import *
-from Utilities.labelPrinting import createImage
-from Utilities.messaging import *
+from utilities.otherApiBits import *
+from utilities.labelPrinting import createImage
+from utilities.messaging import *
 import tkinter as tk
 from datetime import date
 
