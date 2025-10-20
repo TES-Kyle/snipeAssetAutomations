@@ -430,7 +430,7 @@ def repair_notice_no_fine(full_name):
 
 We are sending this to let you know that {full_name} has submitted their computer for repair.
 
-Please note that there may be a fine associated with this repair. Manufacturing defects are covered, but accidental damage is not. If any charges apply, you will be notified when the computer is ready for pickup.
+There will not be any fine associated with this, regardless of whether we determine the student to be at fault for the damage. Please help us make sure that {full_name} is careful with their computer in the future. 
 
 We will send you another update once the computer repair is complete and available for pickup.
 
