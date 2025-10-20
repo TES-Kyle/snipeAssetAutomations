@@ -147,7 +147,7 @@ def newRepair(asset_tag):
                 subject = "Error email not valid: " + subject
                 recipient = support_email
 
-            message(content, recipient, subject=subject, text=text_var.get(), parent=parent_var.get())
+            message(content, recipient, subject=subject, text_student_recipient=text_var.get(), email_parent=parent_var.get())
 
 
 

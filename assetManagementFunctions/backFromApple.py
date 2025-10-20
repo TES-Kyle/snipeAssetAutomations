@@ -81,7 +81,7 @@ def backFromApple(asset_tag):
                     if not is_email(email):
                         subject = "Error email not valid: " + subject
 
-                message(content, recipient, subject=subject, text=("Text Student: True" in notes), parent=("Email Parent: True" in notes))
+                message(content, recipient, subject=subject, text_student_recipient=("Text Student: True" in notes), email_parent=("Email Parent: True" in notes))
 
             loan_checkin = set_loan_checkin(username)
             if not loan_checkin:
