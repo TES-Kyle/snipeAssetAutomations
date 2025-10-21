@@ -172,7 +172,7 @@ def newRepair(asset_tag):
         payload3 = {
             "asset_maintenance_type": "Repair",
             "start_date": today,
-            "title": title,
+            "name": title,
             "asset_id": assetData["id"],
             "supplier_id": 1,
             "notes": issue_description
