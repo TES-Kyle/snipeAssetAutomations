@@ -287,40 +287,6 @@ def extract_current_values(assetData: dict) -> dict:
     return base
 
 
-def _bind_ac_click_select(ac, recompute_cb):
-    """
-    Fix for AC listbox: clicking anywhere should select that row (not whatever was highlighted).
-    """
-    lb = getattr(ac, "listbox", None) or getattr(ac, "_listbox", None) or getattr(ac, "lb", None)
-    if not lb:
-        return
-
-    def _on_click(e, lb=lb, ac=ac):
-        try:
-            i = lb.nearest(e.y)
-            value = lb.get(i)
-        except Exception:
-            return
-        if hasattr(ac, "set_selected_by_label") and value:
-            ac.set_selected_by_label(value)
-        else:
-            try:
-                ac.entry.delete(0, "end")
-                ac.entry.insert(0, value)
-            except Exception:
-                pass
-        try:
-            if hasattr(ac, "commit_selection"):
-                ac.commit_selection()
-        except Exception:
-            pass
-        try:
-            recompute_cb()
-        except Exception:
-            pass
-
-    lb.bind("<ButtonRelease-1>", _on_click, add="+")
-
 def _open_help(parent):
     """Open (or focus) a simple read-only help window."""
     # Reuse a single help window if already open
@@ -676,7 +642,6 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             ac = AutoCompleteEntry(grid_inner)
             ac.grid(row=i + 1, column=1, sticky="nsew", padx=6, pady=3)
             ac.set_options(status_options)
-            _bind_ac_click_select(ac, lambda: recompute_all_results())
 
             try:
                 ac_fg_default = ac.entry.cget("foreground")
@@ -696,7 +661,6 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             ac = AutoCompleteEntry(grid_inner)
             ac.grid(row=i + 1, column=1, sticky="nsew", padx=6, pady=3)
             ac.set_options(assignee_options)
-            _bind_ac_click_select(ac, lambda: recompute_all_results())
 
             try:
                 ac_fg_default = ac.entry.cget("foreground")
@@ -725,7 +689,6 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             ac = AutoCompleteEntry(grid_inner)
             ac.grid(row=i + 1, column=1, sticky="nsew", padx=6, pady=3)
             ac.set_options(model_options)
-            _bind_ac_click_select(ac, lambda: recompute_all_results())
 
             try:
                 ac_fg_default = ac.entry.cget("foreground")
@@ -1134,6 +1097,11 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
         payload = {}
         changed = False
         need_checkin = False
+        checkout_user_id = None
+        checkout_location_id = None
+        must_checkin_first = False  # <<<<< NEW
+
+        current_assignee_type = ((assetData.get("assigned_to") or {}).get("type") or "").strip().lower()
 
         for key in FIELD_ORDER:
             new = snapshot.get(key, "")
@@ -1142,69 +1110,41 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                 continue
             changed = True
 
-            if key == "asset_tag":
-                # asset_tag is validated elsewhere (cannot be blank), so just set the new value
-                payload["asset_tag"] = new
-
-            elif key in TEXT_CLEAR_EMPTY:
-                # Clear text fields with empty string, NOT "null"
-                if key == "name":
-                    payload["name"] = new  # "" clears name
-                elif key == "serial":
-                    payload["serial"] = new
-                elif key == "order_number":
-                    payload["order_number"] = new
-                elif key == "notes":
-                    payload["notes"] = new
-
-            elif key in DATE_CLEAR_NULLSTR:
-                # Clear date fields with literal "null" string per Snipe-IT convention
-                if key == "purchase_date":
-                    payload["purchase_date"] = new if new.strip() else NULL_STR
-                elif key == "expected_checkin":
-                    payload["expected_checkin"] = new if new.strip() else NULL_STR
-
-            elif key == "purchase_cost":
-                if str(new).strip() == "":
-                    payload["purchase_cost"] = None
-                else:
-                    try:
-                        payload["purchase_cost"] = float(str(new).replace("$", "").replace(",", ""))
-                    except Exception:
-                        raise ValueError("Purchase cost must be a number.")
-
-            elif key == "status":
-                sel = rows_by_key[key].get("ac_selected")
-                sid = _id_from_sel(sel) or status_label_to_id.get(new)
-                if sid is None:
-                    raise ValueError("Pick a Status from the dropdown so I can get its ID.")
-                payload["status_id"] = sid
-
-            elif key == "model":
-                sel = rows_by_key[key].get("ac_selected")
-                mid = _id_from_sel(sel) or model_label_to_id.get(new)
-                if mid is None:
-                    raise ValueError("Pick a Model from the dropdown so I can get its ID.")
-                payload["model_id"] = mid
-
-            elif key == "assigned_to":
+            if key == "assigned_to":
                 txt = (new or "").strip()
+                sel = rows_by_key[key].get("ac_selected")
+                sel_type = ((sel or {}).get("type") or "").strip().lower()
+
                 if txt in ("", "{empty}"):
-                    # Do NOT include assigned_user in PATCH; we’ll unassign via CHECKIN
+                    # explicit clear
                     need_checkin = True
+
+                elif sel_type == "user":
+                    checkout_user_id = _id_from_sel(sel)
+                    if checkout_user_id is None:
+                        raise ValueError("Pick a *User* from the list (or type {empty} to clear).")
+                    # if changing from location->user (or user->location below), require checkin first
+                    if current_assignee_type and current_assignee_type != "user":
+                        must_checkin_first = True
+
+                elif sel_type == "location":
+                    checkout_location_id = _id_from_sel(sel)
+                    if checkout_location_id is None:
+                        raise ValueError("Pick a *Location* from the list.")
+                    # make default/home location match too (optional)
+                    payload["location_id"] = checkout_location_id
+                    if current_assignee_type and current_assignee_type != "location":
+                        must_checkin_first = True
+
                 else:
-                    sel = rows_by_key[key].get("ac_selected")
-                    uid = _id_from_sel(sel) or assignee_label_to_id.get(txt)
-                    if uid is None:
-                        raise ValueError(
-                            "Pick an Assignee from the dropdown so I can get their ID, or type {empty} to clear.")
-                    payload["assigned_user"] = uid
+                    raise ValueError("Select either a User or a Location from suggestions.")
+                continue
 
             else:
                 # Any future fields default to pass-through
                 payload[key] = new
 
-        return payload, changed, need_checkin
+        return payload, changed, need_checkin, must_checkin_first, checkout_user_id, checkout_location_id
 
     def _api_patch_with_retry(asset_id: int, payload: dict) -> bool:
         if not SNIPE_BASE or not SNIPE_TOKEN:
@@ -1241,7 +1181,13 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                 try:
                     data = r.json()
                     if str(data.get("status")).lower() == "error":
-                        msg = "; ".join(data.get("messages") or []) or str(data)
+                        msgs = data.get("messages")
+                        if isinstance(msgs, list):
+                            msg = "; ".join(msgs)
+                        elif isinstance(msgs, dict):
+                            msg = "; ".join(str(v) for v in msgs.values())
+                        else:
+                            msg = str(msgs or data)
                         if not messagebox.askretrycancel("Update failed", f"Snipe-IT error:\n{msg}\n\nRetry?"):
                             return False
                         continue
@@ -1308,6 +1254,71 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             except Exception:
                 detail = r.text
             if not messagebox.askretrycancel("HTTP Error", f"CHECKIN {r.status_code}\n{detail}\n\nRetry?"):
+                return False
+
+    def _api_checkout_with_retry(asset_id: int, *, user_id: int | None = None,
+                                 location_id: int | None = None,
+                                 note: str = "Consisterizer assign/checkout",
+                                 expected_checkin: str | None = None) -> bool:
+        if not SNIPE_BASE or not SNIPE_TOKEN:
+            messagebox.showerror("Snipe-IT", "Missing API_URL_Base or API_Key in utilities.Key.")
+            return False
+
+        url = f"{SNIPE_BASE}/hardware/{asset_id}/checkout"
+        headers = {
+            "Authorization": f"Bearer {SNIPE_TOKEN}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+
+        body = {"note": note}
+        if user_id is not None:
+            body.update({"checkout_to_type": "user", "assigned_user": user_id})
+        elif location_id is not None:
+            body.update({"checkout_to_type": "location", "assigned_location": location_id})
+        else:
+            messagebox.showerror("Snipe-IT", "Checkout requires user_id or location_id.")
+            return False
+
+        if expected_checkin:
+            body["expected_checkin"] = expected_checkin  # "YYYY-MM-DD"
+
+        def _cursor_busy(on=True):
+            try:
+                win.config(cursor="watch" if on else "")
+                win.update_idletasks()
+            except Exception:
+                pass
+
+        while True:
+            try:
+                _cursor_busy(True)
+                r = requests.post(url, json=body, headers=headers, timeout=25)
+            except requests.RequestException as e:
+                _cursor_busy(False)
+                if not messagebox.askretrycancel("Network Error", f"{e}\n\nRetry?"):
+                    return False
+                continue
+            finally:
+                _cursor_busy(False)
+
+            if 200 <= r.status_code < 300:
+                try:
+                    data = r.json()
+                    if str(data.get("status")).lower() == "error":
+                        msg = "; ".join(data.get("messages") or []) or str(data)
+                        if not messagebox.askretrycancel("Checkout failed", f"Snipe-IT error:\n{msg}\n\nRetry?"):
+                            return False
+                        continue
+                except Exception:
+                    pass
+                return True
+
+            try:
+                detail = r.json()
+            except Exception:
+                detail = r.text
+            if not messagebox.askretrycancel("HTTP Error", f"CHECKOUT {r.status_code}\n{detail}\n\nRetry?"):
                 return False
 
     # -------------------------------------------------------------------------
@@ -1606,30 +1617,37 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
 
         # Build PATCH payload
         try:
-            payload, any_changes, need_checkin = _build_patch_payload(snapshot)
+            (payload, any_changes, need_checkin, must_checkin_first,
+             to_user_id, to_loc_id) = _build_patch_payload(snapshot)
         except ValueError as ve:
             messagebox.showerror("Validation", str(ve))
             return False, (current_map.get("asset_tag") or "")
 
         asset_id = assetData.get("id")
-        if not asset_id:
-            messagebox.showerror("Snipe-IT", "Asset ID not found in asset data; cannot save.")
-            return False, (current_map.get("asset_tag") or "")
-
-        # 1) PATCH (only if we actually have fields to change)
         if any_changes and payload:
-            ok = _api_patch_with_retry(asset_id, payload)
-            if not ok:
+            if not _api_patch_with_retry(asset_id, payload):
                 return False, (current_map.get("asset_tag") or "")
 
-        # 2) CHECKIN (only if assigned_to was cleared)
+        # Assignment transitions
         if need_checkin:
-            ok = _api_checkin_with_retry(asset_id, note="Consisterizer: unassign")
-            if not ok:
+            # explicit unassign
+            if not _api_checkin_with_retry(asset_id, note="Consisterizer: unassign"):
                 return False, (current_map.get("asset_tag") or "")
 
-        # Refresh “Current” values from server to reflect saved values
-        if any_changes or need_checkin:
+        # type change needs a checkin before the checkout
+        if must_checkin_first and not need_checkin:
+            if not _api_checkin_with_retry(asset_id, note="Consisterizer: switch assignee type"):
+                return False, (current_map.get("asset_tag") or "")
+
+        if to_user_id is not None or to_loc_id is not None:
+            # optionally pass a desired expected_checkin date from snapshot
+            if not _api_checkout_with_retry(asset_id,
+                                            user_id=to_user_id,
+                                            location_id=to_loc_id,
+                                            note="Consisterizer: assign"):
+                return False, (current_map.get("asset_tag") or "")
+
+        if any_changes or need_checkin or to_user_id is not None or to_loc_id is not None:
             _refresh_current_after_save(snapshot)
 
         # Quiet status line with asset tag

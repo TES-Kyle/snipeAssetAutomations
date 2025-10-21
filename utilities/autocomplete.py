@@ -30,6 +30,7 @@ class AutoCompleteEntry(ttk.Frame):
         self.entry = ttk.Entry(self, width=width)
         self.entry.grid(row=0, column=0, sticky="ew")
         self.grid_columnconfigure(0, weight=1)
+        self.advance_focus_on_select = True
 
         self._all_options = []   # [{"label": str, ...}, ...]
         self._matches = []       # current top matches
@@ -88,6 +89,57 @@ class AutoCompleteEntry(ttk.Frame):
     def bind_change(self, callback):
         if callable(callback):
             self._change_cbs.append(callback)
+
+    def set_selected_by_label(self, label: str):
+        """Programmatically set entry + selected option by exact label match."""
+        if not label:
+            self._selected = None
+            self.set("")  # fires change
+            return
+        for opt in self._all_options:
+            if opt.get("label") == label:
+                self._selected = opt
+                self.set(label)  # fires change
+                return
+        # no exact match -> treat as plain text
+        self._selected = None
+        self.set(label)
+
+    def commit_selection(self):
+        """Commit selection based on current listbox cursor (if visible)."""
+        if not self._popup_visible() or not self._matches:
+            # try to map current entry text to an option
+            txt = self.get().strip()
+            for opt in self._all_options:
+                if opt.get("label") == txt:
+                    self._selected = opt
+                    break
+            return
+        try:
+            idx = self.listbox.curselection()[0]
+        except Exception:
+            idx = 0
+        self._selected = self._matches[idx]
+        self.set(self._selected["label"])  # fires change
+        self.hide_popup()
+
+
+    def hide_popup(self):
+        try:
+            # release any implicit grabs some Tk variants might take for a transient Toplevel
+            try:
+                self.popup.grab_release()
+            except Exception:
+                pass
+            self.popup.withdraw()
+        except Exception:
+            pass
+        # ensure the main window is interactive again
+        try:
+            self.winfo_toplevel().focus_force()
+        except Exception:
+            pass
+
 
     # ---------- Internals ----------
     def _fire_change(self):
@@ -149,8 +201,13 @@ class AutoCompleteEntry(ttk.Frame):
         self._commit_selection()
         return "break"
 
-    def _on_click_select(self, _e):
-        self._commit_selection()
+    def _on_click_select(self, e):
+        # ensure we select the clicked row
+        i = self.listbox.nearest(e.y)
+        self.listbox.selection_clear(0, tk.END)
+        self.listbox.selection_set(i)
+        self.listbox.activate(i)
+        self.commit_selection()
         return "break"
 
     def _commit_selection(self):
@@ -166,12 +223,17 @@ class AutoCompleteEntry(ttk.Frame):
         self._selected = opt
         self.set(opt["label"])
         self.hide_popup()
+
         try:
-            # ensure the main window is interactive again
-            self.winfo_toplevel().focus_force()
-            self.entry.focus_set()
+            if self.advance_focus_on_select:
+                nxt = self.tk_focusNext()
+                if nxt:
+                    nxt.focus_set()
+            else:
+                self.winfo_toplevel().focus_force()
         except Exception:
             pass
+
         self._fire_change()
 
     def _requery_and_show(self):
@@ -220,11 +282,6 @@ class AutoCompleteEntry(ttk.Frame):
         except Exception:
             pass
 
-    def hide_popup(self):
-        try:
-            self.popup.withdraw()
-        except Exception:
-            pass
 
     def _popup_visible(self):
         return self.popup.state() != "withdrawn"
