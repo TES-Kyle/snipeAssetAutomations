@@ -6,5 +6,7 @@
   "labelName": "62",
   "printerType": "QL-720NW",
   "Default Print (BOOL)": "1",
-  "emailWarnPattern": ".*@uprva.org; .*@contractor.trinityes.org"
+  "emailWarnPattern": ".*@uprva.org; .*@contractor.trinityes.org",
+  "boxStateAssetTag": "6248",
+  "defaultBoxCapacity": "12"
 }

@@ -43,7 +43,11 @@ def open_second_window(parent, asset_tag, main_app_state):
         checked_values = [value for var, value in check_vars if var.get()]
         checked_values.insert(0, asset_tag)
 
-        result = func_list[func_index](asset_tag, checked_values)
+        try:
+            result = func_list[func_index](asset_tag, checked_values)
+        except TypeError:
+            result = func_list[func_index](asset_tag)
+
         main_app_state['result_text'].set(result)
         top.destroy()
 
