@@ -186,12 +186,12 @@ def newRepair(asset_tag):
     email_var = tk.BooleanVar(value=False)
     email = tk.Checkbutton(email_frame, variable=email_var)
     email.pack(side='left')
-    text_label = tk.Label(email_frame, text="Text Student?")
+    text_label = tk.Label(email_frame, text="Also Text Student?")
     text_label.pack(side='left')
     text_var = tk.BooleanVar(value=False)
     text = tk.Checkbutton(email_frame, variable=text_var)
     text.pack(side='left')
-    parent_label = tk.Label(email_frame, text="Email Parents?")
+    parent_label = tk.Label(email_frame, text="Also Email Parents?")
     parent_label.pack(side='left')
     parent_var = tk.BooleanVar(value=True)
     parent = tk.Checkbutton(email_frame, variable=parent_var)
@@ -225,29 +225,77 @@ def newRepair(asset_tag):
         junk, assetData = getAssetInfo(asset_tag)
         url = "https://trinityes.snipe-it.io/api/v1"
 
-        # Build notes cleanly
+        # Decide effective email behavior up front (handles "no current assignee" case)
+        want_email = bool(email_var.get())
+        recipient_email = None
+        full_name = None
+
+        # Try the current assignee first
+        if want_email:
+            assigned = assetData.get("assigned_to") or {}
+            current_email = assigned.get("email")
+            full_name = assigned.get("name")
+
+            if current_email and is_email(current_email):
+                recipient_email = current_email
+            else:
+                # No current assignee / invalid email → ask to use last user or turn off
+                last_email = getLatestCheckinName(assetData["id"], email=True)
+                last_name  = getLatestCheckinName(assetData["id"])  # name for templates
+
+                if last_email and is_email(last_email):
+                    use_last = messagebox.askyesno(
+                        title="No current assignee",
+                        message=(
+                            "This asset is not currently checked out (or has no valid email).\n\n"
+                            f"Send the notice to the last user on record?\n\n"
+                            f"Last user: {last_name or '(unknown)'}\n"
+                            f"Email: {last_email}\n\n"
+                            "Yes = Send to last user\nNo = Turn emailing OFF"
+                        )
+                    )
+                    if use_last:
+                        recipient_email = last_email
+                        full_name = last_name or full_name
+                    else:
+                        want_email = False
+                        email_var.set(False)  # reflect the choice in UI/notes
+                else:
+                    messagebox.showinfo(
+                        title="No email available",
+                        message=(
+                            "Asset is not currently checked out and no previous user email was found.\n"
+                            "Emailing will be turned OFF for this repair."
+                        )
+                    )
+                    want_email = False
+                    email_var.set(False)
+
+        # Build notes cleanly using the effective email decision
         issue_notes = (
             f"{issue_description} "
             f"At Fault: {at_fault} "
-            f"Send Emails: {email_var.get()} "
+            f"Send Emails: {want_email} "
             f"Text Student: {text_var.get()} "
             f"Email Parent: {parent_var.get()}"
         )
 
         # Optional email/text notifications (best-effort; surfaced if fail)
-        if email_var.get() and assetData.get("assigned_to", {}).get("email"):
-            full_name = assetData["assigned_to"]["name"]
-            if remove_fine_warning(assetData["assigned_to"]["email"]):
-                content = repair_notice_no_fine(full_name)
+        if want_email:
+            # Choose template and handle "remove fine" flag based on the effective recipient
+            if recipient_email and remove_fine_warning(recipient_email):
+                content = repair_notice_no_fine(full_name or "")
                 issue_notes += " Remove Charge: True"
             else:
-                content = repair_notice(full_name)
+                content = repair_notice(full_name or "")
 
             subject = "Repair Notice"
-            recipient = assetData["assigned_to"]["email"]
-            if not is_email(recipient):
-                subject = "Error email not valid: " + subject
-                recipient = support_email
+            recipient = recipient_email if recipient_email and is_email(recipient_email) else support_email
+            if recipient is support_email:
+                if not full_name:
+                    subject = "Error name not found: " + subject
+                if not (recipient_email and is_email(recipient_email)):
+                    subject = "Error email not valid/missing: " + subject
 
             def _send_msg():
                 # wrap in callable so failures hit the same retry UI
