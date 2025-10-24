@@ -7,6 +7,9 @@ from assetManagementFunctions.makeCharger import makeCharger
 from assetManagementFunctions.chargerSerial import show_charger_results_tk
 from assetManagementFunctions.checkoutTo import checkoutTo
 from assetManagementFunctions.checkIn import checkIn
+from assetManagementFunctions.jamfDeleteAndPreStage import jamf_remove_prestage_and_delete
+
+#consisterizer
 from consisterizer.consisterizer import consisterizer
 from consisterizer.aliases import bulkCheckIn
 
@@ -22,7 +25,8 @@ func_list = [printSelected,
              checkoutTo,
              checkIn,
              consisterizer,
-             lambda x: consisterizer(x, alias=bulkCheckIn)
+             lambda x: consisterizer(x, alias=bulkCheckIn),
+             jamf_remove_prestage_and_delete
              ]
 func_listTXT = ["Print Selected",
                 "New Repair",
@@ -34,5 +38,6 @@ func_listTXT = ["Print Selected",
                 "Checkout",
                 "Check In",
                 "Consisterizer",
-                "Bulk Check-in"
+                "Bulk Check-in",
+                "Delete & Un-Prestage Jamf"
                 ]
