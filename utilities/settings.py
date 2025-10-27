@@ -13,7 +13,72 @@ def settingsMenu():
         entry_vars[ind].set(defaultsDict[keys[ind]])
 
     def checkUpdate():
-        messagebox.showerror(message="this feature is not yet implemented")
+        import subprocess, sys, datetime
+        try:
+            app_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))  # …/Resources/app
+            meta_path = os.path.join(app_root, ".build", "meta.json")
+            if not os.path.isfile(meta_path):
+                messagebox.showerror("Update", "Missing meta.json — please reinstall.")
+                return
+
+            meta = json.loads(open(meta_path).read())
+            repo_url = meta.get("repo_url", "").strip()
+            branch = meta.get("branch", "main").strip()
+            installed_sha = meta.get("installed_sha", "unknown").strip()
+
+            if not repo_url or "github.com" not in repo_url:
+                messagebox.showerror("Update", "Unsupported or missing repo URL in meta.json.")
+                return
+
+            # Normalize repo owner/name from URL
+            # Examples: https://github.com/owner/repo or .../owner/repo.git
+            tail = repo_url.split("github.com/")[-1]
+            owner_repo = tail.split(".git")[0].strip("/")
+
+            # Query GitHub API for latest commit on branch (unauthenticated)
+            import requests
+            api = f"https://api.github.com/repos/{owner_repo}/commits/{branch}"
+            r = requests.get(api, timeout=15)
+            if r.status_code != 200:
+                messagebox.showerror("Update", f"Failed to check updates.\nHTTP {r.status_code}")
+                return
+            latest_sha = r.json().get("sha", "").strip()
+
+            if not latest_sha:
+                messagebox.showerror("Update", "Could not determine the latest commit SHA.")
+                return
+
+            if latest_sha == installed_sha:
+                messagebox.showinfo("Update", "You're up to date.")
+                # Optionally update last_checked:
+                meta["last_checked"] = datetime.datetime.now().isoformat()
+                open(meta_path, "w").write(json.dumps(meta))
+                return
+
+            # Offer to update
+            resp = messagebox.askyesno(
+                "Update available",
+                "A new version is available.\n\nInstalled:\n"
+                f"{installed_sha[:7]}\nLatest:\n{latest_sha[:7]}\n\nUpdate now?"
+            )
+            if not resp:
+                return
+
+            # Run the embedded updater (it shows its own progress dialogs)
+            updater = os.path.join(app_root, "shellScripts", "update_in_place.command")
+            if not os.path.isfile(updater):
+                messagebox.showerror("Update", "Updater script not found.\nPlease reinstall.")
+                return
+
+            # Launch updater detached so GUI stays responsive; updater will mutate files then prompt to restart.
+            subprocess.Popen(
+                ["bash", "-lc", f"exec {json.dumps(updater)}"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True
+            )
+
+            messagebox.showinfo("Update", "Update started.\n\nOnce complete, please quit and relaunch the app.")
+        except Exception as e:
+            messagebox.showerror("Update error", str(e))
 
     def apply():
         output = dict()

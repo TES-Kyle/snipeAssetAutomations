@@ -6,8 +6,8 @@ from tkinter import messagebox
 from utilities.labelPrinting import sendToPrinter
 from utilities.otherApiBits import getAssetInfo
 from utilities.settings import settingsMenu
-from assetFunctionsRouting import func_list, func_listTXT
-from otherFunctionsRouting import other_func_list, other_func_listTXT
+from assetManagementFunctions.assetFunctionsRouting import func_list, func_listTXT
+from otherManagementFunctions.otherFunctionsRouting import other_func_list, other_func_listTXT
 
 
 def print_label():
@@ -17,7 +17,7 @@ def print_label():
     in the same directory as this script.
     """
     script_dir = os.path.dirname(os.path.realpath(__file__))
-    label_path = os.path.join(script_dir, "barcode-label.jpg")
+    label_path = os.path.join(script_dir, "utilities/barcode-label.jpg")
     if os.path.isfile(label_path):
         sendToPrinter(label_path)
 
