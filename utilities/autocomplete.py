@@ -1,3 +1,5 @@
+"""Autocomplete Tk widget used across GUI forms."""
+
 # utilities/auto_complete.py
 import tkinter as tk
 from tkinter import ttk
@@ -9,23 +11,32 @@ _IGNORE_KEYS = {
 }
 
 class AutoCompleteEntry(ttk.Frame):
-    """
-    Reusable autocomplete Entry with popup Listbox (auto-height up to 5 items).
+    """Reusable autocomplete Entry with popup Listbox (auto-height up to 5 items).
+
     Public API:
-      - set_options(list[dict]): each dict has at least {"label": str, "id": any, ...}
+      - set_options(list[dict]): each dict must include {"label": str, ...}
       - get() -> str (visible text)
       - set(text: str)
-      - get_selected() -> dict | None (the last committed selection)
+      - get_selected() -> dict | None (last committed selection)
       - bind_change(callback) -> called on text change or selection
+
     Keyboard:
       - typing filters results (printable keys only)
       - Tab cycles suggestions while popup is visible
       - Enter selects highlighted
       - Esc hides popup
-    Popup appears on typing or hover; hides on selection or leaving both entry & popup.
+
+    The popup appears on typing or hover and hides on selection or when
+    focus leaves both the entry and popup.
     """
 
     def __init__(self, parent, *, width=40):
+        """Initialize the entry and popup listbox widgets.
+
+        Args:
+            parent: Tk parent widget.
+            width: Entry width in characters.
+        """
         super().__init__(parent)
         self.entry = ttk.Entry(self, width=width)
         self.entry.grid(row=0, column=0, sticky="ew")
@@ -72,21 +83,38 @@ class AutoCompleteEntry(ttk.Frame):
 
     # ---------- Public API ----------
     def set_options(self, options):
+        """Replace the autocomplete option list.
+
+        Args:
+            options: Iterable of dicts with a "label" key.
+        """
         self._all_options = list(options or [])
 
     def get(self) -> str:
+        """Return the current entry text."""
         return self.entry.get()
 
     def set(self, text: str):
+        """Set the entry text and fire change callbacks.
+
+        Args:
+            text: New text to insert.
+        """
         self.entry.delete(0, tk.END)
         if text:
             self.entry.insert(0, text)
         self._fire_change()
 
     def get_selected(self):
+        """Return the last committed option dict or None."""
         return self._selected
 
     def bind_change(self, callback):
+        """Register a callback to run when the entry changes.
+
+        Args:
+            callback: Callable invoked on text or selection changes.
+        """
         if callable(callback):
             self._change_cbs.append(callback)
 
@@ -125,6 +153,7 @@ class AutoCompleteEntry(ttk.Frame):
 
 
     def hide_popup(self):
+        """Hide the popup listbox and restore focus."""
         try:
             # release any implicit grabs some Tk variants might take for a transient Toplevel
             try:
@@ -143,11 +172,14 @@ class AutoCompleteEntry(ttk.Frame):
 
     # ---------- Internals ----------
     def _fire_change(self):
+        """Invoke change callbacks with best-effort isolation."""
+        # Isolate callback failures to keep the widget responsive.
         for cb in self._change_cbs:
             try: cb()
             except Exception: pass
 
     def _on_key(self, e):
+        """Handle key release events and refresh matches."""
         # ignore non-text keys so Tab/Enter etc. don’t reset selection
         if e.keysym in _IGNORE_KEYS:
             return
@@ -156,29 +188,36 @@ class AutoCompleteEntry(ttk.Frame):
         self._fire_change()
 
     def _on_hover_entry(self, _e):
+        """Open the popup when hovering over the entry."""
         self._hover_open = True
         self._requery_and_show()
 
     def _on_leave_entry(self, _e):
+        """Schedule popup hide when leaving the entry."""
         self._hover_open = False
         self._maybe_hide_later()
 
     def _on_enter_popup(self, _e):
+        """Track hover state when entering the popup."""
         self._hover_open = True
 
     def _on_leave_popup(self, _e):
+        """Schedule popup hide when leaving the popup."""
         self._hover_open = False
         self._maybe_hide_later()
 
     def _maybe_hide_later(self, _e=None):
+        """Delay popup hide to allow focus changes."""
         self.after(120, self._maybe_hide_now)
 
     def _maybe_hide_now(self):
+        """Hide the popup if neither entry nor popup has focus."""
         has_focus = (self.focus_get() in (self.entry, self.listbox))
         if not has_focus and not self._hover_open:
             self.hide_popup()
 
     def _on_tab(self, e):
+        """Cycle the highlighted suggestion when the popup is visible."""
         if not self._popup_visible():
             return  # let normal focus traversal happen
         if not self._matches:
@@ -192,16 +231,19 @@ class AutoCompleteEntry(ttk.Frame):
         return "break"
 
     def _on_return(self, _e):
+        """Commit the current selection on Enter."""
         if not self._popup_visible():
             return
         self._commit_selection()
         return "break"
 
     def _on_return_listbox(self, _e):
+        """Commit the current selection from the listbox."""
         self._commit_selection()
         return "break"
 
     def _on_click_select(self, e):
+        """Select the clicked item and commit it."""
         # ensure we select the clicked row
         i = self.listbox.nearest(e.y)
         self.listbox.selection_clear(0, tk.END)
@@ -211,6 +253,7 @@ class AutoCompleteEntry(ttk.Frame):
         return "break"
 
     def _commit_selection(self):
+        """Finalize the current selection and optionally advance focus."""
         sel = self.listbox.curselection()
         if not sel and self._matches:
             idx = 0
@@ -220,11 +263,13 @@ class AutoCompleteEntry(ttk.Frame):
         else:
             idx = sel[0]
         opt = self._matches[idx]
+        # Persist the selected option and reflect it in the entry.
         self._selected = opt
         self.set(opt["label"])
         self.hide_popup()
 
         try:
+            # Move focus to the next widget if configured.
             if self.advance_focus_on_select:
                 nxt = self.tk_focusNext()
                 if nxt:
@@ -237,6 +282,7 @@ class AutoCompleteEntry(ttk.Frame):
         self._fire_change()
 
     def _requery_and_show(self):
+        """Recompute matches and render the popup listbox."""
         q = self.entry.get().strip().lower()
         self._matches = self._top_matches(q, limit=5)
 
@@ -262,6 +308,7 @@ class AutoCompleteEntry(ttk.Frame):
         self.show_popup()
 
     def _place_popup(self):
+        """Position the popup just below the entry widget."""
         if not self._popup_visible() and not self._matches:
             return
         try:
@@ -276,6 +323,7 @@ class AutoCompleteEntry(ttk.Frame):
             pass
 
     def show_popup(self):
+        """Show and raise the popup listbox."""
         try:
             self.popup.deiconify()
             self.popup.lift()
@@ -284,10 +332,20 @@ class AutoCompleteEntry(ttk.Frame):
 
 
     def _popup_visible(self):
+        """Return True if the popup is currently visible."""
         return self.popup.state() != "withdrawn"
 
     # ------ matching ------
     def _top_matches(self, q, limit=5):
+        """Return top matching options for the given query.
+
+        Args:
+            q: Lowercased query string.
+            limit: Maximum number of options to return.
+
+        Returns:
+            Ordered list of option dicts.
+        """
         if not self._all_options:
             return []
 
@@ -295,6 +353,7 @@ class AutoCompleteEntry(ttk.Frame):
             return sorted(self._all_options, key=lambda o: o["label"].lower())[:limit]
 
         def score(opt):
+            """Return a tuple used to rank match quality."""
             label = opt["label"].lower()
             if label.startswith(q):
                 return (0, len(label))
@@ -311,6 +370,7 @@ class AutoCompleteEntry(ttk.Frame):
 
     @staticmethod
     def _subseq_pos(text, pat):
+        """Return the start index of a subsequence match or -1."""
         ti, first = 0, -1
         for pc in pat:
             found = text.find(pc, ti)

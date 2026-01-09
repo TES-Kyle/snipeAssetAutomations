@@ -1,0 +1,400 @@
+{
+  "groups": [
+    {
+      "name": "Logging",
+      "description": "Logging controls for file output and verbosity.",
+      "collapsed": false,
+      "items": [
+        {
+          "key": "logLevel",
+          "label": "Log Level",
+          "description": "Allowed values: DEBUG, INFO, WARNING, ERROR."
+        },
+        {
+          "key": "logAssetData",
+          "label": "Log Full Asset Payloads",
+          "description": "Use 1 to log full asset JSON at INFO; use 0 to log at DEBUG."
+        },
+        {
+          "key": "logWindowAutocloseSeconds",
+          "label": "Log Window Autoclose Seconds",
+          "description": "Auto-close delay for long-running script logs."
+        }
+      ]
+    },
+    {
+      "name": "API Users",
+      "description": "Snipe-IT API user selection for change attribution.",
+      "collapsed": false,
+      "items": [
+        {
+          "key": "apiUserStaticName",
+          "label": "Static API User Name",
+          "description": "Name from API_KEYS to always use. Use 'none' to prompt each session."
+        },
+        {
+          "key": "apiUserTimeoutMinutes",
+          "label": "Prompt Cache Minutes",
+          "description": "Minutes before a prompted user expires (sliding window)."
+        },
+        {
+          "key": "apiUserPromptTitle",
+          "label": "Prompt Title",
+          "description": "Title shown in the API user selection prompt."
+        },
+        {
+          "key": "apiUserPromptMessage",
+          "label": "Prompt Message",
+          "description": "Message text shown in the API user selection prompt."
+        }
+      ]
+    },
+    {
+      "name": "GUI",
+      "description": "Main window layout and font settings.",
+      "collapsed": true,
+      "items": [
+        {
+          "key": "guiWindowState",
+          "label": "Window State",
+          "description": "Allowed values: zoomed, normal."
+        },
+        {
+          "key": "guiFontFamily",
+          "label": "Font Family",
+          "description": "Font family name used throughout the GUI."
+        },
+        {
+          "key": "guiFontSize",
+          "label": "Base Font Size",
+          "description": "Default font size for most controls."
+        },
+        {
+          "key": "guiTabFontSize",
+          "label": "Tab Font Size",
+          "description": "Font size for top tab labels."
+        },
+        {
+          "key": "guiButtonColumns",
+          "label": "Button Columns",
+          "description": "Number of columns for function button grids."
+        },
+        {
+          "key": "guiActiveTabColor",
+          "label": "Active Tab Color",
+          "description": "Background color for active tab."
+        },
+        {
+          "key": "guiInactiveTabColor",
+          "label": "Inactive Tab Color",
+          "description": "Background color for inactive tabs."
+        }
+      ]
+    },
+    {
+      "name": "Printer and Labels",
+      "description": "Label printer connection and sizing defaults.",
+      "collapsed": true,
+      "items": [
+        {
+          "key": "printerIP",
+          "label": "Printer IP",
+          "description": "Example: tcp://10.0.0.10:9100"
+        },
+        {
+          "key": "printerType",
+          "label": "Printer Type",
+          "description": "Example: QL-720NW"
+        },
+        {
+          "key": "labelName",
+          "label": "Label Name",
+          "description": "Brother QL label name or size code."
+        },
+        {
+          "key": "labelWidth",
+          "label": "Label Width",
+          "description": "Pixels (integer)."
+        },
+        {
+          "key": "labelHeight",
+          "label": "Label Height",
+          "description": "Pixels (integer)."
+        },
+        {
+          "key": "labelsPerPrint",
+          "label": "Labels Per Print",
+          "description": "Integer count for each print operation."
+        },
+        {
+          "key": "Default Print (BOOL)",
+          "label": "Default Print",
+          "description": "1 to auto-print after label generation, 0 to disable."
+        }
+      ]
+    },
+    {
+      "name": "Drop-Off",
+      "description": "Drop-off workflow controls and tracker defaults.",
+      "collapsed": true,
+      "items": [
+        {
+          "key": "boxStateAssetTag",
+          "label": "Box State Tracker Asset Tag",
+          "description": "Asset tag for the shared tracker record."
+        },
+        {
+          "key": "defaultBoxCapacity",
+          "label": "Default Box Capacity",
+          "description": "Integer number of items per box."
+        },
+        {
+          "key": "dropOffStatusId",
+          "label": "Drop-Off Status ID",
+          "description": "Status ID applied on drop-off. Integer."
+        },
+        {
+          "key": "dropOffPendingStatusId",
+          "label": "Pending Drop-Off Status ID",
+          "description": "Status ID considered as 'Pending Drop-Off'. Integer."
+        },
+        {
+          "key": "dropOffChargerFieldKey",
+          "label": "Drop-Off Charger Field Key",
+          "description": "Custom field key for charger condition (e.g., _snipeit_chargeringoodcondition_6)."
+        },
+        {
+          "key": "dropOffCordFieldKey",
+          "label": "Drop-Off Cord Field Key",
+          "description": "Custom field key for cord condition (e.g., _snipeit_cordingoodcondition_11)."
+        },
+        {
+          "key": "dropOffBoxFieldKey",
+          "label": "Drop-Off Box Field Key",
+          "description": "Custom field key for box label (e.g., _snipeit_box_number_5)."
+        }
+      ]
+    },
+    {
+      "name": "Repairs",
+      "description": "Repair workflow status IDs and defaults.",
+      "collapsed": true,
+      "items": [
+        {
+          "key": "repairPendingStatusId",
+          "label": "Pending Repair Status ID",
+          "description": "Status ID used when a repair is opened. Integer."
+        },
+        {
+          "key": "repairCompletedStatusId",
+          "label": "Repair Completed Status ID",
+          "description": "Status ID used when returning from repair. Integer."
+        },
+        {
+          "key": "repairMaintenanceSupplierId",
+          "label": "Repair Supplier ID",
+          "description": "Supplier ID for new maintenance records. Integer."
+        },
+        {
+          "key": "repairMaintenanceType",
+          "label": "Repair Maintenance Type",
+          "description": "Maintenance type label or ID used when creating repairs."
+        },
+        {
+          "key": "loanerCheckinWindowDays",
+          "label": "Loaner Check-in Window (Days)",
+          "description": "Max day difference between loaner checkout and maintenance start to auto-set loaner check-in."
+        }
+      ]
+    },
+    {
+      "name": "Shipping",
+      "description": "Shipping workflow status defaults.",
+      "collapsed": true,
+      "items": [
+        {
+          "key": "pantsShippingStatusId",
+          "label": "Pants Shipping Status ID",
+          "description": "Status ID applied in pants shipping. Integer."
+        }
+      ]
+    },
+    {
+      "name": "Charger",
+      "description": "Charger asset defaults.",
+      "collapsed": true,
+      "items": [
+        {
+          "key": "chargerCategoryId",
+          "label": "Charger Category ID",
+          "description": "Category ID used to filter charger models. Integer."
+        },
+        {
+          "key": "chargerNamePrefix",
+          "label": "Charger Name Prefix",
+          "description": "Prefix for charger asset names when a suffix is provided."
+        },
+        {
+          "key": "chargerNameDefault",
+          "label": "Charger Default Name",
+          "description": "Name used when no suffix is provided."
+        },
+        {
+          "key": "chargerEaName",
+          "label": "Charger EA Name",
+          "description": "Extension Attribute name that stores charger history."
+        },
+        {
+          "key": "chargerSerialPageSize",
+          "label": "Charger Serial Page Size",
+          "description": "Jamf inventory page size for charger history lookups."
+        }
+      ]
+    },
+    {
+      "name": "Lookup Limits",
+      "description": "Search limits for user/status lookups.",
+      "collapsed": true,
+      "items": [
+        {
+          "key": "statusSearchLimit",
+          "label": "Status Search Limit",
+          "description": "Max status labels to load for full list."
+        },
+        {
+          "key": "statusSearchLimitFiltered",
+          "label": "Status Search Limit (Filtered)",
+          "description": "Max status labels to load for filtered search."
+        },
+        {
+          "key": "userSearchLimit",
+          "label": "User Search Limit",
+          "description": "Max users to load for filtered search."
+        }
+      ]
+    },
+    {
+      "name": "Battery Sync",
+      "description": "Battery sync field keys and EA names.",
+      "collapsed": true,
+      "items": [
+        {
+          "key": "batterySyncDryRun",
+          "label": "Battery Sync Dry Run",
+          "description": "1 to prevent writes to Snipe-IT."
+        },
+        {
+          "key": "batterySyncVerifySSL",
+          "label": "Battery Sync Verify SSL",
+          "description": "1 to verify SSL certificates, 0 to skip."
+        },
+        {
+          "key": "batterySyncRateLimitDelay",
+          "label": "Battery Sync Rate Limit Delay",
+          "description": "Seconds between API calls (float)."
+        },
+        {
+          "key": "batterySyncTestSerial",
+          "label": "Battery Sync Test Serial",
+          "description": "Optional serial for live updates when in test mode."
+        },
+        {
+          "key": "batterySyncDebugVerbose",
+          "label": "Battery Sync Debug Verbose",
+          "description": "1 to log extra EA details."
+        },
+        {
+          "key": "batterySyncDebugOnlyFirstN",
+          "label": "Battery Sync Debug Only First N",
+          "description": "Limit processing to N devices (blank or 0 for all)."
+        },
+        {
+          "key": "batterySyncDebugShowEaValues",
+          "label": "Battery Sync Debug Show EA Values",
+          "description": "1 to include EA values in debug logs."
+        },
+        {
+          "key": "batteryDataFieldKey",
+          "label": "Battery Data Field Key",
+          "description": "Custom field key for battery data in Snipe-IT."
+        },
+        {
+          "key": "batteryEaNameDesign",
+          "label": "Battery EA Name (Design)",
+          "description": "Jamf EA name for design capacity."
+        },
+        {
+          "key": "batteryEaNameMax",
+          "label": "Battery EA Name (Maximum)",
+          "description": "Jamf EA name for maximum capacity."
+        },
+        {
+          "key": "batteryEaNameCond",
+          "label": "Battery EA Name (Condition)",
+          "description": "Jamf EA name for condition."
+        }
+      ]
+    },
+    {
+      "name": "Jamf Sync",
+      "description": "Jamf asset tag sync controls.",
+      "collapsed": true,
+      "items": [
+        {
+          "key": "jamfSyncDryRun",
+          "label": "Jamf Sync Dry Run",
+          "description": "1 to prevent updates in Jamf."
+        },
+        {
+          "key": "jamfSyncVerifySSL",
+          "label": "Jamf Sync Verify SSL",
+          "description": "1 to verify SSL certificates, 0 to skip."
+        },
+        {
+          "key": "jamfSyncRateLimitDelay",
+          "label": "Jamf Sync Rate Limit Delay",
+          "description": "Seconds between API calls (float)."
+        },
+        {
+          "key": "jamfSyncSyncComputers",
+          "label": "Sync Computers",
+          "description": "1 to sync computer inventory."
+        },
+        {
+          "key": "jamfSyncSyncMobiles",
+          "label": "Sync Mobile Devices",
+          "description": "1 to sync mobile device inventory."
+        },
+        {
+          "key": "jamfSyncTestSerial",
+          "label": "Jamf Sync Test Serial",
+          "description": "Optional serial to update live while others dry-run."
+        }
+      ]
+    },
+    {
+      "name": "Messaging",
+      "description": "Messaging filters and email patterns.",
+      "collapsed": true,
+      "items": [
+        {
+          "key": "emailWarnPattern",
+          "label": "Email Warning Patterns",
+          "description": "Semicolon-separated regex patterns."
+        }
+      ]
+    },
+    {
+      "name": "Asset Tags",
+      "description": "Asset tag validation patterns.",
+      "collapsed": true,
+      "items": [
+        {
+          "key": "assetTagRegex",
+          "label": "Asset Tag Regex",
+          "description": "Regex used to validate asset tag input (e.g., ^\\d{4,5}$)."
+        }
+      ]
+    }
+  ]
+}

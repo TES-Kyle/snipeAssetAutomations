@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+"""Sync asset tags between Snipe-IT and Jamf Pro.
+
+Pulls asset tags from Snipe-IT and updates Jamf inventory when mismatches
+are detected, honoring dry-run and test-mode settings.
+"""
+
 # snipe2jamf - Simple Asset Tag Sync (Hybrid SDK Version)
 #
 # ABOUT:
@@ -6,14 +12,21 @@
 #   and update assets in Jamf Pro. It uses the modern Jamf Pro SDK for reading
 #   and the SDK's classic request method for reliable updates.
 
+import logging
 import time
-from utilities import Key
+
 from requests import Session, adapters
 from urllib3.util import Retry
+
+from utilities import Key
+from utilities.api_user import get_api_headers
+from utilities.logging_utils import configure_logging, get_settings
 
 # Import necessary components from the Jamf Pro SDK
 from jamf_pro_sdk import JamfProClient, SessionConfig
 from jamf_pro_sdk.clients.auth import ApiClientCredentialsProvider
+
+logger = logging.getLogger(__name__)
 
 # --- CONFIGURATION ---
 # Your API details are imported from the utilities.Key module.
@@ -29,7 +42,6 @@ JAMF_CLIENT_SECRET = Key.jamfClientSecret
 # IMPORTANT: Key.API_URL_Base should be the full base path to the API.
 # e.g., "https://your-instance.snipe-it.io/api/v1"
 SNIPE_URL = Key.API_URL_Base
-SNIPE_API_KEY = Key.API_Key
 
 # --- URL VALIDATION (for https:// scheme only) ---
 if not SNIPE_URL.startswith(('http://', 'https://')):
@@ -55,44 +67,57 @@ TEST_MODE_SERIAL = ""  # Example: "LTY2R3KM7X"
 snipe_session = Session()
 snipe_retries = Retry(total=3, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
 snipe_session.mount('https://', adapters.HTTPAdapter(max_retries=snipe_retries))
-snipe_headers = {'Authorization': f'Bearer {SNIPE_API_KEY}', 'Accept': 'application/json'}
+def _snipe_headers():
+    """Build Snipe-IT headers using the active API user."""
+    return get_api_headers(content_type=None, accept="application/json")
 
 
 # --- API Functions ---
 def search_snipe_asset_by_serial(serial):
-    """Looks up an asset in Snipe-IT by its serial number."""
+    """Look up a Snipe-IT asset by serial number.
+
+    Args:
+        serial: Device serial number to query in Snipe-IT.
+
+    Returns:
+        Asset dict when exactly one match is found; otherwise None.
+    """
     if RATE_LIMIT_DELAY > 0:
         time.sleep(RATE_LIMIT_DELAY)
     api_url = f'{SNIPE_URL}/hardware/byserial/{serial}'
     try:
-        response = snipe_session.get(api_url, headers=snipe_headers, verify=VERIFY_SSL)
+        # Query Snipe-IT for a single serial match.
+        response = snipe_session.get(api_url, headers=_snipe_headers(), verify=VERIFY_SSL)
         response.raise_for_status()
         data = response.json()
         if data.get('total') == 1:
             return data['rows'][0]
         elif data.get('total') == 0:
-            print(f"  [INFO] No match found in Snipe-IT for S/N: {serial}")
+            logger.info("No match found in Snipe-IT for S/N: %s", serial)
         else:
-            print(f"  [WARN] Multiple ({data.get('total')}) matches in Snipe-IT for S/N: {serial}. Skipping.")
+            logger.warning(
+                "Multiple (%s) matches in Snipe-IT for S/N: %s. Skipping.",
+                data.get("total"),
+                serial,
+            )
     except Exception as e:
-        print(f"  [ERROR] Error searching Snipe-IT for S/N {serial}: {e}")
+        logger.error("Error searching Snipe-IT for S/N %s: %s", serial, e)
     return None
 
 
 def update_jamf_asset_tag(jamf_client, device_id, new_asset_tag, endpoint):
-    """
-    Update an asset tag in Jamf Pro using the Pro API (computers or mobile devices).
+    """Update an asset tag in Jamf Pro using the Pro API (computers/mobiles).
 
     Args:
         jamf_client: Authenticated JamfProClient object.
-        device_id (int): Jamf Pro device ID.
-        new_asset_tag (str): New asset tag value to set.
-        endpoint (str): Either "computers" or "mobiledevices".
+        device_id: Jamf Pro device ID.
+        new_asset_tag: New asset tag value to set.
+        endpoint: Either "computers" or "mobiledevices".
     """
     try:
-        print(f"  [LIVE UPDATE] Updating Jamf {endpoint[:-1]} ID {device_id} via Pro API...")
+        logger.info("Updating Jamf %s ID %s via Pro API...", endpoint[:-1], device_id)
 
-        # Pick correct endpoint + payload
+        # Pick correct endpoint + payload for the device type.
         if endpoint == "computers":
             resource_path = f"/v2/computers-inventory-detail/{device_id}"
             payload = {"general": {"assetTag": new_asset_tag}}
@@ -104,7 +129,7 @@ def update_jamf_asset_tag(jamf_client, device_id, new_asset_tag, endpoint):
         else:
             raise ValueError(f"Unknown endpoint type: {endpoint}")
 
-        # Use pro_api_request to send PATCH
+        # Use pro_api_request to send PATCH.
         response = jamf_client.pro_api_request(
             method="PATCH",
             resource_path=resource_path,
@@ -113,41 +138,47 @@ def update_jamf_asset_tag(jamf_client, device_id, new_asset_tag, endpoint):
         )
         response.raise_for_status()
 
-        print(f"  [SUCCESS] Asset tag updated to '{new_asset_tag}' for Jamf {endpoint[:-1]} ID {device_id}.")
+        logger.info(
+            "Asset tag updated to '%s' for Jamf %s ID %s.",
+            new_asset_tag,
+            endpoint[:-1],
+            device_id,
+        )
 
     except Exception as e:
-        print(f"  [ERROR] Failed to update Jamf {endpoint[:-1]} ID {device_id}: {e}")
+        logger.error("Failed to update Jamf %s ID %s: %s", endpoint[:-1], device_id, e)
 
 
 
 # --- Main Sync Logic ---
 def process_devices(jamf_client, endpoint):
     """Main function to process a list of devices using the Jamf Pro SDK."""
-    print(f"\n--- Starting processing for Jamf {endpoint.capitalize()} ---")
+    logger.info("Starting processing for Jamf %s", endpoint.capitalize())
 
     try:
         if endpoint == 'computers':
-            print("[INFO] Fetching all computer records from Jamf...")
+            logger.info("Fetching all computer records from Jamf...")
             all_devices = jamf_client.pro_api.get_computer_inventory_v1(
                 sections=["GENERAL", "HARDWARE"],
                 page_size=1000
             )
         else:
-            print("[INFO] Fetching all mobile device records from Jamf...")
+            logger.info("Fetching all mobile device records from Jamf...")
             all_devices = jamf_client.pro_api.get_mobile_device_inventory_v2(
                 sections=["GENERAL", "HARDWARE"],
                 page_size=1000
             )
     except Exception as e:
-        print(f"[ERROR] Failed to fetch {endpoint} from Jamf: {e}")
+        logger.error("Failed to fetch %s from Jamf: %s", endpoint, e)
         return
 
     if not all_devices:
-        print(f"No {endpoint} found in Jamf to process.")
+        logger.info("No %s found in Jamf to process.", endpoint)
         return
 
-    print(f"Found {len(all_devices)} total {endpoint} in Jamf.")
+    logger.info("Found %s total %s in Jamf.", len(all_devices), endpoint)
     for device in all_devices:
+        # Normalize fields across computer/mobile record types.
         if endpoint == 'computers':
             device_id = device.id
             serial = device.hardware.serialNumber if device.hardware else None
@@ -160,58 +191,110 @@ def process_devices(jamf_client, endpoint):
             current_jamf_tag = device.general.assetTag
 
         if not serial:
-            print(f"[INFO] Skipping {device_name} (ID: {device_id}): no serial number found.")
+            logger.info("Skipping %s (ID: %s): no serial number found.", device_name, device_id)
             continue
 
-        print(f"-> Processing {device_name} (S/N: {serial})")
+        logger.info("Processing %s (S/N: %s)", device_name, serial)
 
+        # Resolve asset tag in Snipe-IT before deciding on updates.
         snipe_asset = search_snipe_asset_by_serial(serial)
         if not snipe_asset:
             continue
 
         snipe_asset_tag = snipe_asset.get('asset_tag')
         if not snipe_asset_tag:
-            print(f"  - Snipe-IT asset for S/N {serial} has no asset tag. Skipping.")
+            logger.info("Snipe-IT asset for S/N %s has no asset tag. Skipping.", serial)
             continue
 
         if snipe_asset_tag != current_jamf_tag:
-            print(f"  - MISMATCH: Jamf tag is '{current_jamf_tag}', Snipe-IT is '{snipe_asset_tag}'.")
+            logger.warning(
+                "MISMATCH: Jamf tag is '%s', Snipe-IT is '%s'.",
+                current_jamf_tag,
+                snipe_asset_tag,
+            )
 
+            # Determine if this run is allowed to update Jamf.
             is_live_update = False
             if TEST_MODE_SERIAL and serial == TEST_MODE_SERIAL:
                 is_live_update = True
-                print(f"  [TEST MODE] This device matches the test serial. Performing live update.")
+                logger.info("TEST MODE: Device matches test serial. Performing live update.")
             elif not DRY_RUN and not TEST_MODE_SERIAL:
                 is_live_update = True
 
             if is_live_update:
                 update_jamf_asset_tag(jamf_client, device_id, snipe_asset_tag, endpoint)
             else:
-                print(f"  [DRY RUN] Would update {endpoint[:-1]} ID {device_id} with asset tag '{snipe_asset_tag}'.")
+                logger.info(
+                    "DRY RUN: Would update %s ID %s with asset tag '%s'.",
+                    endpoint[:-1],
+                    device_id,
+                    snipe_asset_tag,
+                )
         else:
-            print(f"  - Tags match ('{snipe_asset_tag}'). No update needed.")
+            logger.info("Tags match ('%s'). No update needed.", snipe_asset_tag)
 
 
 
 def run_snipe_to_jamf_sync():
-    """The main callable function to run the entire sync process."""
+    """Run the full Snipe-to-Jamf sync process.
+
+    Loads settings, initializes API clients, iterates Jamf inventory,
+    and updates asset tags when mismatches are found.
+    """
+    configure_logging()
+    settings = get_settings()
+    global SYNC_COMPUTERS, SYNC_MOBILES, DRY_RUN, VERIFY_SSL, RATE_LIMIT_DELAY, TEST_MODE_SERIAL
+
+    def _to_bool(val, default=False):
+        """Convert common truthy/falsy values to bool with a default."""
+        raw = str(val if val is not None else "").strip().lower()
+        if raw in ("1", "true", "yes", "on"):
+            return True
+        if raw in ("0", "false", "no", "off"):
+            return False
+        return default
+
+    # Apply runtime settings overrides.
+    SYNC_COMPUTERS = _to_bool(settings.get("jamfSyncSyncComputers", SYNC_COMPUTERS), SYNC_COMPUTERS)
+    SYNC_MOBILES = _to_bool(settings.get("jamfSyncSyncMobiles", SYNC_MOBILES), SYNC_MOBILES)
+    DRY_RUN = _to_bool(settings.get("jamfSyncDryRun", DRY_RUN), DRY_RUN)
+    VERIFY_SSL = _to_bool(settings.get("jamfSyncVerifySSL", VERIFY_SSL), VERIFY_SSL)
+    try:
+        RATE_LIMIT_DELAY = float(settings.get("jamfSyncRateLimitDelay", RATE_LIMIT_DELAY))
+    except Exception:
+        RATE_LIMIT_DELAY = RATE_LIMIT_DELAY
+    TEST_MODE_SERIAL = (settings.get("jamfSyncTestSerial", TEST_MODE_SERIAL) or "").strip()
+
+    logger.info(
+        "Jamf sync settings: dry_run=%s verify_ssl=%s rate_limit=%s sync_computers=%s sync_mobiles=%s test_serial=%s",
+        DRY_RUN,
+        VERIFY_SSL,
+        RATE_LIMIT_DELAY,
+        SYNC_COMPUTERS,
+        SYNC_MOBILES,
+        TEST_MODE_SERIAL,
+    )
     if DRY_RUN and not TEST_MODE_SERIAL:
-        print("--- SCRIPT IS IN DRY RUN MODE. NO CHANGES WILL BE MADE. ---")
+        logger.info("SCRIPT IS IN DRY RUN MODE. NO CHANGES WILL BE MADE.")
     elif TEST_MODE_SERIAL:
-        print(f"--- SCRIPT IS IN TEST MODE. LIVE CHANGES WILL ONLY AFFECT S/N: {TEST_MODE_SERIAL} ---")
+        logger.info(
+            "SCRIPT IS IN TEST MODE. LIVE CHANGES WILL ONLY AFFECT S/N: %s",
+            TEST_MODE_SERIAL,
+        )
     else:
-        print("--- SCRIPT IS IN LIVE MODE. CHANGES WILL BE APPLIED. ---")
+        logger.info("SCRIPT IS IN LIVE MODE. CHANGES WILL BE APPLIED.")
 
     try:
-        print("[INFO] Initializing Jamf Pro client...")
+        # Initialize the Jamf client using the configured credentials.
+        logger.info("Initializing Jamf Pro client...")
         jamf_client = JamfProClient(
             server=JAMF_URL,
             credentials=ApiClientCredentialsProvider(JAMF_CLIENT_ID, JAMF_CLIENT_SECRET),
             session_config=SessionConfig(ssl_verify=VERIFY_SSL, max_retries=5)
         )
-        print("[SUCCESS] Jamf Pro client initialized.")
+        logger.info("Jamf Pro client initialized.")
     except Exception as e:
-        print(f"[FATAL] Could not initialize Jamf Pro client: {e}")
+        logger.error("Could not initialize Jamf Pro client: %s", e)
         return
 
     if SYNC_COMPUTERS:
@@ -219,12 +302,13 @@ def run_snipe_to_jamf_sync():
     if SYNC_MOBILES:
         process_devices(jamf_client, 'mobiledevices')
 
-    print("\n--- Sync complete. ---")
+    logger.info("Sync complete.")
 
 
 def quick_update_test():
     """Initializes a Jamf client and runs a single update for testing."""
-    print("--- RUNNING QUICK UPDATE TEST ---")
+    configure_logging()
+    logger.info("RUNNING QUICK UPDATE TEST")
 
     # --- DEFINE YOUR TEST DATA HERE ---
     test_device_id = 2955
@@ -234,22 +318,22 @@ def quick_update_test():
 
     # 1. Initialize the client
     try:
-        print("[INFO] Initializing Jamf Pro client for test...")
+        logger.info("Initializing Jamf Pro client for test...")
         jamf_client = JamfProClient(
             server=JAMF_URL,
             credentials=ApiClientCredentialsProvider(JAMF_CLIENT_ID, JAMF_CLIENT_SECRET),
             session_config=SessionConfig(ssl_verify=VERIFY_SSL, max_retries=5)
         )
-        print("[SUCCESS] Jamf Pro client initialized for test.")
+        logger.info("Jamf Pro client initialized for test.")
     except Exception as e:
-        print(f"[FATAL] Could not initialize Jamf Pro client for test: {e}")
+        logger.error("Could not initialize Jamf Pro client for test: %s", e)
         return
 
     # 2. Run the update
     endpoint = 'computers' if test_device_type == 'computer' else 'mobiledevices'
     update_jamf_asset_tag(jamf_client, test_device_id, test_asset_tag, endpoint)
 
-    print("\n--- Quick Update Test Complete ---")
+    logger.info("Quick Update Test Complete.")
 
 
 # --- Script Execution ---
@@ -259,6 +343,8 @@ if __name__ == "__main__":
     RUN_QUICK_TEST = False
 
     if RUN_QUICK_TEST:
+        configure_logging(log_to_console=True)
         quick_update_test()
     else:
+        configure_logging(log_to_console=True)
         run_snipe_to_jamf_sync()

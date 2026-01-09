@@ -1,36 +1,67 @@
+"""Run long tasks in a separate process and stream logs to a Tk window."""
+
+import logging
+import multiprocessing as mp
+import os
+import sys
+import threading
+import time
 import tkinter as tk
 from tkinter.scrolledtext import ScrolledText
-import multiprocessing as mp
-import threading
-import sys
-import time
-import os
+
+from utilities.logging_utils import configure_logging, get_settings
+
+logger = logging.getLogger(__name__)
 
 # Keep track of how many log windows have been opened
 _window_counter = 0
 
 
 def _worker_func(func, log_queue):
-    """Runs in a separate process. Redirects print() to a queue."""
+    """Run a function in a separate process and stream logs to a queue.
+
+    Args:
+        func: Callable to execute in a worker process.
+        log_queue: Multiprocessing queue for log messages.
+    """
     class QueueWriter:
+        """File-like adapter that forwards writes into the log queue."""
         def write(self, msg):
+            """Write non-empty messages to the queue."""
             if msg.strip():
                 log_queue.put(msg)
-        def flush(self): pass
+        def flush(self):
+            """No-op flush to satisfy file-like interface."""
+            pass
 
+    # Redirect stdout/stderr into the queue so the UI can display output.
     sys.stdout = QueueWriter()
     sys.stderr = QueueWriter()
 
     try:
+        # Configure logging inside the subprocess to mirror into the queue.
+        configure_logging(log_queue=log_queue)
         func()
     except Exception as e:
+        logger.exception("Worker function failed")
         log_queue.put(f"[[Error: {e}]]")
     finally:
+        # Always signal completion so the UI can stop polling.
         log_queue.put("[[SCRIPT FINISHED]]")
 
 
 def handler(func, autoclose_delay=120):
-    """Open a new Tk window and run func() in a separate process, showing logs."""
+    """Open a new Tk window and run func() in a separate process, showing logs.
+
+    Args:
+        func: Callable to execute.
+        autoclose_delay: Default auto-close delay in seconds.
+    """
+    settings = get_settings()
+    try:
+        autoclose_delay = int(settings.get("logWindowAutocloseSeconds", autoclose_delay))
+    except Exception:
+        autoclose_delay = autoclose_delay
 
     global _window_counter
     _window_counter += 1
@@ -38,7 +69,7 @@ def handler(func, autoclose_delay=120):
     win = tk.Toplevel()
     win.title(f"Script Log #{_window_counter}")
 
-    # Center on screen
+    # Center on screen.
     win.update_idletasks()
     w, h = 600, 400
     x = (win.winfo_screenwidth() // 2) - (w // 2)
@@ -64,6 +95,7 @@ def handler(func, autoclose_delay=120):
     countdown_label = tk.Label(win, text="")
     countdown_label.pack(side="bottom", pady=3)
 
+    # Start the worker process and set up polling for logs.
     log_queue = mp.Queue()
     proc = mp.Process(target=_worker_func, args=(func, log_queue), daemon=True)
     proc.start()
@@ -71,10 +103,12 @@ def handler(func, autoclose_delay=120):
     finished_flag = threading.Event()
 
     def poll_log_queue():
+        """Drain the log queue and update the log window."""
         while not log_queue.empty():
             msg = log_queue.get_nowait()
 
             if msg == "[[SCRIPT FINISHED]]":
+                # Move the UI into finished state and start auto-close.
                 on_finish()
             else:
                 # Check if scrollbar is at the bottom
@@ -90,6 +124,7 @@ def handler(func, autoclose_delay=120):
             win.after(100, poll_log_queue)
 
     def on_finish():
+        """Finalize UI state and trigger auto-close countdown."""
         finished_flag.set()
         stop_button.config(state="disabled")
         close_button.config(state="normal")
@@ -99,6 +134,7 @@ def handler(func, autoclose_delay=120):
         remaining = autoclose_delay
 
         def update_countdown():
+            """Update the auto-close countdown label once per second."""
             nonlocal remaining
             if keep_button["state"] == "disabled":  # "Keep Open" was pressed
                 countdown_label.config(text="Window will stay open permanently")
@@ -114,6 +150,7 @@ def handler(func, autoclose_delay=120):
         update_countdown()
 
     def stop_script():
+        """Terminate the worker process and update UI/logs."""
         if proc.is_alive():
             proc.terminate()
             log_box.insert(tk.END, "[[Script forcefully terminated]]\n")
@@ -122,6 +159,7 @@ def handler(func, autoclose_delay=120):
         on_finish()
 
     def keep_open():
+        """Disable auto-close and keep the log window open."""
         keep_button.config(state="disabled")
         countdown_label.config(text="Window will stay open permanently")
         log_box.insert(tk.END, "[[Window will stay open permanently]]\n")
@@ -131,7 +169,7 @@ def handler(func, autoclose_delay=120):
         """Ensure process is killed if user closes the window manually."""
         if proc.is_alive():
             proc.terminate()
-            print("[[Script terminated because window was closed]]")
+            logger.warning("Script terminated because window was closed")
         win.destroy()
 
     stop_button.config(command=stop_script)
@@ -146,7 +184,8 @@ def handler(func, autoclose_delay=120):
 
 # Example long-running script
 def example_task():
+    """Example long-running task used for manual testing."""
     for i in range(1000):
-        print(f"Working... step {i+1}/10 (pid={os.getpid()})")
+        logger.info("Working... step %s/10 (pid=%s)", i + 1, os.getpid())
         time.sleep(0.1)
-    print("Task finished!")
+    logger.info("Task finished!")

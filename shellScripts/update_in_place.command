@@ -183,6 +183,28 @@ done
 [ -f "$PRESERVE_DIR/.build/meta.json" ] && cp_file "$PRESERVE_DIR/.build/meta.json" "$META"
 
 ###############################################################################
+# BLOCK H2 — Override Key.py from external drive (optional)
+###############################################################################
+EXT_KEY=""
+for vol in /Volumes/*; do
+  [ -d "$vol" ] || continue
+  if [ -f "$vol/Key.py" ]; then
+    EXT_KEY="$vol/Key.py"
+    break
+  fi
+  if [ -f "$vol/utilities/Key.py" ]; then
+    EXT_KEY="$vol/utilities/Key.py"
+    break
+  fi
+done
+if [ -n "$EXT_KEY" ]; then
+  echo "External Key.py found: $EXT_KEY"
+  cp_file "$EXT_KEY" "$APP_DIR/utilities/Key.py"
+else
+  echo "External Key.py not found in /Volumes/*"
+fi
+
+###############################################################################
 # BLOCK I — Pip install (venv) if requirements changed or first run
 ###############################################################################
 if [ -x "$PY" ] && [ -f "$APP_DIR/requirements.txt" ]; then

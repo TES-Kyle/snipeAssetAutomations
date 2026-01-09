@@ -1,11 +1,17 @@
-from utilities.otherApiBits import *
-from utilities.labelPrinting import createImage
-import tkinter as tk
-from tkinter import messagebox
+import json
+import logging
 import os
 import re
-import json
 from datetime import datetime
+
+import tkinter as tk
+from tkinter import messagebox
+
+from utilities.labelPrinting import createImage
+from utilities.logging_utils import configure_logging, get_settings
+from utilities.otherApiBits import *
+
+logger = logging.getLogger(__name__)
 
 """
 Drop-off automation (shared state via Snipe-IT asset Notes) + Help/Box State UI + Reset + Check-In
@@ -76,16 +82,29 @@ HELP_TEXT = (
 # Settings helpers
 # ----------------------------
 def _settings_path():
+    """Return the path to utilities/settings.json.
+
+    Returns:
+        Absolute path string to the settings file.
+    """
     # settings.json is one directory up, then in 'utilities'
     # <this_file_dir>/../utilities/settings.json
     base = os.path.dirname(os.path.realpath(__file__))
     return os.path.join(os.path.dirname(base), "utilities", "settings.json")
 
 def _load_settings():
+    """Load settings.json for the drop-off workflow.
+
+    Returns:
+        Dict of settings values or {} on failure.
+    """
+    configure_logging()
     try:
+        # Read settings from disk with a fallback on any failure.
         with open(_settings_path(), "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception:
+        logger.exception("Failed to read settings.json for drop-off workflow")
         messagebox.showerror(
             "Settings Error",
             "Could not read settings.json at ../utilities/settings.json relative to this module."
@@ -94,8 +113,10 @@ def _load_settings():
 
 def _save_settings_key(key: str, value):
     """Best-effort write-back to settings.json to keep defaults in sync."""
+    configure_logging()
     try:
         p = _settings_path()
+        # Load existing settings, update one key, and write back.
         with open(p, "r", encoding="utf-8") as f:
             data = json.load(f)
         data[key] = str(value)
@@ -103,10 +124,17 @@ def _save_settings_key(key: str, value):
             json.dump(data, f, indent=2)
         return True
     except Exception as e:
+        logger.exception("Failed to update settings.json key %s", key)
         messagebox.showwarning("Settings Write Warning", f"Couldn't update settings.json ({key}):\n{e}")
         return False
 
 def _get_box_state_asset_tag_and_capacity():
+    """Return tracker asset tag and box capacity from settings.
+
+    Returns:
+        (tag, capacity) tuple with validated defaults.
+    """
+    configure_logging()
     s = _load_settings()
     tag = s.get("boxStateAssetTag", "").strip()
     cap = s.get("defaultBoxCapacity", "12")
@@ -117,8 +145,48 @@ def _get_box_state_asset_tag_and_capacity():
     if cap < 1:
         cap = 1
     if not tag:
+        logger.error("settings.json missing boxStateAssetTag")
         messagebox.showerror("Settings Error", "settings.json is missing 'boxStateAssetTag'.")
     return tag, cap
+
+
+def _get_dropoff_status_ids():
+    """Read configured drop-off status IDs with defaults.
+
+    Returns:
+        (drop_status_id, pending_status_id) tuple.
+    """
+    settings = get_settings()
+    # Parse status IDs with safe defaults.
+    try:
+        drop_status = int(settings.get("dropOffStatusId", 5))
+    except Exception:
+        drop_status = 5
+    try:
+        pending_status = int(settings.get("dropOffPendingStatusId", 20))
+    except Exception:
+        pending_status = 20
+    return drop_status, pending_status
+
+
+def _get_dropoff_field_keys():
+    """Read configured custom field keys for drop-off metadata.
+
+    Returns:
+        Tuple of (charger_field_key, cord_field_key, box_field_key).
+    """
+    settings = get_settings()
+    # Normalize and fallback to default field keys for each metadata field.
+    charger_key = settings.get("dropOffChargerFieldKey", "_snipeit_chargeringoodcondition_6").strip()
+    cord_key = settings.get("dropOffCordFieldKey", "_snipeit_cordingoodcondition_11").strip()
+    box_key = settings.get("dropOffBoxFieldKey", "_snipeit_box_number_5").strip()
+    if not charger_key:
+        charger_key = "_snipeit_chargeringoodcondition_6"
+    if not cord_key:
+        cord_key = "_snipeit_cordingoodcondition_11"
+    if not box_key:
+        box_key = "_snipeit_box_number_5"
+    return charger_key, cord_key, box_key
 
 # ----------------------------
 # Snipe-IT helpers (tracker asset)
@@ -128,17 +196,20 @@ def _get_asset_by_tag_with_retry(asset_tag: str):
     GET /hardware/bytag/{asset_tag}
     Returns (ok: bool, data: dict or None)
     """
+    configure_logging()
     url = Key.API_URL_Base + "hardware/bytag/" + str(asset_tag)
     while True:
         try:
-            r = requests.get(url, headers=headers, timeout=20)
+            r = requests.get(url, headers=get_headers(), timeout=20)
             if 200 <= r.status_code < 300:
+                logger.info("Loaded asset by tag for tracker: %s", asset_tag)
                 return True, r.json()
             else:
                 try:
                     msg = r.json()
                 except Exception:
                     msg = r.text
+                logger.error("Tracker load failed for %s (HTTP %s): %s", asset_tag, r.status_code, msg)
                 retry = messagebox.askretrycancel(
                     "Load Failed",
                     f"Failed to load asset by tag '{asset_tag}' (HTTP {r.status_code}).\n"
@@ -147,6 +218,7 @@ def _get_asset_by_tag_with_retry(asset_tag: str):
                 if not retry:
                     return False, None
         except Exception as e:
+            logger.exception("Network error loading asset tag %s", asset_tag)
             retry = messagebox.askretrycancel("Network Error", f"Error loading asset tag '{asset_tag}':\n{e}\n\nRetry?")
             if not retry:
                 return False, None
@@ -156,18 +228,21 @@ def _put_asset_notes_with_retry(asset_id: str, new_notes: str):
     PUT /hardware/{id} with just the 'notes' field.
     Returns True on success, False if user cancels.
     """
+    configure_logging()
     url = Key.API_URL_Base + "hardware/" + str(asset_id)
     payload = {"notes": new_notes}
     while True:
         try:
-            r = requests.put(url, json=payload, headers=headers, timeout=20)
+            r = requests.put(url, json=payload, headers=get_headers(), timeout=20)
             if 200 <= r.status_code < 300:
+                logger.info("Updated tracker notes for asset %s", asset_id)
                 return True
             else:
                 try:
                     msg = r.json()
                 except Exception:
                     msg = r.text
+                logger.error("Tracker notes update failed for %s (HTTP %s): %s", asset_id, r.status_code, msg)
                 retry = messagebox.askretrycancel(
                     "Update Failed",
                     f"Failed to update tracker notes (HTTP {r.status_code}).\n"
@@ -176,6 +251,7 @@ def _put_asset_notes_with_retry(asset_id: str, new_notes: str):
                 if not retry:
                     return False
         except Exception as e:
+            logger.exception("Network error updating tracker notes for %s", asset_id)
             retry = messagebox.askretrycancel("Network Error", f"Error updating tracker notes:\n{e}\n\nRetry?")
             if not retry:
                 return False
@@ -184,12 +260,28 @@ def _put_asset_notes_with_retry(asset_id: str, new_notes: str):
 # State (parse/format/validate) in tracker asset Notes
 # ----------------------------
 def _init_default_state(capacity: int):
+    """Initialize the tracker state with default counters.
+
+    Args:
+        capacity: Items per box.
+
+    Returns:
+        State dict with per-stream counters.
+    """
     return {
         "capacity": capacity,
         "streams": {code: {"box": 1, "count": 0} for code in STREAMS},
     }
 
 def _format_state_line(state) -> str:
+    """Serialize the state into a single-line representation.
+
+    Args:
+        state: Parsed tracker state dict.
+
+    Returns:
+        One-line string suitable for notes storage.
+    """
     parts = [f"box capacity {int(state['capacity'])}"]
     for code in STREAMS:
         s = state["streams"][code]
@@ -197,6 +289,14 @@ def _format_state_line(state) -> str:
     return "; ".join(parts)
 
 def _format_state_notes(state) -> str:
+    """Wrap the state line with a header and timestamp.
+
+    Args:
+        state: Parsed tracker state dict.
+
+    Returns:
+        Notes text with header + state line.
+    """
     header = f"# BOX STATE (updated {datetime.now().isoformat(timespec='seconds')})"
     return header + "\n" + _format_state_line(state) + "\n"
 
@@ -268,6 +368,7 @@ def _parse_state_from_notes(notes_text: str, default_capacity: int):
     return state
 
 def _format_seq(box_number: int) -> str:
+    """Format box numbers with leading zeros (2 or 3 digits)."""
     return f"{box_number:02d}" if box_number < 100 else f"{box_number:03d}"
 
 def _assign_from_remote_state(stream_code: str, default_capacity: int):
@@ -277,10 +378,12 @@ def _assign_from_remote_state(stream_code: str, default_capacity: int):
     - If notes malformed: warn and offer to reset; if declined, cancel.
     Returns (ok: bool, box_label: str or None).
     """
+    configure_logging()
     tracker_tag, fallback_cap = _get_box_state_asset_tag_and_capacity()
     if not tracker_tag:
         return False, None
 
+    logger.info("Assigning box for stream %s", stream_code)
     ok, tracker = _get_asset_by_tag_with_retry(tracker_tag)
     if not ok or not tracker:
         return False, None
@@ -340,12 +443,14 @@ def _checkin_asset_with_retry(id, note="Checked in via Drop-Off automation"):
     - Treats "already checked in/not checked out" responses as non-fatal and continues.
     Returns True if checked in or already in, False if user cancels on other errors.
     """
+    configure_logging()
     url = Key.API_URL_Base + "hardware/" + str(id) + "/checkin"
     payload = {"note": note}
     while True:
         try:
-            r = requests.post(url, json=payload, headers=headers, timeout=20)
+            r = requests.post(url, json=payload, headers=get_headers(), timeout=20)
             if 200 <= r.status_code < 300:
+                logger.info("Checked in asset %s (drop-off)", id)
                 return True
             else:
                 # If it's a known "not checked out" case, continue without blocking
@@ -356,7 +461,9 @@ def _checkin_asset_with_retry(id, note="Checked in via Drop-Off automation"):
                 text = str(msg).lower()
                 if "not checked out" in text or "already checked in" in text:
                     # Non-fatal; proceed
+                    logger.info("Asset %s already checked in; continuing.", id)
                     return True
+                logger.error("Check-in failed for %s (HTTP %s): %s", id, r.status_code, msg)
                 retry = messagebox.askretrycancel(
                     "Check-In Failed",
                     f"Failed to check in asset (HTTP {r.status_code}).\n"
@@ -365,6 +472,7 @@ def _checkin_asset_with_retry(id, note="Checked in via Drop-Off automation"):
                 if not retry:
                     return False
         except Exception as e:
+            logger.exception("Network error during check-in for %s", id)
             retry = messagebox.askretrycancel(
                 "Network Error",
                 f"Error checking in asset:\n{e}\n\nRetry?"
@@ -376,27 +484,37 @@ def _update_asset_with_retry(id, assetTag, statusID, modelID, chargerCond, cordC
     """
     PUT /hardware/{id} to set status=5, custom fields, and preserve existing notes.
     """
+    configure_logging()
     putURL = Key.API_URL_Base + "hardware/" + str(id)
+    charger_key, cord_key, box_key = _get_dropoff_field_keys()
     payload = {
         "asset_tag": assetTag,
-        "status_id": statusID,                 # always 5
+        "status_id": statusID,
         "model_id": modelID,
-        "notes": existingNotes,                # unchanged
-        "_snipeit_chargeringoodcondition_6": "y" if chargerCond == "y" else "n",
-        "_snipeit_cordingoodcondition_11": "y" if cordCond == "y" else "n",
-        "_snipeit_box_number_5": boxLabel      # e.g., "SG-01"
+        "notes": existingNotes,
+        charger_key: "y" if chargerCond == "y" else "n",
+        cord_key: "y" if cordCond == "y" else "n",
+        box_key: boxLabel
     }
+    logger.debug(
+        "Drop-off payload keys: charger=%s cord=%s box=%s",
+        charger_key,
+        cord_key,
+        box_key,
+    )
 
     while True:
         try:
-            response = requests.put(putURL, json=payload, headers=headers, timeout=20)
+            response = requests.put(putURL, json=payload, headers=get_headers(), timeout=20)
             if 200 <= response.status_code < 300:
+                logger.info("Updated drop-off asset %s (box=%s)", id, boxLabel)
                 return True
             else:
                 try:
                     msg = response.json()
                 except Exception:
                     msg = response.text
+                logger.error("Drop-off update failed for %s (HTTP %s): %s", assetTag, response.status_code, msg)
                 retry = messagebox.askretrycancel(
                     "Update Failed",
                     f"Failed to update asset {assetTag} (HTTP {response.status_code}).\n"
@@ -405,6 +523,7 @@ def _update_asset_with_retry(id, assetTag, statusID, modelID, chargerCond, cordC
                 if not retry:
                     return False
         except Exception as e:
+            logger.exception("Network error updating asset %s", assetTag)
             retry = messagebox.askretrycancel(
                 "Network Error",
                 f"Error updating asset {assetTag}:\n{e}\n\nRetry?"
@@ -453,6 +572,7 @@ def _open_help_dialog(parent):
     state_label.pack(fill="x", padx=10, pady=8)
 
     def refresh_state():
+        """Fetch tracker notes and update the displayed state."""
         if not tracker_tag:
             messagebox.showerror("Tracker Missing", "boxStateAssetTag is not set in settings.json.")
             return
@@ -481,6 +601,7 @@ def _open_help_dialog(parent):
     cap_entry.pack(side="left", padx=(0, 10), pady=8)
 
     def save_capacity():
+        """Save capacity changes to the tracker and settings."""
         try:
             new_cap = int(cap_entry_var.get())
         except Exception:
@@ -516,6 +637,7 @@ def _open_help_dialog(parent):
     reset_frame = tk.Frame(dlg)
     reset_frame.pack(fill="x", padx=12, pady=(0, 8))
     def reset_all():
+        """Reset tracker state to defaults after confirmation."""
         tt, fallback_cap = _get_box_state_asset_tag_and_capacity()
         if not tt:
             return
@@ -566,7 +688,18 @@ def _open_help_dialog(parent):
 # UI + main flow
 # ----------------------------
 def dropOff(asset_tag):
+    """Run the drop-off workflow for an asset tag.
+
+    Args:
+        asset_tag: Asset tag to process.
+
+    Returns:
+        Status message string for the main UI.
+    """
+    configure_logging()
+    logger.info("Starting drop-off for asset %s", asset_tag)
     def process_dropoff(assetData):
+        """Validate answers, update state, and apply drop-off updates."""
         # Validate required fields
         if charger.get() < 0 or drop.get() < 0:
             messagebox.showerror("Error", "Dumb dumb, answer all the questions!")
@@ -576,13 +709,21 @@ def dropOff(asset_tag):
         q_charger = charger.get()         # 1 yes, 0 no
         q_cord = cord.get()               # 1 yes, 0 no
         q_damage = repair.get()           # 0 none, 1 mild, 2 significant, 3 irreparable
+        logger.debug(
+            "Drop-off answers for %s: senior=%s charger=%s cord=%s damage=%s",
+            asset_tag,
+            seniorStatus,
+            q_charger,
+            q_cord,
+            q_damage,
+        )
 
         # Map to 'y'/'n'
         charger_str = "y" if q_charger == 1 else "n"
         cord_str = "y" if q_cord == 1 else "n"
 
-        # Always status 5
-        status_id = 5
+        # Status IDs from settings
+        status_id, pending_status_id = _get_dropoff_status_ids()
 
         # Determine stream (SG/SM/SD/WG/WM/WD)
         if seniorStatus == 1:  # Senior
@@ -609,6 +750,7 @@ def dropOff(asset_tag):
         ok, box_label = _assign_from_remote_state(stream, default_cap)
         if not ok or not box_label:
             return  # canceled or failed
+        logger.info("Drop-off stream assigned for %s: %s -> %s", asset_tag, stream, box_label)
 
         # **Check the asset in** (Retry/Cancel; non-fatal if already checked in)
         if not _checkin_asset_with_retry(str(assetData["id"])):
@@ -637,19 +779,22 @@ def dropOff(asset_tag):
         var4 = f"Box: {box_label}"
 
         createImage([str(var1), var2, str(var3), str(var4), ""])
+        logger.info("Drop-off completed for %s (box=%s)", asset_tag, box_label)
         dropoff_window.destroy()
 
     # Fetch asset and confirm status
     varlist, assetData = getAssetInfo(asset_tag)
     proceed = False
 
-    if assetData["status_label"]["id"] != 20:
+    _status_id, pending_status_id = _get_dropoff_status_ids()
+    if assetData["status_label"]["id"] != pending_status_id:
         proceed = messagebox.askyesno(
             title="Proceed?",
             message='This asset is not "Pending Drop-Off"\n\nProceed anyway?'
         )
+        logger.info("Drop-off override prompt for %s: %s", asset_tag, proceed)
 
-    if assetData["status_label"]["id"] == 20 or proceed:
+    if assetData["status_label"]["id"] == pending_status_id or proceed:
         # Window
         dropoff_window = tk.Toplevel()
 
@@ -719,4 +864,4 @@ def dropOff(asset_tag):
         cy = int((sh / 2) - (wh / 2))
         dropoff_window.geometry(f"+{cx}+{cy}")
 
-    return f"Running dropOff on {asset_tag}"
+    return f"Drop-off window opened for {asset_tag}. Submit to complete."

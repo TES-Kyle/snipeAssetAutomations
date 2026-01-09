@@ -1,3 +1,9 @@
+"""Routing table for asset management functions.
+
+Defines the list of callable asset actions and their display labels
+for the main GUI.
+"""
+
 from assetManagementFunctions.printSelected import printSelected
 from assetManagementFunctions.newRepair import newRepair
 from assetManagementFunctions.pantsShipping import pantsShipping
@@ -9,12 +15,12 @@ from assetManagementFunctions.checkoutTo import checkoutTo
 from assetManagementFunctions.checkIn import checkIn
 from assetManagementFunctions.jamfDeleteAndPreStage import jamf_remove_prestage_and_delete
 
-#consisterizer
+# Consisterizer actions.
 from consisterizer.consisterizer import consisterizer
 from consisterizer.aliases import bulkCheckIn
 
 
-
+# Function callables in display order (must align with labels below).
 func_list = [printSelected,
              newRepair,
              pantsShipping,
@@ -25,9 +31,11 @@ func_list = [printSelected,
              checkoutTo,
              checkIn,
              consisterizer,
+             # Consisterizer alias entry for bulk check-in presets.
              lambda x: consisterizer(x, alias=bulkCheckIn),
              jamf_remove_prestage_and_delete
              ]
+# Display names aligned with func_list.
 func_listTXT = ["Print Selected",
                 "New Repair",
                 "Pants Shipping",

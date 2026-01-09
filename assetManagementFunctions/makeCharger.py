@@ -1,4 +1,7 @@
+"""Create charger assets via Snipe-IT with optional checkout."""
+
 # makeCharger.py (full-width layout + YYYY-MM-DD entry + inline "loading…" placeholders)
+import logging
 from utilities.otherApiBits import (
     getAssetInfo,
     getAllStatusOptions,
@@ -6,7 +9,9 @@ from utilities.otherApiBits import (
     getAllModelOptions,
 )
 from utilities.autocomplete import AutoCompleteEntry
-from utilities.Key import API_Key, API_URL_Base
+from utilities.Key import API_URL_Base
+from utilities.api_user import get_api_headers, get_api_key
+from utilities.logging_utils import configure_logging, get_settings
 
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -20,14 +25,32 @@ import re
 
 
 SNIPE_BASE = (API_URL_Base or "").rstrip("/")  # e.g., https://host/api/v1
-SNIPE_TOKEN = API_Key
 
-CHARGER_CATEGORY_ID = 35  # prefer this; fall back to name “charger”
+CHARGER_CATEGORY_ID_DEFAULT = 35  # prefer this; fall back to name “charger”
+
+logger = logging.getLogger(__name__)
 
 
 def makeCharger(asset_tag):
+    """Create a charger asset and optionally assign it.
+
+    Args:
+        asset_tag: Asset tag passed from the main UI (may be unused in flow).
+
+    Returns:
+        Status message string for the main UI.
+    """
+    configure_logging()
+    settings = get_settings()
+    try:
+        charger_category_id = int(settings.get("chargerCategoryId", CHARGER_CATEGORY_ID_DEFAULT))
+    except Exception:
+        charger_category_id = CHARGER_CATEGORY_ID_DEFAULT
+    name_prefix = settings.get("chargerNamePrefix", "Charger-")
+    name_default = settings.get("chargerNameDefault", "Charger")
     # ------------------------ serial autodetect (macOS) ------------------------
     def get_charger_serial_number():
+        """Return the local charger serial number on macOS, if available."""
         if platform.system() != "Darwin":
             raise OSError("Unsupported operating system")
         try:
@@ -44,6 +67,7 @@ def makeCharger(asset_tag):
             return ""
 
     def serial_updater():
+        """Continuously refresh the serial number entry from the system."""
         while True:
             try:
                 serial_number.set(get_charger_serial_number())
@@ -53,10 +77,12 @@ def makeCharger(asset_tag):
                 break
 
     def start_serial_update():
+        """Launch the background serial updater thread."""
         threading.Thread(target=serial_updater, daemon=True).start()
 
     # ------------------------ helpers ------------------------
     def _id_from_sel(sel: dict | None):
+        """Extract an ID value from a selection dict."""
         if not isinstance(sel, dict):
             return None
         for k in ("id", "value", "user_id", "model_id", "status_id", "location_id"):
@@ -69,13 +95,11 @@ def makeCharger(asset_tag):
         return None
 
     def _api_headers():
-        return {
-            "Authorization": f"Bearer {SNIPE_TOKEN}",
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        }
+        """Return Snipe-IT headers using the active API user."""
+        return get_api_headers()
 
     def _busy_cursor(on=True):
+        """Toggle the busy cursor for the charger window."""
         try:
             charger_window.config(cursor="watch" if on else "")
             charger_window.update_idletasks()
@@ -83,12 +107,15 @@ def makeCharger(asset_tag):
             pass
 
     def _require_api_creds():
-        if not SNIPE_BASE or not SNIPE_TOKEN:
-            messagebox.showerror("Snipe-IT", "Missing API_URL_Base or API_Key in utilities.Key.")
+        """Validate that API URL and key are available."""
+        if not SNIPE_BASE or not get_api_key():
+            logger.error("Missing API_URL_Base or API key in utilities.Key")
+            messagebox.showerror("Snipe-IT", "Missing API_URL_Base or API key in utilities.Key.")
             return False
         return True
 
     def _sel_label(sel: dict | None) -> str:
+        """Return the display label for a selection dict."""
         if not isinstance(sel, dict):
             return ""
         return (sel.get("label") or sel.get("name") or str(sel.get("id") or "")).strip()
@@ -106,8 +133,11 @@ def makeCharger(asset_tag):
             return None, False
         return _id_from_sel(sel), True
 
+    logger.debug("Using chargerCategoryId=%s for model filtering", charger_category_id)
+
     # ---- Model filter (charger-only) ----
     def _is_charger_model(opt: dict) -> bool:
+        """Return True when a model option looks like a charger."""
         label = (opt.get("label") or opt.get("name") or "").lower()
         meta = opt.get("meta") or {}
         if isinstance(meta.get("category"), dict):
@@ -116,7 +146,7 @@ def makeCharger(asset_tag):
         else:
             cat_id = meta.get("category_id")
             cat_name = (meta.get("category_name") or "").lower()
-        if CHARGER_CATEGORY_ID is not None and cat_id == CHARGER_CATEGORY_ID:
+        if charger_category_id is not None and cat_id == charger_category_id:
             return True
         if "charger" in cat_name:
             return True
@@ -133,6 +163,7 @@ def makeCharger(asset_tag):
 
     # Inline placeholder support for AutoCompleteEntry
     def _set_loading_placeholder(ac: AutoCompleteEntry, text="loading…", disable=True):
+        """Apply a disabled placeholder to an autocomplete entry."""
         try:
             ac.entry.configure(foreground="#666")
             ac.entry.delete(0, tk.END)
@@ -144,6 +175,7 @@ def makeCharger(asset_tag):
             pass
 
     def _clear_placeholder_if_loading(ac: AutoCompleteEntry):
+        """Remove loading placeholder state if it is active."""
         # clear only if we set our loading placeholder
         if getattr(ac, "_placeholder_active", False):
             try:
@@ -155,6 +187,7 @@ def makeCharger(asset_tag):
             ac._placeholder_active = False
 
     def _apply_preloaded_options_to_widgets():
+        """Push preloaded options into autocomplete widgets."""
         # Runs on Tk thread
         if status_options_ready.is_set():
             _clear_placeholder_if_loading(status_ac)
@@ -167,6 +200,7 @@ def makeCharger(asset_tag):
             model_ac.set_options(model_options_data)
 
     def _preload_options_thread():
+        """Fetch options in the background and notify the UI."""
         nonlocal status_options_data, assignee_options_data, model_options_data
         try:
             status_options_data = getAllStatusOptions() or []
@@ -195,25 +229,33 @@ def makeCharger(asset_tag):
 
     # ------------------------ submit flow ------------------------
     def submit(_e=None):
+        """Validate entries and create/check out the charger asset."""
         if not _require_api_creds():
             return
+        logger.info("Starting makeCharger submit for %s", asset_number.get())
 
         # Don't allow submit while required pickers still "loading…"
         if getattr(status_ac, "_placeholder_active", False) or getattr(model_ac, "_placeholder_active", False):
             messagebox.showinfo("Please wait", "Still loading options. Try again in a moment.")
             return
 
-        # Validate "doesn't exist yet"
-        _, assetData = getAssetInfo(asset_number.get())
-        try:
-            exists = assetData["messages"] != "Asset does not exist."
-        except KeyError:
-            exists = True
+        # Validate "doesn't exist yet" by checking Snipe for current tag.
+        _, assetData = getAssetInfo(asset_number.get(), allow_missing=True)
+        if not assetData:
+            logger.error("Asset lookup failed; aborting makeCharger for %s", asset_number.get())
+            return
+
+        msg = assetData.get("messages") or ""
+        if isinstance(msg, list):
+            msg = "; ".join(str(item) for item in msg if item is not None)
+        exists = msg != "Asset does not exist."
+        logger.debug("Asset existence check for %s: msg=%r exists=%s", asset_number.get(), msg, exists)
         if exists:
+            logger.warning("Charger asset already exists: %s", asset_number.get())
             messagebox.showerror("Process Failed", "Asset already exists")
             return
 
-        # Gather values
+        # Gather and normalize user-entered values.
         tag = asset_number.get().strip()
         serial = serial_number.get().strip()
         name_suffix = name_var.get().strip()
@@ -226,17 +268,17 @@ def makeCharger(asset_tag):
             messagebox.showerror("Validation", "Purchase Date must be YYYY-MM-DD or blank.")
             return
 
-        # Status (must be a real picked row)
+        # Status (must be a real picked row).
         status_id, ok = _require_ac_pick(status_ac, "Status")
         if not ok:
             return
 
-        # Model (must be a real picked row)
+        # Model (must be a real picked row).
         model_id, ok = _require_ac_pick(model_ac, "Model")
         if not ok:
             return
 
-        # Assigned To (optional)
+        # Assigned To (optional) with validation of type.
         assn_sel = assignee_ac.get_selected()
         assn_type = (assn_sel or {}).get("type", "").strip().lower() if assn_sel else ""
         user_id = None
@@ -250,7 +292,7 @@ def makeCharger(asset_tag):
                 messagebox.showerror("Checkout To", "Pick a *User* or *Location* from suggestions, or leave blank.")
                 return
 
-        # Field checks
+        # Field checks for required inputs.
         if not status_id:
             messagebox.showerror("Validation", "Status is required (pick from list).")
             return
@@ -261,14 +303,15 @@ def makeCharger(asset_tag):
             messagebox.showerror("Validation", "Serial number is required.")
             return
 
-        # Build payload
+        # Build payload for the new asset record.
         payload = {
             "asset_tag": tag,
             "status_id": status_id,
             "model_id": model_id,
-            "name": ("Charger-" + name_suffix) if name_suffix else "Charger",
+            "name": (f"{name_prefix}{name_suffix}") if name_suffix else name_default,
             "serial": serial,
         }
+        logger.debug("Create charger payload: %s", payload)
         if purchase_date_val:
             payload["purchase_date"] = purchase_date_val
         if purchase_cost:
@@ -280,7 +323,7 @@ def makeCharger(asset_tag):
         if order_number:
             payload["order_number"] = order_number
 
-        # POST /hardware
+        # POST /hardware with retry loop.
         create_url = f"{SNIPE_BASE}/hardware"
         while True:
             try:
@@ -288,6 +331,7 @@ def makeCharger(asset_tag):
                 r = requests.post(create_url, json=payload, headers=_api_headers(), timeout=25)
             except requests.RequestException as e:
                 _busy_cursor(False)
+                logger.exception("Network error creating charger asset")
                 if not messagebox.askretrycancel("Network Error", f"{e}\n\nRetry?"):
                     return
                 continue
@@ -302,22 +346,26 @@ def makeCharger(asset_tag):
                 if str(data.get("status", "")).lower() == "error":
                     msgs = data.get("messages")
                     msg = "; ".join(msgs) if isinstance(msgs, list) else str(msgs or data)
+                    logger.error("Create charger asset failed: %s", msg)
                     if not messagebox.askretrycancel("Create failed", f"Snipe-IT error:\n{msg}\n\nRetry?"):
                         return
                     continue
                 asset_id = (data.get("payload") or {}).get("id")
                 if not asset_id:
+                    logger.error("Charger asset created but ID missing in response")
                     messagebox.showerror("Create", "Asset created but ID missing in response.")
                     return
+                logger.info("Charger asset created: %s", asset_id)
                 break
             try:
                 detail = r.json()
             except Exception:
                 detail = r.text
+            logger.error("Create charger asset HTTP %s: %s", r.status_code, detail)
             if not messagebox.askretrycancel("HTTP Error", f"POST {r.status_code}\n{detail}\n\nRetry?"):
                 return
 
-        # Optional checkout
+        # Optional checkout when a user or location was selected.
         if user_id is not None or location_id is not None:
             co_url = f"{SNIPE_BASE}/hardware/{asset_id}/checkout"
             body = {"note": "makeCharger: assign/checkout"}
@@ -325,6 +373,7 @@ def makeCharger(asset_tag):
                 body.update({"checkout_to_type": "user", "assigned_user": user_id})
             else:
                 body.update({"checkout_to_type": "location", "assigned_location": location_id})
+            logger.debug("Charger checkout payload: %s", body)
 
             while True:
                 try:
@@ -332,6 +381,7 @@ def makeCharger(asset_tag):
                     r = requests.post(co_url, json=body, headers=_api_headers(), timeout=25)
                 except requests.RequestException as e:
                     _busy_cursor(False)
+                    logger.exception("Network error during charger checkout")
                     if not messagebox.askretrycancel("Network Error", f"{e}\n\nRetry?"):
                         break
                     continue
@@ -343,6 +393,7 @@ def makeCharger(asset_tag):
                         data = r.json()
                         if str(data.get("status")).lower() == "error":
                             msg = "; ".join(data.get("messages") or []) or str(data)
+                            logger.error("Charger checkout failed: %s", msg)
                             if not messagebox.askretrycancel("Checkout failed", f"Snipe-IT error:\n{msg}\n\nRetry?"):
                                 break
                             continue
@@ -353,6 +404,7 @@ def makeCharger(asset_tag):
                     detail = r.json()
                 except Exception:
                     detail = r.text
+                logger.error("Charger checkout HTTP %s: %s", r.status_code, detail)
                 if not messagebox.askretrycancel("HTTP Error", f"CHECKOUT {r.status_code}\n{detail}\n\nRetry?"):
                     break
 
@@ -464,6 +516,7 @@ def makeCharger(asset_tag):
 
     # ---------- Purchase Cost ----------
     def _validate_float(P):
+        """Allow empty or float-like text for purchase cost."""
         if P == "":
             return True
         try:
@@ -486,6 +539,7 @@ def makeCharger(asset_tag):
     date_partial_re = re.compile(r"^\d{0,4}(-\d{0,2}(-\d{0,2})?)?$")
 
     def _validate_date(P: str) -> bool:
+        """Allow partial/complete YYYY-MM-DD input."""
         # Permit deletion
         if P == "":
             return True
@@ -534,4 +588,4 @@ def makeCharger(asset_tag):
 
     # Kick off async loads after showing window
     threading.Thread(target=_preload_options_thread, daemon=True).start()
-    return f"makeCharger opened for {asset_tag}"
+    return f"Make Charger window opened for {asset_tag}."

@@ -1,3 +1,8 @@
+"""Check-in workflow for Snipe-IT assets."""
+
+import logging
+
+from utilities.logging_utils import configure_logging, get_settings
 from utilities.otherApiBits import *
 import tkinter as tk
 from tkinter import ttk
@@ -6,43 +11,93 @@ import requests
 import itertools
 import time
 
-
+logger = logging.getLogger(__name__)
 
 def checkIn(asset_tag, checkOutOrigin=None):
+    """Check in an asset and prompt for a new status label.
+
+    Args:
+        asset_tag: Asset tag to check in.
+        checkOutOrigin: Optional flag indicating a check-out origin context.
+
+    Returns:
+        Status string for the main UI on success, otherwise None.
+    """
+    configure_logging()
     url = "https://trinityes.snipe-it.io/api/v1"
     ignore_name = False
 
 
     def on_enter_pressed(event):
+        """Handle Enter key submission."""
         submit()
 
     def submit():
-        
-            statusID = fetch_statuses(status_var.get())
+        """Perform the check-in API call and close the window."""
 
-            statusID = statusID[list(statusID.keys())[0]]
+        # Resolve the selected status label into an ID.
+        statusID = fetch_statuses(status_var.get())
 
-            if not statusID:
-                messagebox.showerror("Error", "Status label is required")
-                return
+        # Extract the single status ID from the lookup mapping.
+        statusID = statusID[list(statusID.keys())[0]]
 
+        # Block submission if the status list did not resolve to an ID.
+        if not statusID:
+            messagebox.showerror("Error", "Status label is required")
+            return
 
-            payload = {
-                "status_id": statusID,
-            }
+        # Build the check-in payload and call Snipe-IT.
+        # Build the check-in payload.
+        payload = {
+            "status_id": statusID,
+        }
+        logger.debug("Check-in payload for %s: %s", asset_tag, payload)
 
-            response2 = requests.post(url + "/hardware/" + str(assetData["id"]) + "/checkin/", json=payload, headers=headers)
-            print(response2.text)
-            checkin_window.destroy()
-            return f"Asset {asset_number.get()}  successfully checked in"
+        # Call the check-in endpoint.
+        response2 = requests.post(
+            url + "/hardware/" + str(assetData["id"]) + "/checkin/",
+            json=payload,
+            headers=get_headers(),
+        )
+        if response2.status_code >= 400:
+            logger.error("Check-in failed for %s: %s", asset_tag, response2.text)
+            messagebox.showerror("Check-in Failed", f"Check-in failed for {asset_tag}.\n\n{response2.text}")
+            return None
+
+        # Close the dialog and return a status string.
+        logger.info("Asset checked in: %s", asset_tag)
+        checkin_window.destroy()
+        return f"Check-in complete for {asset_number.get()}."
 
     def fetch_statuses(filter_str=None):
+        """Fetch status options with optional filtering.
 
+        Args:
+            filter_str: Optional filter string for server-side search.
+
+        Returns:
+            Dict mapping status label -> status ID.
+        """
+        settings = get_settings()
+        try:
+            limit_full = int(settings.get("statusSearchLimit", 30))
+        except Exception:
+            limit_full = 30
+        try:
+            limit_filtered = int(settings.get("statusSearchLimitFiltered", 5))
+        except Exception:
+            limit_filtered = 5
+
+        # Choose the appropriate endpoint depending on filter text.
         if filter_str:
-            response = requests.get(url + f"/statuslabels?search={filter_str}&limit=5", headers=headers)
+            response = requests.get(
+                url + f"/statuslabels?search={filter_str}&limit={limit_filtered}",
+                headers=get_headers(),
+            )
         else:
-            response = requests.get(url + f"/statuslabels?limit=30", headers=headers)
+            response = requests.get(url + f"/statuslabels?limit={limit_full}", headers=get_headers())
 
+        # Return empty list on errors to avoid crashing the UI.
         if response.status_code != 200:
             return []
 
@@ -51,20 +106,29 @@ def checkIn(asset_tag, checkOutOrigin=None):
         return statuses
 
     def update_status_list():
-        print(f"In status def")
-
+        """Populate the status combobox with API results."""
+        # Refresh values before opening the dropdown.
+        logger.debug("Updating status list for %s", asset_tag)
         statuses = fetch_statuses()
-        print(f"{statuses}")
+        logger.debug("Status options: %s", statuses)
         if statuses:
             status_combobox['values'] = list(statuses.keys())
 
     def on_status_tab_complete(event):
+        """Autocomplete the first status option on Tab."""
         values = status_combobox['values']
         if values:
             status_combobox.set(values[0])
         return "break"
     
     def flash_window(window, duration=3000, interval=500):
+        """Flash the window background to draw attention.
+
+        Args:
+            window: Tk widget to flash.
+            duration: Total duration in milliseconds.
+            interval: Toggle interval in milliseconds.
+        """
         """
         Flash the window background for `duration` milliseconds,
         toggling every `interval` milliseconds.
@@ -72,6 +136,7 @@ def checkIn(asset_tag, checkOutOrigin=None):
         start_time = time.time() * 1000  # current time in ms
         colors = itertools.cycle(["yellow", "white"])  # Alternate colors
         def toggle_color():
+            """Toggle the flash color until the duration elapses."""
             elapsed = (time.time() * 1000) - start_time
             if elapsed < duration:
                 # Change the background color
@@ -94,7 +159,6 @@ def checkIn(asset_tag, checkOutOrigin=None):
         w.pack()
 
 
-    #print(f'{assetData["status_label"]["name"]}')
 
     # Frame for the "Asset Tag" question
     asset_frame = tk.Frame(checkin_window)
@@ -117,16 +181,15 @@ def checkIn(asset_tag, checkOutOrigin=None):
     #currentStatus = assetData["status_label"]["name"] 
     currentStatus = {assetData["status_label"]["name"]: assetData["status_label"]["id"]}
     # Replace with the actual current status
-    #print(f"Current Status 1: {status_var}")
 
     status_var = tk.StringVar()
     status_var.set(list(currentStatus.keys())[0])
-    print(f"Current Status 2: {status_var}")
+    logger.debug("Current Status 2: %s", status_var)
 
     #status_combobox = ttk.Combobox(status_frame, textvariable=status_var)
     status_combobox = ttk.Combobox(status_frame, textvariable=status_var, postcommand=update_status_list)
     status_combobox.pack(side='left', expand=True, fill='x')
-    print(f"Current Status 3: {status_var}")
+    logger.debug("Current Status 3: %s", status_var)
 
     #status_combobox.bind('<KeyRelease>', update_status_list)
     status_combobox.bind('<Tab>', on_status_tab_complete)
@@ -168,4 +231,4 @@ def checkIn(asset_tag, checkOutOrigin=None):
         flash_window(checkin_window, duration=3000, interval=500)
 
 
-    return f"Checking In {asset_tag}"
+    return f"Check-in window opened for {asset_tag}. Submit to complete."

@@ -1,45 +1,86 @@
-from utilities import Key
-import requests
+"""Snipe-IT API helper utilities for asset and lookup data.
+
+This module provides:
+  - asset lookup by tag or serial
+  - activity lookup for latest check-ins
+  - cached/paged option builders for status/users/models
+All requests use the dynamic API user header helper.
+"""
+
 import json
+import logging
+
+import requests
+from tkinter import messagebox
+
+from utilities import Key
+from utilities.api_user import get_api_headers
+from utilities.logging_utils import configure_logging, get_settings
+
+logger = logging.getLogger(__name__)
 
 
-# API Key which can be created in your SnipeIT Account, place it inbetween quotes as one line
-# REF: https://snipe-it.readme.io/reference/generating-api-tokens
-token = Key.API_Key
+def get_headers() -> dict:
+    """Return API headers using the current API user selection.
 
-# Headers used in the request library to pass the authorization bearer token
-headers = {
-    "accept": "application/json",
-    "Authorization": "Bearer " + token,
-    "content-type": "application/json"
-}
-
-
-def getAssetInfo(assetTag):
-    """
-    Retrieves asset information from the Snipe-IT server based on the provided asset tag.
-    Args:
-        assetTag (str): The asset tag of the hardware to retrieve information for.
     Returns:
-        tuple: A tuple containing:
-            - var_list (list): A list of tuples with asset information in the format (key, value).
-            - assetData (dict): The raw JSON response from the API containing detailed asset information.
-    Notes:
-        - The function makes an API request to the Snipe-IT server to retrieve hardware information.
-        - The response is parsed and specific fields are extracted and added to var_list.
-        - The function checks for the presence of various fields in the response and handles missing fields appropriately.
+        Dict of request headers for Snipe-IT calls.
     """
-    # API URL of Snipe-IT Server -- this one includes the specific API call of listing hardware info by asset tag
+    return get_api_headers()
+
+
+def getAssetInfo(assetTag, allow_missing: bool = False):
+    """Retrieve asset information from Snipe-IT by asset tag.
+
+    Args:
+        assetTag: Asset tag to search for.
+        allow_missing: If True, return empty values when the asset doesn't exist.
+
+    Returns:
+        (var_list, assetData):
+          - var_list: list of (label, value) tuples for UI display
+          - assetData: raw JSON dict from the API
+
+    Notes:
+        Any API error prompts the user via messagebox and returns empty results.
+    """
+    configure_logging()
+    # Build the by-tag endpoint and perform the lookup.
     url = Key.API_URL_Base + "hardware/bytag/"
 
-    # Makes API request, combines Asset Tag that was passed through the function into the URL -- requires requests header
-    response = requests.get(url + assetTag, headers=headers)
-    # Loads the response in text format into a readable format -- requires import json header
-    assetData = json.loads(response.text)
-    # Returns the parsed JSON data back to where the function was called
+    # Issue the request and parse JSON.
+    try:
+        headers = get_headers()
+        response = requests.get(url + assetTag, headers=headers, timeout=20)
+        response.raise_for_status()
+        assetData = response.json()
+    except Exception as e:
+        logger.exception("Failed to fetch asset info for tag %s", assetTag)
+        messagebox.showerror("Asset Lookup Failed", f"Could not fetch asset {assetTag}.\n\n{e}")
+        return [], {}
+
+    if not isinstance(assetData, dict):
+        logger.error("Unexpected asset data response for %s: %r", assetTag, assetData)
+        messagebox.showerror("Asset Lookup Failed", "Unexpected response from Snipe-IT.")
+        return [], {}
+
+    if assetData.get("status") == "error":
+        msg = assetData.get("messages") or "Asset lookup failed."
+        if isinstance(msg, list):
+            msg = "; ".join(str(item) for item in msg if item is not None)
+        if msg == "Asset does not exist." and allow_missing:
+            logger.info("Asset %s does not exist (allow_missing).", assetTag)
+            _log_asset_data(assetTag, assetData)
+            return [], assetData
+
+        logger.error("Snipe-IT error for %s: %s", assetTag, msg)
+        messagebox.showerror("Asset Lookup Failed", f"Could not fetch asset {assetTag}.\n\n{msg}")
+        return [], {}
+
+    # Extract display-friendly values for the UI table.
     var_list = []
 
-    print(f"Asset Data: {assetData}")
+    _log_asset_data(assetTag, assetData)
 
     # Asset Tag
     var_list.append(("Asset Tag", assetData.get("asset_tag", "null")))
@@ -85,10 +126,46 @@ def getAssetInfo(assetTag):
 
     return var_list, assetData
 
+
+def _log_asset_data(asset_tag: str, asset_data: dict) -> None:
+    """Log full asset payloads at INFO/DEBUG based on settings.
+
+    Args:
+        asset_tag: Asset tag being logged.
+        asset_data: Raw JSON payload.
+    """
+    settings = get_settings()
+    raw = settings.get("logAssetData", "0")
+    val = str(raw).strip().lower()
+    # Use INFO when explicitly enabled; otherwise keep at DEBUG.
+    enabled = val in ("1", "true", "yes", "on")
+    payload = json.dumps(asset_data, ensure_ascii=True, default=str)
+    if enabled:
+        logger.info("Asset data for %s: %s", asset_tag, payload)
+    else:
+        logger.debug("Asset data for %s: %s", asset_tag, payload)
+
 def getAssetInfoSerialAssignedTo(serialNum):
+    """Return the assigned-to name for an asset matching a serial number.
+
+    Args:
+        serialNum: Serial number to search for.
+
+    Returns:
+        Name string or None if not found.
+    """
+    configure_logging()
+    logger.debug("Fetching asset assignment for serial %s", serialNum)
     url = Key.API_URL_Base + "hardware/byserial/"
-    response = requests.get(url + serialNum, headers=headers)
-    assetData = json.loads(response.text)
+    try:
+        headers = get_headers()
+        response = requests.get(url + serialNum, headers=headers, timeout=20)
+        response.raise_for_status()
+        assetData = response.json()
+    except Exception as e:
+        logger.exception("Failed to fetch asset info for serial %s", serialNum)
+        messagebox.showerror("Asset Lookup Failed", f"Could not fetch asset by serial {serialNum}.\n\n{e}")
+        return None
     
     # Safely navigate through the nested structure
     rows = assetData.get("rows")
@@ -101,17 +178,38 @@ def getAssetInfoSerialAssignedTo(serialNum):
     return None
 
 def getLatestCheckinName(asset_id, email=False, username=False):
+    """Fetch the latest check-in actor for an asset.
+
+    Args:
+        asset_id: Snipe-IT asset id.
+        email: If True, return user email.
+        username: If True, return username.
+
+    Returns:
+        Name/email/username string or None.
+    """
+    configure_logging()
+    logger.debug("Fetching latest check-in name for asset %s", asset_id)
     activity_url = Key.API_URL_Base + f'reports/activity?limit=1&offset=0&item_type=asset&item_id={asset_id}&action_type=checkin%20from&order=desc&sort=created_at'
-    activity_response = requests.get(activity_url, headers=headers)
-    activity_data = activity_response.json()
+    try:
+        headers = get_headers()
+        activity_response = requests.get(activity_url, headers=headers, timeout=20)
+        activity_response.raise_for_status()
+        activity_data = activity_response.json()
+    except Exception as e:
+        logger.exception("Failed to fetch activity for asset %s", asset_id)
+        messagebox.showerror("Asset Lookup Failed", f"Could not fetch activity for asset {asset_id}.\n\n{e}")
+        return None
     try:
         if email:
             user_url = Key.API_URL_Base + f"users/{activity_data['rows'][0]['target']['id']}"
+            headers = get_headers()
             user_response = requests.get(user_url, headers=headers)
             user_data = user_response.json()
             return user_data['email']
         elif username:
             user_url = Key.API_URL_Base + f"users/{activity_data['rows'][0]['target']['id']}"
+            headers = get_headers()
             user_response = requests.get(user_url, headers=headers)
             user_data = user_response.json()
             return user_data['username']
@@ -121,11 +219,23 @@ def getLatestCheckinName(asset_id, email=False, username=False):
         return None
 
 
-def _get_paged(url: str, headers: dict, limit: int = 500, extra_params: str = ""):
-    """Yield all rows from a paginated Snipe-IT endpoint."""
+def _get_paged(url: str, headers: dict | None = None, limit: int = 500, extra_params: str = ""):
+    """Yield all rows from a paginated Snipe-IT endpoint.
+
+    Args:
+        url: API endpoint path (e.g., /statuslabels).
+        headers: Optional headers override.
+        limit: Page size.
+        extra_params: Additional query parameters.
+
+    Returns:
+        List of row dicts across all pages.
+    """
+    # Construct a base URL and iterate paginated results.
     base = Key.API_URL_Base.rstrip("/")
     offset = 0
     rows_all = []
+    headers = headers or get_headers()
     while True:
         try:
             sep = "&" if "?" in url else "?"
@@ -133,9 +243,11 @@ def _get_paged(url: str, headers: dict, limit: int = 500, extra_params: str = ""
             if extra_params:
                 page_url += f"&{extra_params.lstrip('&')}"
             r = requests.get(page_url, headers=headers, timeout=20)
+            r.raise_for_status()
             data = r.json()
             rows = data.get("rows") or data.get("data") or []
         except Exception:
+            logger.exception("Failed to fetch paged data from %s", url)
             break
         rows_all.extend(rows)
         if len(rows) < limit:
@@ -144,12 +256,13 @@ def _get_paged(url: str, headers: dict, limit: int = 500, extra_params: str = ""
     return rows_all
 
 def getAllStatusOptions():
+    """Return all asset status options for autocomplete.
+
+    Returns:
+        List of dicts: {"label": <status name>, "id": <status id>, "meta": {...}}
     """
-    All asset status labels as:
-      {"label": <status name>, "id": <status id>, "meta": {...}}
-    """
-    # /api/v1/statuslabels?type=asset is the endpoint
-    rows = _get_paged("/statuslabels", headers, extra_params="type=asset")
+    # /api/v1/statuslabels?type=asset is the endpoint.
+    rows = _get_paged("/statuslabels", get_headers(), extra_params="type=asset")
     out = []
     for st in rows:
         out.append({
@@ -157,7 +270,7 @@ def getAllStatusOptions():
             "id": st.get("id"),
             "meta": st,
         })
-    # unique & sorted
+    # Unique & sorted.
     seen, uniq = set(), []
     for o in out:
         if o["id"] in seen:
@@ -167,11 +280,12 @@ def getAllStatusOptions():
     return sorted(uniq, key=lambda o: o["label"].lower())
 
 def getAllAssigneeOptions():
+    """Return combined user+location options for assignment autocomplete.
+
+    Returns:
+        List of dicts with fields: label, id, type, username, email, meta.
     """
-    Unified list of users + locations:
-      {"label": str, "id": int, "type": "user"|"location",
-       "username": str, "email": str, "meta": dict}
-    """
+    headers = get_headers()
     users = _get_paged("/users", headers)
     locs  = _get_paged("/locations", headers)
 
@@ -211,7 +325,7 @@ def getAllModelOptions():
     All asset models as:
       {"label": <model name>, "id": <model id>, "meta": {...}}
     """
-    rows = _get_paged("/models", headers)
+    rows = _get_paged("/models", get_headers())
     out = []
     for m in rows:
         out.append({

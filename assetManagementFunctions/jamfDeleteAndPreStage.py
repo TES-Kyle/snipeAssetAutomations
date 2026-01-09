@@ -34,15 +34,19 @@ Adds:
   - Warnings when PreStages are found but not removed, or delete fails after removal.
 """
 
-import time
 import json
+import logging
+import time
 from typing import Optional, Tuple, Dict, List, Any
 
 from utilities import Key
+from utilities.logging_utils import configure_logging
 from utilities.otherApiBits import getAssetInfo
 
 from jamf_pro_sdk import JamfProClient, SessionConfig
 from jamf_pro_sdk.clients.auth import ApiClientCredentialsProvider
+
+logger = logging.getLogger(__name__)
 
 # ==============================
 # Configuration
@@ -95,6 +99,7 @@ def _ensure_tk_root():
         return None
     root = getattr(_ensure_tk_root, "_root", None)
     try:
+        # Create and cache a hidden root to parent dialogs.
         if root is None or not root.winfo_exists():
             root = _tk.Tk()
             root.withdraw()
@@ -106,24 +111,30 @@ def _ensure_tk_root():
 def _ask_retry_cancel(title: str, message: str) -> bool:
     """Return True to retry, False to cancel. Falls back to False when headless."""
     try:
+        # Prefer a GUI dialog when Tk is available.
         root = _ensure_tk_root()
         if root:
             return bool(_mb.askretrycancel(title, message, parent=root))
     except Exception:
         pass
-    print(f"[PROMPT] {title}: {message} -> cancel (no GUI)")
+    # Headless fallback: log and cancel.
+    configure_logging()
+    logger.warning("Prompt (no GUI): %s: %s -> cancel", title, message)
     return False
 
 def _warn(title: str, message: str) -> None:
     """Show a warning dialog (or print headless)."""
     try:
+        # Show dialog when possible.
         root = _ensure_tk_root()
         if root:
             _mb.showwarning(title, message, parent=root)
             return
     except Exception:
         pass
-    print(f"[WARN] {title}: {message}")
+    # Headless fallback: log warning.
+    configure_logging()
+    logger.warning("%s: %s", title, message)
 
 # ==============================
 # Small utilities
@@ -131,8 +142,10 @@ def _warn(title: str, message: str) -> None:
 def _pp(obj: Any, limit: int = 1600) -> str:
     """Pretty-print JSON-ish objects for logs, truncated for readability."""
     try:
+        # Try JSON formatting first for structured output.
         s = json.dumps(obj, indent=2, ensure_ascii=False, default=str)
     except Exception:
+        # Fallback to string repr.
         s = str(obj)
     return s if len(s) <= limit else s[:limit] + " …(truncated)…"
 
@@ -142,33 +155,41 @@ def _pp(obj: Any, limit: int = 1600) -> str:
 def _get_serial_from_snipe(asset_tag: str) -> Optional[str]:
     """Load Snipe-IT asset and return its serial (or None)."""
     try:
+        # Fetch the asset record by tag.
         _vars, asset = getAssetInfo(asset_tag)
         if DEBUG_VERBOSE:
-            print(f"[DEBUG] Snipe asset: serial={asset.get('serial')!r}, name={asset.get('name')!r}")
+            logger.debug(
+                "Snipe asset: serial=%r, name=%r",
+                asset.get("serial"),
+                asset.get("name"),
+            )
     except Exception as e:
-        print(f"[ERROR] SNIPE: Failed to load asset '{asset_tag}': {e}")
+        logger.error("SNIPE: Failed to load asset '%s': %s", asset_tag, e)
         return None
+    # Normalize and validate the serial.
     serial = (asset or {}).get("serial") or ""
     serial = serial.strip()
     if not serial:
-        print(f"[ERROR] SNIPE: Asset '{asset_tag}' has no serial.")
+        logger.error("SNIPE: Asset '%s' has no serial.", asset_tag)
         return None
     return serial
 
 def _find_jamf_computer_by_serial(jamf_client: JamfProClient, serial: str) -> Optional[Dict]:
     """Search Jamf inventory for the given serial and return {'id','name'} or None."""
-    print("[INFO] Searching Jamf inventory for serial…")
+    logger.info("Searching Jamf inventory for serial...")
     try:
+        # Pull a snapshot of inventory and scan for matching serials.
         devices = jamf_client.pro_api.get_computer_inventory_v1(
             sections=["GENERAL", "HARDWARE"],
             page_size=2000
         )
         if DEBUG_VERBOSE:
-            print(f"[DEBUG] Inventory count: {len(devices)}")
+            logger.debug("Inventory count: %s", len(devices))
     except Exception as e:
-        print(f"[ERROR] JAMF: Failed to query inventory: {e}")
+        logger.error("JAMF: Failed to query inventory: %s", e)
         return None
 
+    # Iterate through inventory to find a matching serial.
     for d in devices:
         dev_serial = getattr(getattr(d, "hardware", None), "serialNumber", None)
         if dev_serial and dev_serial.strip().upper() == serial.strip().upper():
@@ -176,9 +197,9 @@ def _find_jamf_computer_by_serial(jamf_client: JamfProClient, serial: str) -> Op
             dev_name = getattr(getattr(d, "general", None), "name", None) or f"ID {dev_id}"
             if dev_id is None:
                 continue
-            print(f"[INFO] Match: {dev_name} (ID {dev_id})")
+            logger.info("Match: %s (ID %s)", dev_name, dev_id)
             return {"id": int(dev_id), "name": dev_name}
-    print(f"[WARN] No Jamf computer found with serial {serial}.")
+    logger.warning("No Jamf computer found with serial %s.", serial)
     return None
 
 # ==============================
@@ -192,38 +213,44 @@ def _get_prestage_scope_v2(jamf_client: JamfProClient, prestage_id: int) -> Opti
       B) {"prestageId":..,"assignments":[{"serialNumber":...}, ...], "versionLock":N}
     """
     try:
+        # Fetch the scope document for this PreStage.
         r = jamf_client.pro_api_request(
             method="GET",
             resource_path=f"v2/computer-prestages/{prestage_id}/scope",
             override_headers={"Accept": "application/json"}
         )
         if DEBUG_VERBOSE:
-            print(f"[DEBUG] GET v2/computer-prestages/{prestage_id}/scope -> {r.status_code}")
+            logger.debug(
+                "GET v2/computer-prestages/%s/scope -> %s",
+                prestage_id,
+                r.status_code,
+            )
         if r.status_code == 404:
             return None
         r.raise_for_status()
+        # Parse JSON payload for downstream handling.
         scope = r.json() or {}
     except Exception as e:
-        print(f"[ERROR] JAMF: Get scope for PreStage {prestage_id} failed: {e}")
+        logger.error("JAMF: Get scope for PreStage %s failed: %s", prestage_id, e)
         return None
 
     if DEBUG_VERBOSE:
         keys = list(scope.keys())
-        print(f"[DEBUG] Scope {prestage_id} keys: {keys}")
+        logger.debug("Scope %s keys: %s", prestage_id, keys)
         a = scope.get("assignments", None)
         if isinstance(a, dict):
             ak = list(a.keys())
-            print(f"[DEBUG]  assignments is dict; keys: {ak}")
+            logger.debug("assignments is dict; keys: %s", ak)
             for k in ("serialNumbers", "deviceIds", "jamfProComputerIds", "computerIds"):
                 v = a.get(k)
                 if isinstance(v, list):
-                    print(f"[DEBUG]   - {k}: {len(v)}")
+                    logger.debug("assignments %s: %s", k, len(v))
         elif isinstance(a, list):
-            print(f"[DEBUG]  assignments is list; len={len(a)}")
+            logger.debug("assignments is list; len=%s", len(a))
             if a and isinstance(a[0], dict):
-                print(f"[DEBUG]   assignments[0] keys: {list(a[0].keys())}")
+                logger.debug("assignments[0] keys: %s", list(a[0].keys()))
         else:
-            print("[DEBUG]  assignments missing or unrecognized")
+            logger.debug("assignments missing or unrecognized")
     return scope
 
 def _build_scope_put_payload(scope: Dict, serial: str) -> Tuple[Optional[Dict], str]:
@@ -232,6 +259,7 @@ def _build_scope_put_payload(scope: Dict, serial: str) -> Tuple[Optional[Dict], 
       {"serialNumbers":[...], "versionLock": <lock>}
     Removes only this serial. Returns (payload_or_None, debug_message).
     """
+    # Validate expected structure.
     if not isinstance(scope, dict):
         return None, "[DEBUG] Bad scope object."
 
@@ -241,6 +269,7 @@ def _build_scope_put_payload(scope: Dict, serial: str) -> Tuple[Optional[Dict], 
     before = 0
     serials_now: List[str] = []
 
+    # Jamf may return assignments as a dict of arrays.
     if isinstance(assignments, dict):
         cur = assignments.get("serialNumbers") or []
         if not isinstance(cur, list):
@@ -248,6 +277,7 @@ def _build_scope_put_payload(scope: Dict, serial: str) -> Tuple[Optional[Dict], 
         before      = len(cur)
         serials_now = [s for s in cur if s != serial]
 
+    # Or as a list of assignment rows.
     elif isinstance(assignments, list):
         cur = []
         for row in assignments:
@@ -261,9 +291,11 @@ def _build_scope_put_payload(scope: Dict, serial: str) -> Tuple[Optional[Dict], 
         return None, "[DEBUG] No 'assignments' in scope."
 
     after = len(serials_now)
+    # If the serial is not present, there is nothing to update.
     if after == before:
         return None, "[DEBUG] Serial not present; nothing to PUT."
 
+    # Build the doc-style payload expected by Jamf.
     payload = {"serialNumbers": serials_now, "versionLock": version_lock}
     return payload, f"[DEBUG] Doc-style prune: serialNumbers {before}->{after}"
 
@@ -274,10 +306,16 @@ def _put_prestage_scope_v2(jamf_client: JamfProClient, prestage_id: int, scope_o
     On 409 (lock mismatch), refresh versionLock once and retry.
     """
     if DRY_RUN:
-        print(f"[DRY RUN] Would PUT scope for PreStage {prestage_id}. Payload:\n{_pp(scope_obj)}")
+        # Dry-run mode logs the intended payload only.
+        logger.info(
+            "DRY RUN: Would PUT scope for PreStage %s. Payload:\n%s",
+            prestage_id,
+            _pp(scope_obj),
+        )
         return True
 
     def _do_put(body: Dict):
+        """Execute the PreStage scope PUT request."""
         return jamf_client.pro_api_request(
             method="PUT",
             resource_path=f"v2/computer-prestages/{prestage_id}/scope",
@@ -286,11 +324,16 @@ def _put_prestage_scope_v2(jamf_client: JamfProClient, prestage_id: int, scope_o
         )
 
     try:
+        # Attempt a normal PUT first.
         r = _do_put(scope_obj)
         if r.status_code in (200, 204):
             return True
         if r.status_code == 409:
-            print(f"[WARN] PreStage {prestage_id} versionLock conflict. Refreshing and retrying…")
+            # Handle versionLock conflicts by reloading and retrying once.
+            logger.warning(
+                "PreStage %s versionLock conflict. Refreshing and retrying...",
+                prestage_id,
+            )
             scope_now = _get_prestage_scope_v2(jamf_client, prestage_id) or {}
             new_lock  = scope_now.get("versionLock")
             alt = {
@@ -302,16 +345,30 @@ def _put_prestage_scope_v2(jamf_client: JamfProClient, prestage_id: int, scope_o
                 return True
             try: detail2 = r2.json()
             except Exception: detail2 = r2.text
-            print(f"[ERROR] JAMF: PUT scope {prestage_id} failed after lock refresh ({r2.status_code}): {detail2}")
+            logger.error(
+                "JAMF: PUT scope %s failed after lock refresh (%s): %s",
+                prestage_id,
+                r2.status_code,
+                detail2,
+            )
             return False
         try: detail = r.json()
         except Exception: detail = r.text
-        print(f"[ERROR] JAMF: PUT scope {prestage_id} failed ({r.status_code}): {detail}")
+        logger.error(
+            "JAMF: PUT scope %s failed (%s): %s",
+            prestage_id,
+            r.status_code,
+            detail,
+        )
         return False
     except Exception as e:
         status = getattr(getattr(e, "response", None), "status_code", None)
         if status == 409:
-            print(f"[WARN] PreStage {prestage_id} versionLock conflict (exception). Refreshing and retrying…")
+            # Retry once on lock conflicts raised as exceptions.
+            logger.warning(
+                "PreStage %s versionLock conflict (exception). Refreshing and retrying...",
+                prestage_id,
+            )
             scope_now = _get_prestage_scope_v2(jamf_client, prestage_id) or {}
             new_lock  = scope_now.get("versionLock")
             alt = {
@@ -324,13 +381,18 @@ def _put_prestage_scope_v2(jamf_client: JamfProClient, prestage_id: int, scope_o
                     return True
                 try: detail2 = r2.json()
                 except Exception: detail2 = r2.text
-                print(f"[ERROR] JAMF: PUT scope {prestage_id} failed after lock refresh ({r2.status_code}): {detail2}")
+                logger.error(
+                    "JAMF: PUT scope %s failed after lock refresh (%s): %s",
+                    prestage_id,
+                    r2.status_code,
+                    detail2,
+                )
                 return False
             except Exception as e2:
-                print(f"[ERROR] JAMF: PUT scope {prestage_id} retry failed: {e2}")
+                logger.error("JAMF: PUT scope %s retry failed: %s", prestage_id, e2)
                 return False
 
-        print(f"[ERROR] JAMF: PUT scope {prestage_id} failed: {e}")
+        logger.error("JAMF: PUT scope %s failed: %s", prestage_id, e)
         return False
 
 # ==============================
@@ -341,7 +403,7 @@ def _remove_from_all_prestages(jamf_client: JamfProClient, serial: str, computer
     Determine candidate PreStages for this serial, remove the serial from each,
     and verify removal. Returns (seen, modified, candidate_count).
     """
-    # Aggregate: serial -> prestageId(s)  (with retry dialog)
+    # Step 1: Fetch aggregate scope map with retry dialog.
     agg = {}
     while True:
         try:
@@ -353,15 +415,19 @@ def _remove_from_all_prestages(jamf_client: JamfProClient, serial: str, computer
             r.raise_for_status()
             agg = r.json() or {}
             if DEBUG_VERBOSE:
-                print(f"[DEBUG] GET v2/computer-prestages/scope -> {r.status_code}")
+                logger.debug(
+                    "GET v2/computer-prestages/scope -> %s",
+                    r.status_code,
+                )
             break
         except Exception as e:
             if not _ask_retry_cancel("Jamf PreStage scopes",
                                      f"Failed to fetch aggregate scopes.\n\n{e}\n\nRetry?"):
-                print(f"[ERROR] JAMF: Could not fetch aggregate PreStage scopes: {e}")
+                logger.error("JAMF: Could not fetch aggregate PreStage scopes: %s", e)
                 agg = {}
                 break
 
+    # Step 2: Determine candidate PreStage IDs for this serial.
     candidate_ids: List[int] = []
     if isinstance(agg, dict) and "serialsByPrestageId" in agg:
         mapping = agg["serialsByPrestageId"]
@@ -375,15 +441,16 @@ def _remove_from_all_prestages(jamf_client: JamfProClient, serial: str, computer
             except Exception: pass
 
     if not candidate_ids:
-        print("[INFO] No candidate PreStages for this serial.")
+        logger.info("No candidate PreStages for this serial.")
         return (0, 0, 0)
 
-    print(f"[INFO] Candidate PreStages: {', '.join(map(str, candidate_ids))}")
+    logger.info("Candidate PreStages: %s", ", ".join(map(str, candidate_ids)))
 
     seen = 0
     changed = 0
     touched: List[int] = []
 
+    # Step 3: For each candidate PreStage, remove the serial.
     for pid in candidate_ids:
         # --- GET scope (retryable) ---
         scope = None
@@ -394,16 +461,17 @@ def _remove_from_all_prestages(jamf_client: JamfProClient, serial: str, computer
             if not _ask_retry_cancel("Jamf PreStage scope",
                                      f"Failed to load scope for PreStage {pid}.\n\n"
                                      f"Retry to refetch, or Cancel to skip this PreStage?"):
-                print(f"[WARN] Skipping PreStage {pid} (scope not available).")
+                logger.warning("Skipping PreStage %s (scope not available).", pid)
                 break
         if scope is None:
             continue
 
         seen += 1
 
+        # Build the update payload and skip if no change needed.
         payload, dbg = _build_scope_put_payload(scope, serial)
         if DEBUG_VERBOSE:
-            print(dbg)
+            logger.debug(dbg)
         if not payload:
             # serial not found in this scope; nothing to do
             if RATE_LIMIT_DELAY:
@@ -411,7 +479,12 @@ def _remove_from_all_prestages(jamf_client: JamfProClient, serial: str, computer
             continue
 
         if DRY_RUN:
-            print(f"[DRY RUN] Would update PreStage {pid} with: {_pp(payload)}")
+            # Dry-run: log intended change and mark as modified.
+            logger.info(
+                "DRY RUN: Would update PreStage %s with: %s",
+                pid,
+                _pp(payload),
+            )
             changed += 1
             touched.append(pid)
         else:
@@ -419,7 +492,7 @@ def _remove_from_all_prestages(jamf_client: JamfProClient, serial: str, computer
             while True:
                 ok = _put_prestage_scope_v2(jamf_client, pid, payload)
                 if ok:
-                    # verify removal
+                    # Verify removal by reloading the scope.
                     verify_ok = True
                     try:
                         scope_after = _get_prestage_scope_v2(jamf_client, pid)
@@ -438,30 +511,36 @@ def _remove_from_all_prestages(jamf_client: JamfProClient, serial: str, computer
                     if verify_ok:
                         changed += 1
                         touched.append(pid)
-                        print(f"[SUCCESS] Removed from PreStage {pid}.")
+                        logger.info("Removed from PreStage %s.", pid)
                         break  # next PreStage
                     else:
+                        # If verification fails, optionally retry the update.
                         if _ask_retry_cancel("Removal not verified",
                                              f"Serial still appears in PreStage {pid} after update.\n\nRetry update?"):
                             continue
-                        print(f"[WARN] Serial still present after PUT in PreStage {pid}; not counting as modified.")
+                        logger.warning(
+                            "Serial still present after PUT in PreStage %s; not counting as modified.",
+                            pid,
+                        )
                         break
                 else:
+                    # Update failed; prompt for retry or skip.
                     if _ask_retry_cancel("Update PreStage scope failed",
                                          f"Could not update PreStage {pid} scope.\n\nRetry?"):
                         continue
-                    print(f"[WARN] Skipped updating PreStage {pid}.")
+                    logger.warning("Skipped updating PreStage %s.", pid)
                     break
 
+        # Throttle between PreStage updates.
         if RATE_LIMIT_DELAY:
             time.sleep(RATE_LIMIT_DELAY)
 
     if touched:
-        print(f"[INFO] Updated PreStages: {', '.join(map(str, touched))}")
+        logger.info("Updated PreStages: %s", ", ".join(map(str, touched)))
     else:
-        print("[INFO] No scope updates were necessary.")
+        logger.info("No scope updates were necessary.")
 
-    # If candidates existed but we didn’t modify any, warn the operator
+    # If candidates existed but we didn’t modify any, warn the operator.
     if candidate_ids and changed == 0:
         _warn("PreStage removal",
               "Jamf reported candidate PreStages for this device, but I could not "
@@ -477,6 +556,7 @@ def _verify_inventory_gone(jamf_client: JamfProClient, computer_id: int) -> bool
     """
     Return True if the computer no longer exists (404) on either v2 or v1 GET.
     """
+    # Probe both v2 and v1 endpoints to confirm deletion.
     for path in (f"v2/computers-inventory/{computer_id}", f"v1/computers-inventory/{computer_id}"):
         try:
             r = jamf_client.pro_api_request(
@@ -505,10 +585,15 @@ def _delete_computer_pro(jamf_client: JamfProClient, computer_id: int) -> bool:
     Fallback: one-shot v1 delete if still present.
     """
     if DRY_RUN:
-        print(f"[DRY RUN] Would DELETE Jamf computer-inventory ID {computer_id} (v2).")
+        # Dry-run mode: do not delete, just log intent.
+        logger.info(
+            "DRY RUN: Would DELETE Jamf computer-inventory ID %s (v2).",
+            computer_id,
+        )
         return True
 
     def _do_del(path: str):
+        """Execute a Jamf Pro API DELETE request."""
         return jamf_client.pro_api_request(
             method="DELETE",
             resource_path=path,
@@ -517,42 +602,42 @@ def _delete_computer_pro(jamf_client: JamfProClient, computer_id: int) -> bool:
 
     path_v2 = f"v2/computers-inventory/{computer_id}"
 
-    # Try v2 first
+    # Step 1: Try v2 delete first.
     try:
         r = _do_del(path_v2)
         if r.status_code in (200, 204):
-            print(f"[SUCCESS] Deleted Jamf computer-inventory ID {computer_id} (v2).")
+            logger.info("Deleted Jamf computer-inventory ID %s (v2).", computer_id)
             return True
         if r.status_code == 404:
-            print(f"[INFO] Computer {computer_id} not found on v2; treating as already deleted.")
+            logger.info("Computer %s not found on v2; treating as already deleted.", computer_id)
             return True
-        print(f"[WARN] v2 delete returned {r.status_code}; verifying…")
+        logger.warning("v2 delete returned %s; verifying...", r.status_code)
     except Exception as e:
         sc = getattr(getattr(e, "response", None), "status_code", None)
-        print(f"[WARN] v2 delete raised {sc or 'exception'}; verifying…")
+        logger.warning("v2 delete raised %s; verifying...", sc or "exception")
 
-    # Verify state after error/exception (handles “500 but actually deleted”)
+    # Step 2: Verify state after error/exception (handles “500 but actually deleted”).
     time.sleep(0.75)
     if _verify_inventory_gone(jamf_client, computer_id):
-        print(f"[SUCCESS] Computer {computer_id} is gone (verified after error).")
+        logger.info("Computer %s is gone (verified after error).", computer_id)
         return True
 
-    # Optional v1 fallback
+    # Step 3: Optional v1 fallback if v2 did not confirm deletion.
     try:
-        print("[INFO] Falling back to v1 delete once…")
+        logger.info("Falling back to v1 delete once...")
         r2 = _do_del(f"v1/computers-inventory/{computer_id}")
         if r2.status_code in (200, 204, 404):
-            print(f"[SUCCESS] Deleted (or already gone) ID {computer_id} via v1.")
+            logger.info("Deleted (or already gone) ID %s via v1.", computer_id)
             return True
         try: detail = r2.json()
         except Exception: detail = r2.text
-        print(f"[ERROR] JAMF: v1 delete failed ({r2.status_code}): {detail}")
+        logger.error("JAMF: v1 delete failed (%s): %s", r2.status_code, detail)
     except Exception as e:
         sc = getattr(getattr(e, "response", None), "status_code", None)
         if sc == 404:
-            print(f"[SUCCESS] Already gone on v1 (404) for ID {computer_id}.")
+            logger.info("Already gone on v1 (404) for ID %s.", computer_id)
             return True
-        print(f"[ERROR] JAMF: v1 delete request failed: {e}")
+        logger.error("JAMF: v1 delete request failed: %s", e)
 
     return False
 
@@ -560,53 +645,68 @@ def _delete_computer_pro(jamf_client: JamfProClient, computer_id: int) -> bool:
 # Entry point for Consisterizer
 # ==============================
 def jamf_remove_prestage_and_delete(asset_tag: str) -> str:
-    """
+    """Remove a device from PreStage scopes and delete its Jamf inventory record.
+
     High-level workflow:
       - Resolve serial from Snipe-IT.
       - Initialize Jamf client.
       - Locate Jamf computer by serial.
       - Remove from all candidate PreStages (with verification).
       - Optionally delete (with post-error verification and fallback).
+
+    Args:
+        asset_tag: Snipe-IT asset tag to resolve.
+
+    Returns:
+        Status string suitable for the GUI result label.
     """
+    # Step 0: Validate input early.
     if not asset_tag:
         return "[ERROR] No asset tag provided."
 
-    print(f"\n=== Jamf Remove-from-PreStage + Delete ===")
-    print(f"Asset Tag: {asset_tag}")
-    print(f"Mode: {'DRY RUN' if DRY_RUN else 'LIVE'}")
+    configure_logging()
+    logger.info("=== Jamf Remove-from-PreStage + Delete ===")
+    logger.info("Asset Tag: %s", asset_tag)
+    logger.info("Mode: %s", "DRY RUN" if DRY_RUN else "LIVE")
 
+    # Step 1: Resolve serial number via Snipe-IT.
     serial = _get_serial_from_snipe(asset_tag)
     if not serial:
         return f"[ERROR] SNIPE: No serial for asset {asset_tag}."
-    print(f"[INFO] Serial: {serial}")
+    logger.info("Serial: %s", serial)
 
     try:
-        print("[INFO] Initializing Jamf Pro client…")
+        # Step 2: Initialize Jamf client.
+        logger.info("Initializing Jamf Pro client...")
         jamf_client = JamfProClient(
             server=JAMF_URL,
             credentials=ApiClientCredentialsProvider(JAMF_CLIENT_ID, JAMF_CLIENT_SECRET),
             session_config=SessionConfig(ssl_verify=VERIFY_SSL, max_retries=5),
         )
-        print("[SUCCESS] Jamf client ready.")
+        logger.info("Jamf client ready.")
     except Exception as e:
         return f"[ERROR] JAMF: Client init failed: {e}"
 
     comp = _find_jamf_computer_by_serial(jamf_client, serial)
     if not comp:
         return f"[ERROR] JAMF: No computer with serial {serial}."
+    # Capture ID/name for logs and downstream delete calls.
     cid, cname = comp["id"], comp["name"]
-    print(f"[INFO] Target: {cname} (ID {cid})")
+    logger.info("Target: %s (ID %s)", cname, cid)
 
+    # Step 3: Remove serial from all candidate PreStages.
     seen, modified, candidates = _remove_from_all_prestages(jamf_client, serial, cid)
-    print(f"[INFO] PreStages seen: {seen}, modified: {modified}, candidates: {candidates}")
+    logger.info("PreStages seen: %s, modified: %s, candidates: %s", seen, modified, candidates)
 
     if not DELETE_AFTER_REMOVE:
+        # Step 4: Respect the delete toggle (update-only mode).
         return (f"{'[DRY RUN] ' if DRY_RUN else ''}"
                 f"Removed {serial} from {modified}/{seen} PreStage(s)"
                 f"{'' if candidates == seen else f' (candidates={candidates})'}; "
                 f"SKIPPED delete (toggle).")
 
     if STRICT_REMOVAL_GUARD and candidates > 0 and modified < candidates:
+        # Step 5: Guard deletion when removal is incomplete.
         msg = (f"Skipped delete: PreStage removal incomplete "
                f"({modified}/{candidates}).\n\n"
                "Delete is guarded to prevent orphaned PreStage assignments.")
@@ -614,7 +714,7 @@ def jamf_remove_prestage_and_delete(asset_tag: str) -> str:
         return (f"[SAFEGUARD] Skipped delete; PreStage removal incomplete "
                 f"({modified}/{candidates} updated).")
 
-    # Deletion with retry prompt
+    # Step 6: Delete the Jamf inventory record with retry prompt.
     while True:
         deleted_ok = _delete_computer_pro(jamf_client, cid)
         if deleted_ok:
@@ -633,6 +733,8 @@ if __name__ == "__main__":
     """
     TEST_ASSET_TAG = "5703"
     if TEST_ASSET_TAG:
-        print(jamf_remove_prestage_and_delete(TEST_ASSET_TAG))
+        configure_logging(log_to_console=True)
+        logger.info(jamf_remove_prestage_and_delete(TEST_ASSET_TAG))
     else:
-        print("[INFO] Set TEST_ASSET_TAG to try a manual run.")
+        configure_logging(log_to_console=True)
+        logger.info("Set TEST_ASSET_TAG to try a manual run.")

@@ -1,14 +1,33 @@
-from utilities.otherApiBits import *
-from utilities.labelPrinting import createImage
-from utilities.messaging import *
+"""Create a new repair workflow in Snipe-IT and notify users."""
+
+import json
+import logging
+from datetime import date
+
 import tkinter as tk
 from tkinter import messagebox
-from datetime import date
-import json
+
+from utilities.labelPrinting import createImage
+from utilities.logging_utils import configure_logging, get_settings
+from utilities.messaging import *
+from utilities.otherApiBits import *
+
+logger = logging.getLogger(__name__)
 
 def newRepair(asset_tag):
+    """Run the new repair workflow for an asset tag.
+
+    Args:
+        asset_tag: Asset tag to open a repair for.
+
+    Returns:
+        Status message string for the main UI.
+    """
+    configure_logging()
+    logger.info("Starting new repair workflow for %s", asset_tag)
     # -------- helper: ask/retry wrappers --------
     def _resp_json(resp):
+        """Safely parse JSON from a requests response."""
         try:
             return resp.json()
         except Exception:
@@ -16,6 +35,7 @@ def newRepair(asset_tag):
             return {"raw": resp.text}
 
     def _is_success(resp):
+        """Return True when the response is HTTP OK and not a Snipe error."""
         # HTTP OK and either no 'status' key or status != 'error'
         if not (200 <= resp.status_code < 300):
             return False
@@ -36,8 +56,10 @@ def newRepair(asset_tag):
         """
         while True:
             try:
+                # Execute the operation callable.
                 resp = fn()
             except Exception as e:
+                logger.exception("%s raised an exception", op_name)
                 retry = messagebox.askretrycancel(
                     title=f"{op_name} failed",
                     message=f"{op_name} raised an exception:\n{type(e).__name__}: {e}\n\nRetry?"
@@ -46,11 +68,14 @@ def newRepair(asset_tag):
                     continue
                 return None
 
+            # Return on success; otherwise prompt for retry/cancel.
             if _is_success(resp):
+                logger.info("%s succeeded", op_name)
                 return _resp_json(resp)
 
             detail = _resp_json(resp)
             pretty = json.dumps(detail, indent=2, ensure_ascii=False)
+            logger.error("%s failed (HTTP %s): %s", op_name, resp.status_code, detail)
             retry = messagebox.askretrycancel(
                 title=f"{op_name} failed",
                 message=(
@@ -72,8 +97,10 @@ def newRepair(asset_tag):
         """
         while True:
             try:
+                # Execute the operation callable.
                 resp = fn()
             except Exception as e:
+                logger.exception("%s raised an exception", op_name)
                 choice = messagebox.askyesnocancel(
                     title=f"{op_name} failed",
                     message=f"{op_name} raised {type(e).__name__}: {e}\n\nYes = Retry, No = Skip, Cancel = Abort"
@@ -81,6 +108,7 @@ def newRepair(asset_tag):
                 if choice is True:  # Retry
                     continue
                 elif choice is False:  # Skip
+                    logger.warning("%s skipped by user", op_name)
                     return {"__skipped__": True}
                 else:  # Cancel
                     return None
@@ -107,6 +135,7 @@ def newRepair(asset_tag):
             except Exception:
                 detail = {"raw": resp.text}
             pretty = json.dumps(detail, indent=2, ensure_ascii=False)
+            logger.error("%s failed (HTTP %s): %s", op_name, resp.status_code, detail)
             choice = messagebox.askyesnocancel(
                 title=f"{op_name} failed (HTTP {resp.status_code})",
                 message=f"Response:\n{pretty}\n\nYes = Retry, No = Skip, Cancel = Abort"
@@ -114,6 +143,7 @@ def newRepair(asset_tag):
             if choice is True:
                 continue
             elif choice is False:
+                logger.warning("%s skipped by user", op_name)
                 return {"__skipped__": True}
             else:
                 return None
@@ -121,43 +151,47 @@ def newRepair(asset_tag):
 
     # ------------------ UI setup ------------------
     def submit_response():
-        # capture current values (so retries always use these)
+        """Collect UI inputs and submit the repair workflow."""
+        # Capture current values (so retries always use these).
         _title = title_entry.get().strip()
         _at_fault = 'Yes' if at_fault_var.get() == 1 else 'No'
         _issue = issue_entry.get("1.0", tk.END).strip()
 
-        # run the submission workflow; only close on full success
+        # Run the submission workflow; only close on full success.
         success = submitMaintenance(asset_tag, _at_fault, _issue, _title)
         if success:
             issue_window.destroy()
 
     def on_enter_pressed_in_issue_entry(event):
+        """Handle Enter/Shift+Enter in the issue text box."""
         if event.state & 0x0001:  # Shift+Enter for newline
             issue_entry.insert(tk.INSERT, "\n")
         else:
             submit_response()
 
     def on_enter_pressed(event):
+        """Move focus to the fault radio buttons."""
         at_fault_yes.focus_set()
 
     issue_window = tk.Toplevel()
 
-    # Info Frame
+    # Info Frame (current asset details).
     var_list, assetData = getAssetInfo(asset_tag)
     info_frame = tk.Frame(issue_window)
     info_frame.grid(row=0, column=0, sticky='nsew')
 
     for i, (name, value) in enumerate(var_list):
+        # Build a two-column label/value layout for asset metadata.
         label_name = tk.Label(info_frame, text=name, relief='solid', borderwidth=1, anchor='e')
         label_name.grid(row=i, column=0, sticky='ew', padx=5, pady=5)
         label_value = tk.Label(info_frame, text=value, relief='solid', borderwidth=1, anchor='w')
         label_value.grid(row=i, column=1, sticky='ew', padx=5, pady=5)
 
-    # Entry Frame
+    # Entry Frame (repair fields).
     entry_frame = tk.Frame(issue_window)
     entry_frame.grid(row=0, column=1, sticky='nsew')
 
-    # Title
+    # Title input.
     title_frame = tk.Frame(entry_frame)
     title_frame.pack(fill='x', padx=10, pady=5)
     title_label = tk.Label(title_frame, text="Title:")
@@ -167,7 +201,7 @@ def newRepair(asset_tag):
     title_entry.bind('<Return>', on_enter_pressed)
     title_entry.focus_set()
 
-    # Fault
+    # Fault selection.
     fault_frame = tk.Frame(entry_frame)
     fault_frame.pack(fill='x', padx=10, pady=5)
     at_fault_label = tk.Label(fault_frame, text="Is the user at fault?")
@@ -178,7 +212,7 @@ def newRepair(asset_tag):
     at_fault_no = tk.Radiobutton(fault_frame, text="No", variable=at_fault_var, value=0)
     at_fault_no.pack(side='left')
 
-    # Email options
+    # Email/text notification toggles.
     email_frame = tk.Frame(entry_frame)
     email_frame.pack(fill='x', padx=10, pady=5)
     email_label = tk.Label(email_frame, text="Send Emails")
@@ -197,7 +231,7 @@ def newRepair(asset_tag):
     parent = tk.Checkbutton(email_frame, variable=parent_var)
     parent.pack(side='left')
 
-    # Issue description
+    # Issue description field.
     issue_frame = tk.Frame(entry_frame)
     issue_frame.pack(fill='x', padx=10, pady=5)
     issue_label = tk.Label(issue_frame, text="Please describe the issue:")
@@ -206,11 +240,11 @@ def newRepair(asset_tag):
     issue_entry.pack(side='left', expand=True, fill='x')
     issue_entry.bind('<Return>', on_enter_pressed_in_issue_entry)
 
-    # Submit
+    # Submit button.
     submit_button = tk.Button(entry_frame, text="Submit", command=submit_response)
     submit_button.pack(pady=10)
 
-    # Center window
+    # Center window on screen.
     issue_window.update_idletasks()
     screen_width = issue_window.winfo_screenwidth()
     screen_height = issue_window.winfo_screenheight()
@@ -222,15 +256,16 @@ def newRepair(asset_tag):
 
     # ---------------- core submission flow ----------------
     def submitMaintenance(asset_tag, at_fault, issue_description, title):
+        """Execute the repair workflow in Snipe-IT and messaging services."""
         junk, assetData = getAssetInfo(asset_tag)
         url = "https://trinityes.snipe-it.io/api/v1"
 
-        # Decide effective email behavior up front (handles "no current assignee" case)
+        # Decide effective email behavior up front (handles "no current assignee" case).
         want_email = bool(email_var.get())
         recipient_email = None
         full_name = None
 
-        # Try the current assignee first
+        # Try the current assignee first.
         if want_email:
             assigned = assetData.get("assigned_to") or {}
             current_email = assigned.get("email")
@@ -239,7 +274,7 @@ def newRepair(asset_tag):
             if current_email and is_email(current_email):
                 recipient_email = current_email
             else:
-                # No current assignee / invalid email → ask to use last user or turn off
+                # No current assignee / invalid email → ask to use last user or turn off.
                 last_email = getLatestCheckinName(assetData["id"], email=True)
                 last_name  = getLatestCheckinName(assetData["id"])  # name for templates
 
@@ -261,6 +296,7 @@ def newRepair(asset_tag):
                         want_email = False
                         email_var.set(False)  # reflect the choice in UI/notes
                 else:
+                    # No usable email; disable sending to avoid misdirected notices.
                     messagebox.showinfo(
                         title="No email available",
                         message=(
@@ -271,7 +307,7 @@ def newRepair(asset_tag):
                     want_email = False
                     email_var.set(False)
 
-        # Build notes cleanly using the effective email decision
+        # Build notes cleanly using the effective email decision.
         issue_notes = (
             f"{issue_description} "
             f"At Fault: {at_fault} "
@@ -280,7 +316,7 @@ def newRepair(asset_tag):
             f"Email Parent: {parent_var.get()}"
         )
 
-        # Optional email/text notifications (best-effort; surfaced if fail)
+        # Optional email/text notifications (best-effort; surfaced if fail).
         if want_email:
             # Choose template and handle "remove fine" flag based on the effective recipient
             if recipient_email and remove_fine_warning(recipient_email):
@@ -298,6 +334,7 @@ def newRepair(asset_tag):
                     subject = "Error email not valid/missing: " + subject
 
             def _send_msg():
+                """Send repair notice through the messaging utility."""
                 # wrap in callable so failures hit the same retry UI
                 message(content, recipient,
                         subject=subject,
@@ -305,8 +342,11 @@ def newRepair(asset_tag):
                         email_parent=parent_var.get())
                 # mimic a 'success' Response-like object
                 class _Fake:
+                    """Simple response stub for retry wrapper."""
                     status_code = 200
-                    def json(self_inner): return {"status":"success"}
+                    def json(self_inner):
+                        """Return a success payload for retry wrapper."""
+                        return {"status": "success"}
                 return _Fake()
 
             # Let user retry if messaging pipeline throws
@@ -317,8 +357,12 @@ def newRepair(asset_tag):
 
         today = str(date.today())
 
-        # 1) Check-in (skip if already Pending Repair)
-        pending_repair_id = 17
+        # 1) Check-in (skip if already Pending Repair).
+        settings = get_settings()
+        try:
+            pending_repair_id = int(settings.get("repairPendingStatusId", 17))
+        except Exception:
+            pending_repair_id = 17
         current_status_id = assetData["status_label"]["id"]
 
         if current_status_id == pending_repair_id:
@@ -328,47 +372,71 @@ def newRepair(asset_tag):
             payload1 = {"status_id": current_status_id}
 
             def _checkin():
+                """POST a check-in to unassign the asset."""
                 return requests.post(f"{url}/hardware/{assetData['id']}/checkin",
-                                     json=payload1, headers=headers)
+                                     json=payload1, headers=get_headers())
 
             checkin_result = _do_with_retry_or_skip("Check-in asset", _checkin)
 
         if checkin_result is None:
             # User chose Cancel
+            logger.warning("Check-in canceled by user for %s", asset_tag)
             return False
         # if skipped, just proceed
 
-        # 2) Update status to Pending Repair (17)
+        # 2) Update status to Pending Repair (17).
         payload2 = {
             "asset_tag": asset_tag,
             "model_id": assetData["model"]["id"],
-            "status_id": 17
+            "status_id": pending_repair_id
         }
         def _update_status():
+            """PUT an updated status on the asset."""
             return requests.put(f"{url}/hardware/{assetData['id']}",
-                                json=payload2, headers=headers)
+                                json=payload2, headers=get_headers())
+        logger.info(
+            "Repair status update for %s to status_id=%s",
+            asset_tag,
+            pending_repair_id,
+        )
         if _do_with_retry("Update asset status", _update_status) is None:
+            logger.error("Update asset status canceled or failed for %s", asset_tag)
             return False
 
-        # 3) Create maintenance
+        # 3) Create maintenance record.
+        try:
+            supplier_id = int(settings.get("repairMaintenanceSupplierId", 1))
+        except Exception:
+            supplier_id = 1
+
+        maintenance_type = settings.get("repairMaintenanceType", "Repair")
         payload3 = {
-            "asset_maintenance_type": "Repair",  # change to numeric ID if your instance requires it
+            "asset_maintenance_type": maintenance_type,
             "start_date": today,
             "name": title or f"Repair: {asset_tag} ({today})",
             "asset_id": assetData["id"],
-            "supplier_id": 1,
+            "supplier_id": supplier_id,
             "notes": issue_notes
         }
         def _create_maint():
-            return requests.post(f"{url}/maintenances", json=payload3, headers=headers)
+            """POST a new maintenance record for the repair."""
+            return requests.post(f"{url}/maintenances", json=payload3, headers=get_headers())
+        logger.info(
+            "Creating maintenance for %s (supplier_id=%s type=%s)",
+            asset_tag,
+            supplier_id,
+            maintenance_type,
+        )
         if _do_with_retry("Create maintenance", _create_maint) is None:
+            logger.error("Create maintenance canceled or failed for %s", asset_tag)
             return False
 
-        # Refresh for label info
+        # Refresh asset data for label fields.
         junk, assetData = getAssetInfo(asset_tag)
 
-        # 4) Print label (Retry / Skip / Cancel)
+        # 4) Print label (Retry / Skip / Cancel).
         def _print_label():
+            """Render and print the repair label."""
             printData = [
                 assetData["asset_tag"],
                 assetData["status_label"]["name"],
@@ -377,15 +445,20 @@ def newRepair(asset_tag):
             ]
             createImage(printData)
             class _Fake:
+                """Simple response stub for print flow."""
                 status_code = 200
-                def json(self_inner): return {"status":"success"}
+                def json(self_inner):
+                    """Return a success payload for print flow."""
+                    return {"status": "success"}
             return _Fake()
 
         while True:
             try:
                 _print_label()
+                logger.info("Repair label printed for %s", asset_tag)
                 break
             except Exception as e:
+                logger.exception("Label print failed for %s", asset_tag)
                 choice = messagebox.askyesnocancel(
                     title="Label print failed",
                     message=f"{type(e).__name__}: {e}\n\nYes = Retry, No = Skip, Cancel = Abort"
@@ -395,8 +468,9 @@ def newRepair(asset_tag):
                 elif choice is False: # Skip
                     break
                 else:                 # Cancel
+                    logger.warning("Label print canceled by user for %s", asset_tag)
                     return False
 
         return True
 
-    return f"ran new repair on {asset_tag}"
+    return f"New repair window opened for {asset_tag}. Submit to complete."

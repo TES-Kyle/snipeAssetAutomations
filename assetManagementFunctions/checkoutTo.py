@@ -1,3 +1,8 @@
+"""Checkout workflow for Snipe-IT assets."""
+
+import logging
+
+from utilities.logging_utils import configure_logging, get_settings
 from utilities.otherApiBits import *
 import tkinter as tk
 from tkinter import ttk
@@ -9,69 +14,116 @@ import threading
 
 debounce_timer = None
 user_cache = {}
+logger = logging.getLogger(__name__)
 
 def checkoutTo(asset_tag):
+    """Check out an asset to a user with optional expected check-in.
+
+    Args:
+        asset_tag: Asset tag to check out.
+
+    Returns:
+        Status string for the main UI on success, otherwise None.
+    """
+    configure_logging()
     url = "https://trinityes.snipe-it.io/api/v1"
     ignore_name = False
 
 
     def on_enter_pressed(event):
+        """Handle Enter key submission."""
         submit()
 
     def submit():
-            
-            var_list, assetData = getAssetInfo(asset_tag)
+        """Validate inputs and perform the checkout API call."""
 
-            if assetData['assigned_to'] is not None:
-                print(f"Asset is currently checked out!")
-                checkIn(asset_tag, "yes")
-                return
-                
-            print(f"Done with check in")
+        # Fetch current asset to confirm it is not already checked out.
+        var_list, assetData = getAssetInfo(asset_tag)
 
+        if assetData['assigned_to'] is not None:
+            # If already checked out, route to check-in flow first.
+            logger.info("Asset %s is currently checked out; prompting check-in.", asset_tag)
+            checkIn(asset_tag, "yes")
+            return
 
-            statusID = fetch_statuses(status_var.get())
-            expectedCheckIn = date_var.get()
+        logger.debug("Proceeding with checkout for %s", asset_tag)
 
-            statusID = statusID[list(statusID.keys())[0]]
+        # Resolve status/user selections and build the payload.
+        statusID = fetch_statuses(status_var.get())
+        expectedCheckIn = date_var.get()
 
-            userID = fetch_users(checkout_to_var.get())
-            if len(userID) < 1:
-                messagebox.showerror("Error", "Multiple matching users")
-                return
+        # Extract the single status ID from the lookup mapping.
+        statusID = statusID[list(statusID.keys())[0]]
 
-            if not statusID:
-                messagebox.showerror("Error", "Status label is required")
-                return
+        # Look up the user selection by search text.
+        userID = fetch_users(checkout_to_var.get())
+        if len(userID) < 1:
+            messagebox.showerror("Error", "Multiple matching users")
+            return
 
-            if len(userID) == 1:
-                userID = userID[list(userID.keys())[0]]
+        if not statusID:
+            messagebox.showerror("Error", "Status label is required")
+            return
 
-                payload = {
-                    "checkout_to_type": "user",
-                    "assigned_user": userID,
-                    "status_id": statusID,
-                    "expected_checkin": expectedCheckIn if expectedCheckIn else None
-                }
-                print(f"{payload}")
+        # Build the checkout payload when a single user is resolved.
+        if len(userID) == 1:
+            userID = userID[list(userID.keys())[0]]
+            logger.info(
+                "Checkout target resolved for %s: user_id=%s status=%s expected_checkin=%s",
+                asset_tag,
+                userID,
+                statusID,
+                expectedCheckIn,
+            )
 
-            response2 = requests.post(url + "/hardware/" + str(assetData["id"]) + "/checkout/", json=payload, headers=headers)
-            print(response2.text)
-            checkout_window.destroy()
-            return f"Asset {asset_number.get()}  successfully checked out to {userID}"
+            payload = {
+                "checkout_to_type": "user",
+                "assigned_user": userID,
+                "status_id": statusID,
+                "expected_checkin": expectedCheckIn if expectedCheckIn else None
+            }
+            logger.debug("Checkout payload for %s: %s", asset_tag, payload)
+
+        # Perform checkout request and handle errors.
+        response2 = requests.post(
+            url + "/hardware/" + str(assetData["id"]) + "/checkout/",
+            json=payload,
+            headers=get_headers(),
+        )
+        if response2.status_code >= 400:
+            logger.error("Checkout failed for %s: %s", asset_tag, response2.text)
+            messagebox.showerror("Checkout Failed", f"Checkout failed for {asset_tag}.\n\n{response2.text}")
+            return None
+
+        # Close the dialog and return a status string.
+        logger.info("Asset checked out: %s", asset_tag)
+        checkout_window.destroy()
+        return f"Checkout complete for {asset_number.get()} (user {userID})."
 
     def fetch_users(query):
-        """
-        Fetch a list of users based on a search query.
-        Args:
-            query (str): The search query to filter users.
-        Returns:
-            dict: A dictionary where the keys are user names and the values are user IDs.
-                  Returns an empty dictionary if the request fails or no users are found.
-        """
-        response = requests.get(url + f"/users?search={query}&limit=5", headers=headers)
+        """Fetch a list of users based on a search query.
 
+        Args:
+            query: Search query for the users endpoint.
+
+        Returns:
+            Dict of {user_name: user_id} or empty dict on failure.
+        """
+        settings = get_settings()
+        try:
+            limit = int(settings.get("userSearchLimit", 5))
+        except Exception:
+            limit = 5
+
+        # Query the Snipe-IT users endpoint with a limit.
+        response = requests.get(
+            url + f"/users?search={query}&limit={limit}",
+            headers=get_headers(),
+        )
+
+        # Return empty results on error.
         if response.status_code != 200:
+            logger.error("User lookup failed for %s: %s", query, response.text)
             return []
 
         data = response.json()
@@ -79,9 +131,11 @@ def checkoutTo(asset_tag):
         return users
 
     def update_user_list(event):
+        """Debounce user lookup as the entry text changes."""
         global debounce_timer
         query = checkout_to_var.get()
 
+        # Debounce keystrokes to avoid spamming the API.
         if debounce_timer:
             debounce_timer.cancel()
 
@@ -92,11 +146,14 @@ def checkoutTo(asset_tag):
         debounce_timer.start()
 
     def fetch_users_async(query):
+        """Fetch user matches asynchronously and update the combobox."""
+        # Use cached results when available.
         if query in user_cache:
             user_combobox['values'] = list(user_cache[query].keys())
             return
 
         def fetch():
+            """Fetch and cache user results for the query."""
             users = fetch_users(query)
             if users:
                 user_cache[query] = users
@@ -105,13 +162,36 @@ def checkoutTo(asset_tag):
         threading.Thread(target=fetch).start()
 
     def fetch_statuses(filter_str=None):
+        """Fetch status options with optional filtering.
 
+        Args:
+            filter_str: Optional filter string for server-side search.
+
+        Returns:
+            Dict mapping status label -> status ID.
+        """
+        settings = get_settings()
+        try:
+            limit_full = int(settings.get("statusSearchLimit", 30))
+        except Exception:
+            limit_full = 30
+        try:
+            limit_filtered = int(settings.get("statusSearchLimitFiltered", 5))
+        except Exception:
+            limit_filtered = 5
+
+        # Use a filtered endpoint when text is provided.
         if filter_str:
-            response = requests.get(url + f"/statuslabels?search={filter_str}&limit=5", headers=headers)
+            response = requests.get(
+                url + f"/statuslabels?search={filter_str}&limit={limit_filtered}",
+                headers=get_headers(),
+            )
         else:
-            response = requests.get(url + f"/statuslabels?limit=30", headers=headers)
+            response = requests.get(url + f"/statuslabels?limit={limit_full}", headers=get_headers())
 
+        # Return empty results on error.
         if response.status_code != 200:
+            logger.error("Status lookup failed for %s: %s", filter_str, response.text)
             return []
 
         data = response.json()
@@ -119,20 +199,22 @@ def checkoutTo(asset_tag):
         return statuses
 
     def update_status_list():
-        print(f"In status def")
-
+        """Populate the status combobox with API results."""
+        logger.debug("Updating status list for %s", asset_tag)
         statuses = fetch_statuses()
-        print(f"{statuses}")
+        logger.debug("Status options: %s", statuses)
         if statuses:
             status_combobox['values'] = list(statuses.keys())
 
     def on_status_tab_complete(event):
+        """Autocomplete the first status option on Tab."""
         values = status_combobox['values']
         if values:
             status_combobox.set(values[0])
         return "break"
 
     def on_tab_complete(event):
+        """Autocomplete the first user option on Tab."""
         values = user_combobox['values']
         if values:
             user_combobox.set(values[0])
@@ -142,18 +224,9 @@ def checkoutTo(asset_tag):
 
     var_list, assetData = getAssetInfo(asset_tag)
     exists2 = assetData['assigned_to']
-    print(f"Exists2: {exists2}")
-
-    if assetData['assigned_to'] is not None:
-        print(f"It is not empty")
-    else:
-        print(f"It is empty")
-
-    print(f"{exists2}")
-
-    print(f"{assetData['assigned_to']}")
+    logger.debug("Assigned_to for %s: %s", asset_tag, exists2)
+    logger.debug("Assigned_to raw value for %s: %s", asset_tag, assetData['assigned_to'])
         
-    #print(f'{assetData["status_label"]["name"]}')
 
     # Frame for the "Asset Tag" question
     asset_frame = tk.Frame(checkout_window)
@@ -176,16 +249,15 @@ def checkoutTo(asset_tag):
     #currentStatus = assetData["status_label"]["name"] 
     currentStatus = {assetData["status_label"]["name"]: assetData["status_label"]["id"]}
     # Replace with the actual current status
-    #print(f"Current Status 1: {status_var}")
 
     status_var = tk.StringVar()
     status_var.set(list(currentStatus.keys())[0])
-    print(f"Current Status 2: {status_var}")
+    logger.debug("Current Status 2: %s", status_var)
 
     #status_combobox = ttk.Combobox(status_frame, textvariable=status_var)
     status_combobox = ttk.Combobox(status_frame, textvariable=status_var, postcommand=update_status_list)
     status_combobox.pack(side='left', expand=True, fill='x')
-    print(f"Current Status 3: {status_var}")
+    logger.debug("Current Status 3: %s", status_var)
 
     #status_combobox.bind('<KeyRelease>', update_status_list)
     status_combobox.bind('<Tab>', on_status_tab_complete)
@@ -247,4 +319,4 @@ def checkoutTo(asset_tag):
     # Set the position of the window to the center of the screen
     checkout_window.geometry(f"+{center_x}+{center_y}")
 
-    return f"Checking Out {asset_tag}"
+    return f"Checkout window opened for {asset_tag}. Submit to complete."

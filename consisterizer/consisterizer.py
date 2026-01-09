@@ -21,14 +21,16 @@ Notes
 """
 
 import json
+import logging
 import os
-import re
 import platform
+import re
+from datetime import datetime, timedelta
+
 import requests
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import messagebox, ttk
 from tkinter import font as tkfont
-from datetime import datetime, timedelta
 
 from utilities.autocomplete import AutoCompleteEntry
 from utilities.otherApiBits import (
@@ -37,12 +39,16 @@ from utilities.otherApiBits import (
     getAllAssigneeOptions,
     getAllModelOptions,
 )
-from utilities.Key import API_Key, API_URL_Base  # API creds
+from utilities.logging_utils import configure_logging, get_settings
+from utilities.Key import API_URL_Base  # API creds
+from utilities.api_user import get_api_headers, get_api_key
 
 from consisterizer.consisterizerScriptsRouting import (
     submit_func_list,
     submit_func_listTXT,
 )
+
+logger = logging.getLogger(__name__)
 
 # =============================================================================
 # Constants & Config
@@ -165,13 +171,12 @@ TEMPLATES_PATH = os.path.join("consisterizer", "defaultProfiles.json")
 KNOWN_FIELDS = set(FIELD_ORDER)
 
 TOKEN_RE = re.compile(r"\{([^{}]+)\}")
-ASSET_TAG_RE = re.compile(r"^\d{4,5}$")
+ASSET_TAG_RE_DEFAULT = re.compile(r"^\d{4,5}$")
 
 HAS_VALUE_SENTINEL = "<<HAS_VALUE>>"
 
 # API base normalization (accepts with/without trailing slash)
 SNIPE_BASE = API_URL_Base.rstrip("/")  # e.g., https://host/api/v1
-SNIPE_TOKEN = API_Key
 
 
 # =============================================================================
@@ -179,16 +184,26 @@ SNIPE_TOKEN = API_Key
 # =============================================================================
 
 def _norm_field_key(k: str) -> str:
+    """Normalize field labels to consistent keys."""
     if not isinstance(k, str):
         return ""
     return k.strip().lower().replace(" ", "_")
 
 
 def valid_asset_tag(value: str) -> bool:
-    return bool(ASSET_TAG_RE.match(value or ""))
+    """Validate asset tags using the configured regex."""
+    settings = get_settings()
+    pattern = settings.get("assetTagRegex", r"^\d{4,5}$")
+    try:
+        regex = re.compile(pattern)
+    except re.error:
+        logger.error("Invalid assetTagRegex setting: %s", pattern)
+        regex = ASSET_TAG_RE_DEFAULT
+    return bool(regex.match(value or ""))
 
 
 def valid_date(value: str) -> bool:
+    """Validate YYYY-MM-DD date strings."""
     try:
         datetime.strptime(value, "%Y-%m-%d")
         return True
@@ -197,12 +212,14 @@ def valid_date(value: str) -> bool:
 
 
 def _widget_get_text(widget: tk.Widget) -> str:
+    """Return current text content from an Entry or Text widget."""
     if isinstance(widget, tk.Text):
         return widget.get("1.0", "end-1c")
     return widget.get()
 
 
 def _widget_set_text(widget: tk.Widget, value: str):
+    """Set text content for an Entry or Text widget."""
     if isinstance(widget, tk.Text):
         widget.delete("1.0", "end")
         if value:
@@ -214,6 +231,7 @@ def _widget_set_text(widget: tk.Widget, value: str):
 
 
 def attach_placeholder(widget: tk.Widget, text: str):
+    """Attach placeholder behavior to an Entry or Text widget."""
     if not isinstance(widget, (tk.Entry, tk.Text)):
         return
 
@@ -226,6 +244,7 @@ def attach_placeholder(widget: tk.Widget, text: str):
         pass
 
     def _on_focus_in(_e):
+        """Clear placeholder text when the widget receives focus."""
         if getattr(widget, "placeholder_active", False):
             _widget_set_text(widget, "")
             try:
@@ -235,6 +254,7 @@ def attach_placeholder(widget: tk.Widget, text: str):
             widget.placeholder_active = False
 
     def _on_focus_out(_e):
+        """Restore placeholder text when leaving an empty widget."""
         if _widget_get_text(widget).strip() == "":
             widget.placeholder_active = True
             _widget_set_text(widget, widget.placeholder_text)
@@ -248,10 +268,12 @@ def attach_placeholder(widget: tk.Widget, text: str):
 
 
 def is_effective_empty(widget: tk.Widget) -> bool:
+    """Return True if widget is empty or showing placeholder text."""
     return getattr(widget, "placeholder_active", False) or _widget_get_text(widget).strip() == ""
 
 
 def extract_current_values(assetData: dict) -> dict:
+    """Extract a normalized set of editable fields from asset data."""
     asset_tag = assetData.get("asset_tag") or ""
     name = assetData.get("name") or ""
     serial = assetData.get("serial") or ""
@@ -339,10 +361,18 @@ def _open_help(parent):
 
 # was: def consisterizer(asset_tag, _checked_values=None):
 def consisterizer(asset_tag, alias=None, _checked_values=None):
+    """Open the Consisterizer window for a given asset tag.
+
+    This editor allows batch updates to Snipe-IT assets, highlights
+    mismatches against defaults, and runs optional post-save scripts.
+
+    Args:
+        asset_tag: Asset tag to load on startup.
+        alias: Optional alias payload to prefill fields or toggle options.
+        _checked_values: Legacy placeholder (unused).
     """
-    Open the Consisterizer window for a given asset tag.
-    Saves to Snipe-IT via PATCH and runs optional scripts.
-    """
+    configure_logging()
+    logger.info("Opening Consisterizer for %s", asset_tag)
 
     # -------------------------------------------------------------------------
     # Window
@@ -368,9 +398,11 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     # Data & Options (preload once)
     # -------------------------------------------------------------------------
     _vl, assetData = getAssetInfo(asset_tag)
+    logger.debug("Loaded asset data for Consisterizer: %s", asset_tag)
     current_map = extract_current_values(assetData)
     default_font = tkfont.nametofont("TkDefaultFont")
 
+    # Preload options once to avoid repeated API calls as the UI renders.
     status_options = getAllStatusOptions()
     assignee_options = getAllAssigneeOptions()
     model_options = getAllModelOptions()
@@ -379,6 +411,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     runtime_username = tk.StringVar(value=current_map.get("_assigned_username", ""))
 
     def _username_from_option(sel: dict | None) -> str:
+        """Derive a username from a user selection option."""
         if not sel or sel.get("type") != "user":
             return ""
         u = (sel.get("username") or "").strip()
@@ -422,6 +455,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     asset_entry = ttk.Entry(center, textvariable=asset_tag_var, width=18)
 
     def _validate_tag_key(newval):
+        """Validate asset tag input for numeric length constraints."""
         return (newval == "") or (newval.isdigit() and len(newval) <= 5)
 
     asset_entry.configure(validate="key", validatecommand=(win.register(_validate_tag_key), "%P"))
@@ -432,6 +466,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     right.grid(row=0, column=2, sticky="e")
 
     def _help_click():
+        """Open the help dialog for Consisterizer."""
         _open_help(win)
 
     # U+20DD is COMBINING ENCLOSING CIRCLE; "?\u20DD" renders as circled ? on most fonts.
@@ -449,6 +484,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     ttk.Checkbutton(right, text="Batch mode", variable=batch_mode_var).pack(side="right")
 
     def _clear_entry_style_if_valid(*_):
+        """Clear error styling when the asset tag looks valid."""
         v = asset_tag_var.get().strip()
         if re.match(r"^\d{0,5}$", v or ""):
             try:
@@ -462,6 +498,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     has_current_asset = tk.BooleanVar(value=True)  # we start with an asset loaded
 
     def _update_submit_enabled(*_):
+        """Enable or disable submit based on active asset state."""
         try:
             submit_btn.configure(state=("normal" if has_current_asset.get() else "disabled"))
         except Exception:
@@ -530,6 +567,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     rows_by_key = {}
 
     def _update_scroll_state():
+        """Update scrollregion and enable/disable the scrollbar."""
         grid_canvas.configure(scrollregion=grid_canvas.bbox("all"))
         bbox = grid_canvas.bbox("all") or (0, 0, 0, 0)
         content_h = bbox[3] - bbox[1]
@@ -542,6 +580,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             grid_canvas.yview_moveto(0.0)
 
     def _apply_wraplengths():
+        """Apply wrap lengths based on available column width."""
         total = grid_canvas.winfo_width()
         if total <= 1:
             return
@@ -555,6 +594,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                 pass
 
     def _sync_layout(_e=None):
+        """Sync canvas layout and wrapping when sizes change."""
         grid_canvas.itemconfigure(inner_window, width=grid_canvas.winfo_width())
         _update_scroll_state()
         _apply_wraplengths()
@@ -567,6 +607,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     _SC_UNITS = 1  # slow & steady
 
     def _pointer_over_canvas():
+        """Return True if the pointer is over the scrollable grid."""
         try:
             x, y = win.winfo_pointerx(), win.winfo_pointery()
             w = win.winfo_containing(x, y)
@@ -579,6 +620,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
         return False
 
     def _on_mousewheel(event):
+        """Handle mousewheel scrolling with pointer gating."""
         bbox = grid_canvas.bbox("all") or (0, 0, 0, 0)
         content_h = bbox[3] - bbox[1]
         if not _pointer_over_canvas() or content_h <= max(1, grid_canvas.winfo_height()):
@@ -649,6 +691,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                 ac_fg_default = "black"
 
             def on_change(ac_ref=ac, cur_val=cur, rr=row_record):
+                """Update result value and recompute on status change."""
                 txt = ac_ref.get().strip()
                 rr["ac_selected"] = ac_ref.get_selected()
                 rr["result_var"].set(txt if txt else cur_val)
@@ -668,6 +711,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                 ac_fg_default = "black"
 
             def on_change(ac_ref=ac, cur_val=cur, rr=row_record):
+                """Update result value and runtime username on assignee change."""
                 txt = ac_ref.get().strip()
                 sel = ac_ref.get_selected()
                 rr["ac_selected"] = sel
@@ -696,6 +740,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                 ac_fg_default = "black"
 
             def on_change(ac_ref=ac, cur_val=cur, rr=row_record):
+                """Update result value on model change."""
                 txt = ac_ref.get().strip()
                 sel = ac_ref.get_selected()
                 rr["ac_selected"] = sel
@@ -715,6 +760,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                 attach_placeholder(text, PLACEHOLDERS[key])
 
             def handler(_e=None, t=text):
+                """Resize the text widget and recompute results."""
                 try:
                     dl = int(t.count("1.0", "end-1c", "displaylines")[0])
                 except Exception:
@@ -734,6 +780,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     # Templates (load & normalize)
     # -------------------------------------------------------------------------
     def _load_templates(path=TEMPLATES_PATH):
+        """Load default profiles from JSON and normalize field keys."""
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -768,12 +815,14 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     # Evaluation helpers
     # -------------------------------------------------------------------------
     def evaluate_template_string(template: str, current_key: str, visited: set):
+        """Expand a template string into a computed value."""
         if "{blank}" in template:
             return "", True
         if "{empty}" in template:
             return "", False
 
         def repl(match):
+            """Replace a single token within the template string."""
             token = match.group(1).strip()
 
             if token == "today":
@@ -808,6 +857,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
         return expanded, False
 
     def evaluate_row(key: str, visited=None):
+        """Compute the effective value for a field row."""
         if visited is None:
             visited = set()
         if key in visited:
@@ -843,6 +893,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
         return current_map.get(key, "")
 
     def _asset_path_value(path: str):
+        """Resolve a dotted path against the raw asset JSON."""
         cur = assetData
         for part in path.split("."):
             if isinstance(cur, dict):
@@ -861,6 +912,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     _applying_maintained_defaults = False
 
     def recompute_defaults(result_snapshot: dict):
+        """Compute active defaults based on template rules."""
         active_defaults_templ.clear()
         active_defaults_eval.clear()
 
@@ -902,6 +954,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                 active_defaults_eval[f] = eval_t
 
     def _apply_maintained_defaults() -> bool:
+        """Apply maintained defaults to rows and return True if changed."""
         changed = False
         for key, r in rows_by_key.items():
             if not r["reset_var"].get():
@@ -944,6 +997,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
         return changed
 
     def recompute_all_results():
+        """Re-evaluate all rows, defaults, and mismatch highlighting."""
         nonlocal _applying_maintained_defaults
 
         snapshot = {}
@@ -1003,6 +1057,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     # Reset Selected
     # -------------------------------------------------------------------------
     def reset_selected():
+        """Reset checked rows to defaults and recompute results."""
         results_snapshot = {k: evaluate_row(k, visited=set()) for k in FIELD_ORDER}
         recompute_defaults(results_snapshot)
 
@@ -1054,6 +1109,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     # Snipe-IT helpers (ID mapping + PATCH/CHECKIN with retry)
     # -------------------------------------------------------------------------
     def _label_id_map(options):
+        """Build a label-to-ID map from autocomplete options."""
         m = {}
         for opt in (options or []):
             label = opt.get("label") or opt.get("name") or opt.get("text") or str(opt.get("value") or opt.get("id") or "")
@@ -1064,6 +1120,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
         return m
 
     def _id_from_sel(sel):
+        """Extract a selection ID from an autocomplete selection dict."""
         if not isinstance(sel, dict):
             return None
         for k in ("id", "value", "user_id", "model_id", "status_id"):
@@ -1147,18 +1204,16 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
         return payload, changed, need_checkin, must_checkin_first, checkout_user_id, checkout_location_id
 
     def _api_patch_with_retry(asset_id: int, payload: dict) -> bool:
-        if not SNIPE_BASE or not SNIPE_TOKEN:
-            messagebox.showerror("Snipe-IT", "Missing API_URL_Base or API_Key in utilities.Key.")
+        """PATCH the asset and prompt the user to retry on failures."""
+        if not SNIPE_BASE or not get_api_key():
+            messagebox.showerror("Snipe-IT", "Missing API_URL_Base or API key in utilities.Key.")
             return False
 
         url = f"{SNIPE_BASE}/hardware/{asset_id}"
-        headers = {
-            "Authorization": f"Bearer {SNIPE_TOKEN}",
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        }
+        headers = get_api_headers()
 
         def _cursor_busy(on=True):
+            """Toggle a busy cursor while API calls are in flight."""
             try:
                 win.config(cursor="watch" if on else "")
                 win.update_idletasks()
@@ -1204,21 +1259,18 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
 
     def _api_checkin_with_retry(asset_id: int, note: str = "Consisterizer unassign", location_id: int | None = None) -> bool:
         """POST /hardware/{id}/checkin to unassign the asset."""
-        if not SNIPE_BASE or not SNIPE_TOKEN:
-            messagebox.showerror("Snipe-IT", "Missing API_URL_Base or API_Key in utilities.Key.")
+        if not SNIPE_BASE or not get_api_key():
+            messagebox.showerror("Snipe-IT", "Missing API_URL_Base or API key in utilities.Key.")
             return False
 
         url = f"{SNIPE_BASE}/hardware/{asset_id}/checkin"
-        headers = {
-            "Authorization": f"Bearer {SNIPE_TOKEN}",
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        }
+        headers = get_api_headers()
         body = {"note": note}
         if location_id is not None:
             body["location_id"] = location_id
 
         def _cursor_busy(on=True):
+            """Toggle a busy cursor while API calls are in flight."""
             try:
                 win.config(cursor="watch" if on else "")
                 win.update_idletasks()
@@ -1260,16 +1312,13 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                                  location_id: int | None = None,
                                  note: str = "Consisterizer assign/checkout",
                                  expected_checkin: str | None = None) -> bool:
-        if not SNIPE_BASE or not SNIPE_TOKEN:
-            messagebox.showerror("Snipe-IT", "Missing API_URL_Base or API_Key in utilities.Key.")
+        """POST a checkout and prompt for retries on failure."""
+        if not SNIPE_BASE or not get_api_key():
+            messagebox.showerror("Snipe-IT", "Missing API_URL_Base or API key in utilities.Key.")
             return False
 
         url = f"{SNIPE_BASE}/hardware/{asset_id}/checkout"
-        headers = {
-            "Authorization": f"Bearer {SNIPE_TOKEN}",
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        }
+        headers = get_api_headers()
 
         body = {"note": note}
         if user_id is not None:
@@ -1284,6 +1333,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             body["expected_checkin"] = expected_checkin  # "YYYY-MM-DD"
 
         def _cursor_busy(on=True):
+            """Toggle a busy cursor while API calls are in flight."""
             try:
                 win.config(cursor="watch" if on else "")
                 win.update_idletasks()
@@ -1369,10 +1419,12 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
         return {}
 
     def _norm_alias_key(k: str) -> str:
+        """Normalize alias keys for lookup."""
         return (k or "").strip().lower().replace(" ", "_")
 
     # reverse lookups in case alias specifies IDs
     def _label_from_id(label_to_id: dict, wanted_id):
+        """Return the label matching a given ID from a lookup map."""
         for lbl, _id in (label_to_id or {}).items():
             if _id == wanted_id:
                 return lbl
@@ -1520,6 +1572,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     # Submit helpers (validate, warn, save, scripts, maybe switch)
     # -------------------------------------------------------------------------
     def _collect_snapshot():
+        """Collect current evaluated values for all fields."""
         return {k: evaluate_row(k, visited=set()) for k in FIELD_ORDER}
 
     def _collect_validation_errors(snapshot: dict):
@@ -1541,6 +1594,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
         return errors
 
     def _collect_default_warnings(snapshot: dict):
+        """Return warnings when values differ from active defaults."""
         warnings = []
         for k in FIELD_ORDER:
             if k not in active_defaults_eval:
@@ -1573,6 +1627,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             messagebox.showerror("Script Errors", "\n".join(lines))
 
     def _refresh_current_after_save(saved_snapshot: dict):
+        """Reload the current asset after a save completes."""
         # If asset_tag changed, reload by new tag; otherwise by existing tag
         new_tag = saved_snapshot.get("asset_tag") or current_map.get("asset_tag") or ""
         if not new_tag:
@@ -1661,6 +1716,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
         return True, tag_for_scripts
 
     def _switch_asset_in_place(new_tag: str) -> bool:
+        """Reload asset data and refresh the UI for a new tag."""
         nonlocal assetData, current_map
 
         try:
@@ -1695,6 +1751,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                 runtime_username.set("")
             elif sel and sel.get("type") == "user":
                 def _from_sel(s):
+                    """Extract a username from a selection dict."""
                     u = (s.get("username") or "").strip()
                     if u:
                         return u
@@ -1777,7 +1834,8 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
         """Load whatever is typed in the centered Asset Tag box."""
         tag = asset_tag_var.get().strip()
         if not valid_asset_tag(tag):
-            messagebox.showerror("Asset Tag", "Asset tag must be 4–5 digits.")
+            pattern = get_settings().get("assetTagRegex", r"^\d{4,5}$")
+            messagebox.showerror("Asset Tag", f"Asset tag does not match pattern: {pattern}")
             try:
                 asset_entry.configure(style="ConsistError.TEntry")
             except Exception:
@@ -1818,7 +1876,8 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
         if batch_mode_var.get():
             new_tag = asset_tag_var.get().strip()
             if not valid_asset_tag(new_tag):
-                messagebox.showerror("Asset Tag", "Asset tag must be 4–5 digits.")
+                pattern = get_settings().get("assetTagRegex", r"^\d{4,5}$")
+                messagebox.showerror("Asset Tag", f"Asset tag does not match pattern: {pattern}")
                 try:
                     asset_entry.configure(style="ConsistError.TEntry")
                 except Exception:
@@ -1853,6 +1912,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
 
     # Bind Enter on the “next asset tag” box to same submit flow
     def _on_asset_tag_return(_e=None):
+        """Handle Enter to submit or load the next asset tag."""
         # If there is an asset loaded, Enter should submit; if we’re waiting, Enter loads the tag
         if has_current_asset.get():
             _submit_and_maybe_switch()
@@ -1879,4 +1939,4 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
 
     win.geometry(f"{W}x{H}+{x}+{y}")
     win.minsize(MIN_W, MIN_H)
-    return f"Consisterizer opened for {asset_tag}"
+    return f"Consisterizer opened for {asset_tag}."

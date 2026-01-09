@@ -18,18 +18,24 @@ Design notes:
  - Uses messagebox popups for user-facing errors and prints for simple runtime info.
 """
 
-from paramiko import SSHException
-from tkinter import messagebox
-from utilities.Key import *  # noqa: F401,F403 - provides credentials/constants used below
-from email.message import EmailMessage
-from ringcentral import SDK
-from ringcentral.http.api_exception import ApiException
-import smtplib
-import paramiko
 import csv
 import json
+import logging
 import os
 import re
+import smtplib
+from email.message import EmailMessage
+from tkinter import messagebox
+
+import paramiko
+from paramiko import SSHException
+from ringcentral import SDK
+from ringcentral.http.api_exception import ApiException
+
+from utilities.Key import *  # noqa: F401,F403 - provides credentials/constants used below
+from utilities.logging_utils import configure_logging
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------
 # Helper: SFTP open + CSV reader
@@ -49,6 +55,8 @@ def _open_sftp():
     Raises:
         Exception on failure to connect or change directory.
     """
+    configure_logging()
+    # Establish an SFTP connection and switch to the expected directory.
     transport = None
     sftp = None
     try:
@@ -83,6 +91,8 @@ def _read_remote_csv(sftp, filename):
     Returns:
         List of rows (each row is a list of strings).
     """
+    configure_logging()
+    # Read the CSV from SFTP into a list of rows.
     rows = []
     with sftp.open(filename, 'r') as remote_file:
         reader = csv.reader(remote_file)
@@ -115,9 +125,12 @@ def get_parents(email):
     Returns:
         list of parent email strings (may be empty).
     """
+    configure_logging()
+    # Retry loop for transient SFTP failures.
     trying = True
     while trying:
         try:
+            # Pull both student and family CSVs from the server.
             transport, sftp = _open_sftp()
             try:
                 students = _read_remote_csv(sftp, 'students.csv')
@@ -133,6 +146,7 @@ def get_parents(email):
                 except Exception:
                     pass
 
+            # Find the student row by email, then map to family rows.
             search_value = str(email).lower()
             result = []
 
@@ -150,11 +164,13 @@ def get_parents(email):
             return result
 
         except SSHException as e:
+            logger.exception("SFTP connection failed while fetching parents")
             trying = messagebox.askretrycancel("Error", f"Failed to connect to server\nError: {e}")
             if not trying:
                 return []
         except Exception as e:
             # Unexpected error - allow retry as well
+            logger.exception("Unexpected error while fetching parents")
             trying = messagebox.askretrycancel("Error", f"Unexpected error while fetching parents:\n{e}")
             if not trying:
                 return []
@@ -178,9 +194,12 @@ def get_phone_number(email):
     Returns:
         phone number string (may be None if not found).
     """
+    configure_logging()
+    # Retry loop for transient SFTP failures.
     trying = True
     while trying:
         try:
+            # Pull the students CSV from the server.
             transport, sftp = _open_sftp()
             try:
                 students = _read_remote_csv(sftp, 'students.csv')
@@ -194,6 +213,7 @@ def get_phone_number(email):
                 except Exception:
                     pass
 
+            # Find the matching student row by email.
             search_value = str(email).lower()
             for row in students:
                 if len(row) > 6 and row[6].lower() == search_value:
@@ -201,10 +221,12 @@ def get_phone_number(email):
             return None
 
         except SSHException as e:
+            logger.exception("SFTP connection failed while fetching phone number")
             trying = messagebox.askretrycancel("Error", f"Failed to connect to server\nError: {e}")
             if not trying:
                 return None
         except Exception as e:
+            logger.exception("Unexpected error while fetching phone number")
             trying = messagebox.askretrycancel("Error", f"Unexpected error while fetching phone:\n{e}")
             if not trying:
                 return None
@@ -226,18 +248,20 @@ def send_text_message(number: str, content: str):
 
     This keeps things permissive enough for xxx-xxx-xxxx while catching clearly invalid values.
     """
+    configure_logging()
+    # Normalize/validate the phone number before sending.
     if not number:
         raise ValueError("No phone number provided to send_text_message")
 
     raw = str(number).strip()
 
-    # Normalize: remove common separators but preserve leading '+'
+    # Normalize: remove common separators but preserve leading '+'.
     if raw.startswith('+'):
         cleaned = '+' + re.sub(r"[^\d]", "", raw[1:])
     else:
         cleaned = re.sub(r"[^\d]", "", raw)
 
-    # Validate/form the final number to send
+    # Validate/form the final number to send.
     if cleaned.startswith('+'):
         digits = cleaned[1:]
         if not (7 <= len(digits) <= 15):
@@ -254,35 +278,42 @@ def send_text_message(number: str, content: str):
         else:
             raise ValueError(f"Phone number looks invalid after cleanup: {number} -> {cleaned}")
 
-    # proceed with RingCentral send using final_number
+    # Proceed with RingCentral send using final_number.
     sdk = SDK(ringCentralClientID, ringCentralClientSecret, ringCentralURLBase)
     platform = sdk.platform()
     try:
+        # Authenticate to RingCentral before sending SMS.
         platform.login(jwt=ringCentralUserJWT)
 
+        # Build the SMS payload.
         body = {
             "from": {"phoneNumber": ringCentralFromNumber},
             "to": [{"phoneNumber": final_number}],
             "text": content
         }
 
+        # Send the SMS and return the response payload.
         resp = platform.post("/restapi/v1.0/account/~/extension/~/sms", body)
         data = resp.json()
-        print("RingCentral SMS send response:", data)
+        logger.debug("RingCentral SMS send response: %s", data)
         return data
 
     except ApiException as e:
         try:
             err_body = e.response.json()
+            logger.error("RingCentral API error: %s", err_body)
             messagebox.showerror("Text send failed", f"RingCentral API error:\n{err_body}")
             raise RuntimeError(f"RingCentral API error: {err_body}") from e
         except Exception:
+            logger.exception("RingCentral API error")
             messagebox.showerror("Text send failed", f"RingCentral API error: {e}")
             raise RuntimeError(f"RingCentral API error: {e}") from e
     except Exception as e:
+        logger.exception("Unexpected error sending SMS")
         messagebox.showerror("Text send failed", f"Unexpected error sending SMS:\n{e}")
         raise
     finally:
+        # Always attempt to logout to avoid lingering sessions.
         try:
             platform.logout()
         except Exception:
@@ -313,6 +344,8 @@ def message(content, recipient, subject=None, text_student_recipient=False, emai
     Returns:
       None
     """
+    configure_logging()
+    # Normalize inputs and prepare recipient list.
     recipients = []
     subject_safe = str(subject) if subject is not None else ""
 
@@ -330,6 +363,7 @@ def message(content, recipient, subject=None, text_student_recipient=False, emai
                 send_text_message(phone, sms_body)
             except Exception as e:
                 # send_text_message already displays a messagebox for API errors, but show a fallback as well
+                logger.exception("Failed to send SMS to %s", phone)
                 messagebox.showerror("Texting failed", f"Failed to send SMS to {phone}:\n{e}")
 
     if email_parent:
@@ -337,20 +371,21 @@ def message(content, recipient, subject=None, text_student_recipient=False, emai
         if parents:
             recipients += parents
 
-    # If there are no email recipients, skip SMTP entirely
+    # If there are no email recipients, skip SMTP entirely.
     if not recipients:
-        print("No email recipients configured; skipping email send.")
+        logger.info("No email recipients configured; skipping email send.")
         return
 
-    # Attempt SMTP login
+    # Attempt SMTP login.
     try:
         s = smtplib.SMTP_SSL(host='smtp.gmail.com', port=465, timeout=30)
         s.login(*tech_email_info)
     except Exception as e:
+        logger.exception("Failed to login to SMTP")
         messagebox.showerror("Email login failed", f"Failed to login to SMTP: {e}")
         return
 
-    # Build HTML template once
+    # Build HTML template once.
     header_img_url = "https://bbk12e1-cdn.myschoolcdn.com/ftpimages/425/logo/NEW2016MainSiteLogo.png"
     html_content = content.replace("\n", "<br>")
     html_template = f"""
@@ -379,10 +414,11 @@ def message(content, recipient, subject=None, text_student_recipient=False, emai
     </html>
     """
 
-    # Send the email(s)
+    # Send the email(s).
     try:
         for r in recipients:
             try:
+                # Build and send one message per recipient.
                 msg = EmailMessage()
                 msg.set_content(content)
                 msg.add_alternative(html_template, subtype="html")
@@ -393,9 +429,10 @@ def message(content, recipient, subject=None, text_student_recipient=False, emai
                 msg['To'] = r
 
                 s.send_message(msg)
-                print(f"Email sent to {r}")
+                logger.info("Email sent to %s", r)
             except Exception as e:
                 # Show error per-recipient but continue to other recipients
+                logger.exception("Failed to send email to %s", r)
                 messagebox.showerror("Email send failed", f"Failed to send email to {r}:\n{e}")
     finally:
         try:
@@ -487,6 +524,7 @@ def remove_fine_warning(student_email):
     Returns True if the user chose to remove the fine (Yes), False otherwise.
     """
     try:
+        # Load warning patterns from settings.json.
         settings_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "settings.json")
         with open(settings_path, "r") as fh:
             settings = json.load(fh)
@@ -495,6 +533,7 @@ def remove_fine_warning(student_email):
         messagebox.showerror("Settings error", f"Failed to read settings.json:\n{e}")
         return False
 
+    # Check student + parent emails for warning pattern matches.
     emails = [student_email] + get_parents(student_email)
     for email in emails:
         for pattern in warn_patterns:
@@ -516,6 +555,7 @@ def is_email(email):
 
     Returns True if the string looks like an email address, False otherwise.
     """
+    # Normalize input to a string for regex validation.
     email = str(email)
     if re.match(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", email):
         return True

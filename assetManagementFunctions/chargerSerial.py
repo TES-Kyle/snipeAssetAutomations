@@ -1,57 +1,77 @@
-import os
+"""Charger history lookup via Jamf Pro EA values."""
+
 import json
+import logging
+import os
 from datetime import datetime
 import tkinter as tk
-from tkinter import ttk
+from tkinter import messagebox, ttk
 from jamf_pro_sdk import JamfProClient, SessionConfig
 from jamf_pro_sdk.clients.auth import ApiClientCredentialsProvider
 from jamf_pro_sdk.clients.pro_api.pagination import FilterField, SortField
 from utilities.otherApiBits import getAssetInfoSerialAssignedTo, getAssetInfo
 from utilities import Key
+from utilities.logging_utils import configure_logging, get_settings
 
 jamfURL = Key.jamfURL # No trailing slash
 
-CHARGER_EA_NAME = "chargerSerial"
+CHARGER_EA_NAME_DEFAULT = "chargerSerial"
+CHARGER_PAGE_SIZE_DEFAULT = 700
+
+logger = logging.getLogger(__name__)
 
 def get_computer_inventory_results():
+    """Fetch Jamf computer inventory records using the Jamf Pro SDK.
+
+    Returns:
+        List of Jamf computer inventory objects (may be empty on failure).
     """
-    Fetches a set of computer inventory records from Jamf Pro using the Jamf Pro SDK.
-    """
+    configure_logging()
+    settings = get_settings()
+    try:
+        # Allow page size override via settings for large Jamf tenants.
+        page_size = int(settings.get("chargerSerialPageSize", CHARGER_PAGE_SIZE_DEFAULT))
+    except Exception:
+        page_size = CHARGER_PAGE_SIZE_DEFAULT
+
+    # Build a Jamf client using OAuth credentials.
     jamfClient = JamfProClient(
         server=jamfURL,
         credentials=ApiClientCredentialsProvider(Key.jamfClientID, Key.jamfClientSecret),
         session_config=SessionConfig(timeout=30, max_retries=5, max_concurrency=25),
     )
 
-    response = jamfClient.pro_api.get_computer_inventory_v1(
-        sections=["HARDWARE"],
-        page_size=700,  # Adjust as needed
-        sort_expression=SortField("general.name").asc()
-    )
+    try:
+        response = jamfClient.pro_api.get_computer_inventory_v1(
+            sections=["HARDWARE"],
+            page_size=page_size,
+            sort_expression=SortField("general.name").asc(),
+        )
+    except Exception as e:
+        logger.exception("Failed to fetch Jamf computer inventory")
+        messagebox.showerror("Jamf Error", f"Failed to fetch computer inventory.\n\n{e}")
+        return []
+
     # response is a list of Computer objects
     return response
 
 def parse_charger_info(values_str):
-    """
-    Parses a string containing charger information and returns a list of tuples with datetime objects and charger serial numbers.
+    """Parse charger history values into (datetime, serial) tuples.
+
     Args:
-        values_str (str): A string containing charger information with each entry on a new line. Each line should contain a date/time string followed by a charger serial number.
+        values_str: String containing charger history lines from Jamf EA.
+
     Returns:
-        list of tuples: A list where each tuple contains a datetime object and a charger serial number.
-    Example:
-        Input:
-            "Mon Jan 1 12:34:56 2023 ABC123\nTue Feb 2 23:45:01 2023 XYZ789"
-        Output:
-            [(datetime.datetime(2023, 1, 1, 12, 34, 56), 'ABC123'), 
-             (datetime.datetime(2023, 2, 2, 23, 45, 1), 'XYZ789')]
+        List of (datetime, charger_serial) tuples parsed from the input.
     """
+    configure_logging()
     entries = []
     lines = values_str.split('\n')
     for line in lines:
         line = line.strip()
         if not line:
             continue
-        # Split into date/time parts and charger serial
+        # Split into date/time parts and charger serial.
         parts = line.rsplit(maxsplit=1)
         if len(parts) != 2:
             continue
@@ -59,39 +79,54 @@ def parse_charger_info(values_str):
         charger_serial = parts[1]
 
         tokens = date_part.split()
-        # If we have 6 tokens, assume the 5th is a timezone and remove it
+        # If we have 6 tokens, assume the 5th is a timezone and remove it.
         if len(tokens) == 6:
             tokens.pop(4)
 
-        # Zero-pad the day if needed
+        # Zero-pad the day if needed to match the expected format.
         day = tokens[2]
         if len(day) == 1:
             day = f"0{day}"
             tokens[2] = day
 
+        # Parse the normalized timestamp into a datetime.
         date_str = " ".join(tokens)
         dt = datetime.strptime(date_str, "%a %b %d %H:%M:%S %Y")
 
+        # Add the parsed entry for later sorting.
         entries.append((dt, charger_serial))
     return entries
 
 def chargerSerial(assetTag):
-    """
-    Retrieves and formats the 5 most recent uses of a charger based on the given asset tag.
+    """Retrieve and format the most recent uses of a charger.
+
     Args:
-        assetTag (str): The asset tag of the charger to look up.
+        assetTag: Asset tag of the charger to look up.
+
     Returns:
-        str: A formatted string listing the 5 most recent uses of the charger, including the date/time,
-             device serial number, and the user assigned to the device. If no recent uses are found,
-             a message indicating this is included in the result.
+        Multi-line string listing recent charger uses or a not-found message.
     """
+    configure_logging()
     # This function now returns the formatted result string instead of printing directly
+    # Fetch Jamf inventory once to avoid repeated API calls.
     computers = get_computer_inventory_results()
+    if not computers:
+        return "No Jamf inventory results available."
+    # Resolve the target charger serial from Snipe-IT.
     _, assetInfo = getAssetInfo(assetTag)
     TARGET_CHARGER_SERIAL = assetInfo["serial"]
+    logger.info("Checking charger history for asset %s (serial=%s)", assetTag, TARGET_CHARGER_SERIAL)
+
+    settings = get_settings()
+    # Use the configured EA name, with a safe default fallback.
+    charger_ea_name = settings.get("chargerEaName", CHARGER_EA_NAME_DEFAULT).strip()
+    if not charger_ea_name:
+        charger_ea_name = CHARGER_EA_NAME_DEFAULT
+    logger.debug("Using charger EA name: %s", charger_ea_name)
 
     charger_matches = []
     for comp in computers:
+        # Only consider records with a hardware section.
         hardware = comp.hardware
         if not hardware:
             continue
@@ -99,21 +134,24 @@ def chargerSerial(assetTag):
         
         if hardware.extensionAttributes:
             for ea in hardware.extensionAttributes:
-                if ea.name == CHARGER_EA_NAME:
+                # Match the EA that contains charger usage history.
+                if ea.name == charger_ea_name:
                     values = ea.values or []
                     if not values:
                         continue
+                    # Parse all history entries and capture matches for this charger.
                     all_values_str = "\n".join(values)
                     entries = parse_charger_info(all_values_str)
                     for (dt, cserial) in entries:
                         if cserial == TARGET_CHARGER_SERIAL:
                             assignedTo = getAssetInfoSerialAssignedTo(comp_serial)
                             charger_matches.append((dt, comp_serial, assignedTo))
+    logger.info("Found %s charger matches for %s", len(charger_matches), TARGET_CHARGER_SERIAL)
 
-    # Sort by datetime descending
+    # Sort by datetime descending to show most recent activity first.
     charger_matches.sort(key=lambda x: x[0], reverse=True)
 
-    # Build a result string
+    # Build a result string capped to the five most recent uses.
     result_str = f"5 Most Recent Uses of Charger {TARGET_CHARGER_SERIAL}:\n\n"
     for dt, dev_serial, assigned in charger_matches[:5]:
         result_str += f"{dt} - Device Serial: {dev_serial} - Last Used By: {assigned}\n"
@@ -135,6 +173,7 @@ def show_charger_results_tk(assetTag):
     Returns:
     None
     """
+    configure_logging()
     # Create a new window (Toplevel) so it doesn't block the main window
     top = tk.Toplevel()
     top.title("Charger Usage Results")
@@ -142,13 +181,13 @@ def show_charger_results_tk(assetTag):
     # Get the charger usage info
     results = chargerSerial(assetTag)
 
-    # Use a Text widget to display results
+    # Use a Text widget to display results.
     text_widget = tk.Text(top, wrap="word", width=80, height=20)
     text_widget.insert("1.0", results)
     text_widget.config(state="disabled")  # make read-only
     text_widget.pack(padx=10, pady=10)
 
-    # Optionally add a close button
+    # Add a close button for explicit dismissal.
     close_button = ttk.Button(top, text="Close", command=top.destroy)
     close_button.pack(pady=5)
 
