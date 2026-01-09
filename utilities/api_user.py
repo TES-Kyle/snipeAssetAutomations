@@ -10,7 +10,9 @@ It supports:
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import time
 from tkinter import messagebox, simpledialog
 
@@ -254,3 +256,86 @@ def get_api_headers(content_type: str | None = "application/json",
         # Allow callers to override or add headers.
         headers.update(extra)
     return headers
+
+
+def clear_cached_api_user() -> None:
+    """Clear any cached prompt-based API user selection."""
+    global _cached_name, _cached_until
+    _cached_name = None
+    _cached_until = 0.0
+    logger.info("Cleared cached API user selection")
+
+
+def set_api_user_static_name(name: str) -> bool:
+    """Persist apiUserStaticName to settings.json.
+
+    Args:
+        name: Static API user name to store (use "none" to disable).
+
+    Returns:
+        True when the settings file is updated, False on failure.
+    """
+    configure_logging()
+    settings_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "settings.json")
+    try:
+        if os.path.isfile(settings_path):
+            with open(settings_path, "r") as fh:
+                data = json.load(fh) or {}
+        else:
+            data = {}
+        data["apiUserStaticName"] = str(name or "none")
+        with open(settings_path, "w") as fh:
+            json.dump(data, fh)
+        logger.info("Updated apiUserStaticName to %s", data["apiUserStaticName"])
+        return True
+    except Exception:
+        logger.exception("Failed to update apiUserStaticName in settings.json")
+        return False
+
+
+def get_api_user_status() -> dict:
+    """Return a non-interactive snapshot of API user selection state.
+
+    Returns:
+        Dict with keys:
+          - mode: static | cached | prompt | fallback | none
+          - name: user display name when available, else None
+          - expires_in: seconds remaining for cached mode, else None
+          - detail: optional extra note (e.g., static_missing)
+    """
+    settings = get_settings()
+    key_map = _load_key_map()
+    default_key = _get_default_key()
+
+    static_name = _clean_name(settings.get("apiUserStaticName"))
+    if _is_static_name(static_name):
+        canon_name, token = _lookup_key_case_insensitive(static_name, key_map)
+        if token:
+            return {"mode": "static", "name": canon_name, "expires_in": None}
+        if default_key:
+            return {"mode": "fallback", "name": "API_Key (fallback)", "expires_in": None, "detail": "static_missing"}
+        return {"mode": "none", "name": None, "expires_in": None, "detail": "static_missing"}
+
+    if not key_map:
+        if default_key:
+            return {"mode": "fallback", "name": "API_Key (fallback)", "expires_in": None}
+        return {"mode": "none", "name": None, "expires_in": None}
+
+    now = time.monotonic()
+    global _cached_name, _cached_until
+    if _cached_name and now < _cached_until:
+        canon_name, token = _lookup_key_case_insensitive(_cached_name, key_map)
+        if token:
+            return {
+                "mode": "cached",
+                "name": canon_name,
+                "expires_in": max(0.0, _cached_until - now),
+            }
+        _cached_name = None
+        _cached_until = 0.0
+
+    if _cached_name and now >= _cached_until:
+        _cached_name = None
+        _cached_until = 0.0
+
+    return {"mode": "prompt", "name": None, "expires_in": None}

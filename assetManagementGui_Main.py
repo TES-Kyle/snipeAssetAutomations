@@ -13,6 +13,11 @@ from tkinter import messagebox
 
 from utilities.labelPrinting import sendToPrinter
 from utilities.logging_utils import configure_logging, get_settings
+from utilities.api_user import (
+    get_api_user_status,
+    clear_cached_api_user,
+    set_api_user_static_name,
+)
 from utilities.otherApiBits import getAssetInfo
 from utilities.settings import settingsMenu
 from assetManagementFunctions.assetFunctionsRouting import func_list, func_listTXT
@@ -176,6 +181,7 @@ def create_main_window(root):
         button_cols = int(settings.get("guiButtonColumns", 4))
     except Exception:
         button_cols = 4
+    small_font_size = max(10, base_font_size - 8)
 
     # =========================================================================
     # == Nested Functions (Callbacks and Helpers)
@@ -285,8 +291,71 @@ def create_main_window(root):
         app_state['tab2_frame']: tab2_label_button
     }
 
+    # API user indicator + logout (anchored to bottom-right; no layout shifts).
+    api_user_frame = tk.Frame(root)
+    api_user_frame.place(relx=1.0, rely=1.0, anchor="se", x=-12, y=-12)
+
+    api_user_text = tk.StringVar(value="API user: …")
+    api_user_label = tk.Label(api_user_frame, textvariable=api_user_text, font=(font_family, small_font_size),
+                              justify="right", anchor="e")
+    api_user_label.pack(side="top", anchor="e")
+
+    def _format_remaining(seconds):
+        """Return MM:SS string for a remaining seconds value."""
+        if seconds is None:
+            return ""
+        secs = max(0, int(seconds))
+        return f"{secs // 60:02d}:{secs % 60:02d}"
+
+    def _update_api_user_status():
+        """Update the API user indicator and logout button state."""
+        status = get_api_user_status()
+        mode = status.get("mode")
+        name = status.get("name")
+        remaining = status.get("expires_in")
+
+        if mode == "static" and name:
+            api_user_text.set(f"API user: {name} (static)")
+            logout_btn.config(state="normal")
+        elif mode == "cached" and name:
+            api_user_text.set(f"API user: {name}\nAuto-logout in {_format_remaining(remaining)}")
+            logout_btn.config(state="normal")
+        elif mode == "fallback":
+            if status.get("detail") == "static_missing":
+                api_user_text.set("API user: Default key\nStatic user missing")
+                logout_btn.config(state="normal")
+            else:
+                api_user_text.set("API user: Default key")
+                logout_btn.config(state="disabled")
+        elif mode == "prompt":
+            api_user_text.set("API user: not set\nPrompt on use")
+            logout_btn.config(state="disabled")
+        else:
+            api_user_text.set("API user: none")
+            logout_btn.config(state="disabled")
+
+    def _poll_api_user_status():
+        """Poll the API user status on a steady interval."""
+        _update_api_user_status()
+        root.after(1000, _poll_api_user_status)
+
+    def _logout_api_user():
+        """Clear any cached API user so the next call prompts."""
+        status = get_api_user_status()
+        if status.get("mode") == "static" or status.get("detail") == "static_missing":
+            set_api_user_static_name("none")
+        clear_cached_api_user()
+        _update_api_user_status()
+
+    logout_btn = tk.Button(api_user_frame, text="Log Out", command=_logout_api_user,
+                            font=(font_family, small_font_size))
+    logout_btn.pack(side="top", anchor="e", pady=(2, 0))
+
     # MODIFIED: Settings button is now packed inside its pre-packed frame
     tk.Button(settings_frame, text="⚙️", command=settingsMenu, font=(font_family, base_font_size)).pack(pady=5)
+
+    # Initialize API user indicator loop.
+    _poll_api_user_status()
 
     # --- Tab 1: Asset Functions ---
     tab1 = app_state['tab1_frame']
