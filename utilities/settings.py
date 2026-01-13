@@ -118,6 +118,24 @@ def settingsMenu():
         except Exception as e:
             messagebox.showerror("Update error", str(e))
 
+    def make_installer_usb():
+        """Launch the USB installer builder script."""
+        try:
+            app_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+            usb_maker = os.path.join(app_root, "shellScripts", "make_installer_usb.command")
+            if not os.path.isfile(usb_maker):
+                messagebox.showerror("USB Installer", "make_installer_usb.command not found.")
+                return
+            import subprocess
+            subprocess.Popen(
+                ["bash", "-lc", f"exec {json.dumps(usb_maker)}"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except Exception as e:
+            messagebox.showerror("USB Installer", str(e))
+
     def apply():
         """Persist settings, refresh logging config, and close the window."""
         output = dict()
@@ -173,6 +191,8 @@ def settingsMenu():
     update_label.pack(side="left")
     update_button = tk.Button(update_frame, text="🗘", command=checkUpdate)
     update_button.pack(side="left")
+    usb_button = tk.Button(update_frame, text="Make Installer USB", command=make_installer_usb)
+    usb_button.pack(side="left", padx=(10, 0))
 
     # Settings list frame (scrollable).
     list_frame = tk.Frame(settings_window)

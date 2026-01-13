@@ -10,7 +10,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Sources (relative to repo)
 INSTALLER_SRC="$SCRIPT_DIR/installer.command"          # required
-ICON_SRC="$SCRIPT_DIR/icon.icns"                       # optional
+ICON_SRC=""                                            # optional (resolved below)
 KEY_SRC="$REPO_ROOT/utilities/Key.py"                  # optional
 SETTINGS_SRC="$REPO_ROOT/utilities/settings.json"      # optional
 
@@ -107,10 +107,22 @@ if [ ! -d "$USB_MOUNT" ]; then
   exit 1
 fi
 
+# Resolve icon source from common locations (repo, app bundle).
+for candidate in \
+  "$SCRIPT_DIR/icon.icns" \
+  "$REPO_ROOT/../icon.icns" \
+  "$REPO_ROOT/../../Resources/icon.icns"
+do
+  if [ -f "$candidate" ]; then
+    ICON_SRC="$candidate"
+    break
+  fi
+done
+
 # Copy files
 /bin/cp "$INSTALLER_SRC" "$USB_MOUNT/installer.command"
 /bin/chmod +x "$USB_MOUNT/installer.command"
-[ -f "$ICON_SRC" ]     && /bin/cp "$ICON_SRC" "$USB_MOUNT/icon.icns"
+[ -n "$ICON_SRC" ]     && /bin/cp "$ICON_SRC" "$USB_MOUNT/icon.icns"
 [ -f "$KEY_SRC" ]      && /bin/cp "$KEY_SRC" "$USB_MOUNT/Key.py"
 [ -f "$SETTINGS_SRC" ] && /bin/cp "$SETTINGS_SRC" "$USB_MOUNT/settings.json"
 

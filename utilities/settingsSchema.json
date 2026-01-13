@@ -50,48 +50,6 @@
       ]
     },
     {
-      "name": "GUI",
-      "description": "Main window layout and font settings.",
-      "collapsed": true,
-      "items": [
-        {
-          "key": "guiWindowState",
-          "label": "Window State",
-          "description": "Allowed values: zoomed, normal."
-        },
-        {
-          "key": "guiFontFamily",
-          "label": "Font Family",
-          "description": "Font family name used throughout the GUI."
-        },
-        {
-          "key": "guiFontSize",
-          "label": "Base Font Size",
-          "description": "Default font size for most controls."
-        },
-        {
-          "key": "guiTabFontSize",
-          "label": "Tab Font Size",
-          "description": "Font size for top tab labels."
-        },
-        {
-          "key": "guiButtonColumns",
-          "label": "Button Columns",
-          "description": "Number of columns for function button grids."
-        },
-        {
-          "key": "guiActiveTabColor",
-          "label": "Active Tab Color",
-          "description": "Background color for active tab."
-        },
-        {
-          "key": "guiInactiveTabColor",
-          "label": "Inactive Tab Color",
-          "description": "Background color for inactive tabs."
-        }
-      ]
-    },
-    {
       "name": "Printer and Labels",
       "description": "Label printer connection and sizing defaults.",
       "collapsed": true,
@@ -130,6 +88,125 @@
           "key": "Default Print (BOOL)",
           "label": "Default Print",
           "description": "1 to auto-print after label generation, 0 to disable."
+        }
+      ]
+    },
+    {
+      "name": "Testing",
+      "description": "Pytest runner options for the in-app test command.",
+      "collapsed": true,
+      "items": [
+        {
+          "key": "pytestVerbosity",
+          "label": "Pytest Verbosity",
+          "description": "0 = default, 1 = -v, 2 = -vv."
+        },
+        {
+          "key": "pytestQuiet",
+          "label": "Pytest Quiet Mode",
+          "description": "1 to add -q for quieter output."
+        },
+        {
+          "key": "pytestCapture",
+          "label": "Pytest Disable Capture",
+          "description": "1 to add -s so stdout prints live."
+        },
+        {
+          "key": "pytestFailFast",
+          "label": "Pytest Fail Fast",
+          "description": "1 to add -x (stop on first failure)."
+        },
+        {
+          "key": "pytestMaxFail",
+          "label": "Pytest Max Failures",
+          "description": "Integer for --maxfail (0 disables)."
+        },
+        {
+          "key": "pytestDurations",
+          "label": "Pytest Durations",
+          "description": "Integer for --durations (0 disables)."
+        },
+        {
+          "key": "pytestMarkerExpression",
+          "label": "Pytest Marker Expression",
+          "description": "Passed to -m (e.g., readonly_network)."
+        },
+        {
+          "key": "pytestKeywordExpression",
+          "label": "Pytest Keyword Expression",
+          "description": "Passed to -k for test selection."
+        },
+        {
+          "key": "pytestAdditionalArgs",
+          "label": "Pytest Additional Args",
+          "description": "Extra args appended verbatim (e.g., --lf)."
+        },
+        {
+          "key": "pytestTargets",
+          "label": "Pytest Targets",
+          "description": "Optional paths or node IDs (space-separated)."
+        },
+        {
+          "key": "pytestReadonlyNetwork",
+          "label": "Pytest Readonly Network",
+          "description": "1 to set READONLY_NETWORK=1 in the test run."
+        },
+        {
+          "key": "pytestReadonlyAssetTags",
+          "label": "Pytest Readonly Asset Tags",
+          "description": "Comma-separated asset tags for read-only tests."
+        },
+        {
+          "key": "pytestReadonlyApiUser",
+          "label": "Pytest Readonly API User",
+          "description": "API user name for read-only tests (case-insensitive)."
+        },
+        {
+          "key": "pytestReadonlyApiKey",
+          "label": "Pytest Readonly API Key",
+          "description": "Override API key for read-only tests."
+        }
+      ]
+    },
+    {
+      "name": "GUI",
+      "description": "Main window layout and font settings.",
+      "collapsed": true,
+      "items": [
+        {
+          "key": "guiWindowState",
+          "label": "Window State",
+          "description": "Allowed values: zoomed, normal."
+        },
+        {
+          "key": "guiFontFamily",
+          "label": "Font Family",
+          "description": "Font family name used throughout the GUI."
+        },
+        {
+          "key": "guiFontSize",
+          "label": "Base Font Size",
+          "description": "Default font size for most controls."
+        },
+        {
+          "key": "guiTabFontSize",
+          "label": "Tab Font Size",
+          "description": "Font size for top tab labels."
+        },
+        {
+          "key": "guiButtonColumns",
+          "label": "Button Columns",
+          "description": "Number of columns for function button grids."
+        },
+        {
+          "key": "guiActiveTabColor",
+          "label": "Active Tab Color",
+          "description": "Background color for active tab."
+        },
+        {
+          "key": "guiInactiveTabColor",
+          "label": "Inactive Tab Color",
+          "description": "Background color for inactive tabs."
         }
       ]
     },
