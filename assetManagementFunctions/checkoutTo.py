@@ -4,6 +4,7 @@ import logging
 
 from utilities.logging_utils import configure_logging, get_settings
 from utilities.otherApiBits import *
+from utilities.api_user import get_api_key
 import tkinter as tk
 from tkinter import ttk
 from tkcalendar import DateEntry
@@ -133,6 +134,8 @@ def checkoutTo(asset_tag):
     def update_user_list(event):
         """Debounce user lookup as the entry text changes."""
         global debounce_timer
+        # Ensure API user prompt (if needed) happens on the UI thread.
+        get_api_key()
         query = checkout_to_var.get()
 
         # Debounce keystrokes to avoid spamming the API.
@@ -318,5 +321,8 @@ def checkoutTo(asset_tag):
 
     # Set the position of the window to the center of the screen
     checkout_window.geometry(f"+{center_x}+{center_y}")
+
+    # Ensure API user prompt (if needed) happens on the UI thread.
+    get_api_key()
 
     return f"Checkout window opened for {asset_tag}. Submit to complete."

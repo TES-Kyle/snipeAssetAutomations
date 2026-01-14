@@ -469,8 +469,8 @@ def makeCharger(asset_tag):
     serial_frame.grid_columnconfigure(0, weight=0)
     serial_frame.grid_columnconfigure(1, weight=1)
     ttk.Label(serial_frame, text="Serial Number:").grid(row=0, column=0, sticky="w")
-    ttk.Label(serial_frame, textvariable=serial_number)\
-        .grid(row=0, column=1, sticky="w")
+    serial_entry = ttk.Entry(serial_frame, textvariable=serial_number, state="readonly")
+    serial_entry.grid(row=0, column=1, sticky="ew")
     start_serial_update()
 
     # ---------- Model ----------
@@ -585,6 +585,9 @@ def makeCharger(asset_tag):
     cx = int((sw - ww) / 2)
     cy = int((sh - wh) / 2)
     charger_window.geometry(f"+{cx}+{cy}")
+
+    # Ensure API user prompt (if needed) happens on the main thread.
+    get_api_key()
 
     # Kick off async loads after showing window
     threading.Thread(target=_preload_options_thread, daemon=True).start()
