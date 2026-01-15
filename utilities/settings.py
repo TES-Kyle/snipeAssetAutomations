@@ -189,7 +189,7 @@ def settingsMenu():
     update_frame.pack(padx=10, pady=5, anchor="center")
     update_label = tk.Label(update_frame, text="Check For Updates")
     update_label.pack(side="left")
-    update_button = tk.Button(update_frame, text="🗘", command=checkUpdate)
+    update_button = tk.Button(update_frame, text="⬆", command=checkUpdate)
     update_button.pack(side="left")
     usb_button = tk.Button(update_frame, text="Make Installer USB", command=make_installer_usb)
     usb_button.pack(side="left", padx=(10, 0))
