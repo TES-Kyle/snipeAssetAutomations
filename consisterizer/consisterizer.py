@@ -109,8 +109,8 @@ DEFAULTS & TOKENS
   • {username}        → Assigned user’s username (live; cleared if {empty} Assigned To)
   • {field}           → The evaluated value of another field (e.g., {name}, {serial})
   • {field_current}   → That field’s CURRENT value (before changes)
-  • {empty}           → Explicit empty-string (for text fields) OR special clear for Assigned To
-  • {blank}           → Keep current (no change) for text-y fields
+  • {empty}           → Explicit clear for clearable fields (text/date/cost) OR special clear for Assigned To
+  • {blank}           → Explicit “keep current” marker (same as leaving Updates blank)
 - You can also reference dotted paths from the raw Snipe asset payload (e.g., {status_label.name}, {model.name}). Unknown tokens are left as-is.
 - Special default marker {has_value} (in defaults): requires the field to be non-empty; mismatches are highlighted.
 
@@ -120,11 +120,11 @@ RESULT & HIGHLIGHTING
 
 VALIDATION / CLEARING
 - Asset Tag must be 4–5 digits when you change it.
-- Dates must be YYYY-MM-DD (empty clears).
+- Dates must be YYYY-MM-DD ({empty} clears).
 - Clear rules:
-  • Text fields (name, serial, order_number, notes): empty string clears
-  • Date fields (purchase_date, expected_checkin): literal "null" string clears
-  • purchase_cost: JSON null clears
+  • Text fields (name, serial, order_number, notes): {empty} string clears
+  • Date fields (purchase_date, expected_checkin): {empty} clears
+  • purchase_cost: {empty} clears
   • Assigned To: type {empty} to unassign (handled via CHECKIN)
 - Status/Model can’t be cleared; blank keeps current.
 
@@ -406,6 +406,26 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     status_options = getAllStatusOptions()
     assignee_options = getAllAssigneeOptions()
     model_options = getAllModelOptions()
+
+    def _prepend_special_option(options, label, opt_type):
+        """Ensure a special label exists at the top of an autocomplete list."""
+        options = list(options or [])
+        for opt in options:
+            if str(opt.get("label") or "").strip() == label:
+                return options
+        return [{
+            "label": label,
+            "id": None,
+            "type": opt_type,
+            "username": "",
+            "email": "",
+            "meta": {},
+        }] + options
+
+    status_options = _prepend_special_option(status_options, "{blank}", "blank")
+    model_options = _prepend_special_option(model_options, "{blank}", "blank")
+    assignee_options = _prepend_special_option(assignee_options, "{empty}", "empty")
+    assignee_options = _prepend_special_option(assignee_options, "{blank}", "blank")
 
     # live value for {username} token
     runtime_username = tk.StringVar(value=current_map.get("_assigned_username", ""))
@@ -694,7 +714,10 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                 """Update result value and recompute on status change."""
                 txt = ac_ref.get().strip()
                 rr["ac_selected"] = ac_ref.get_selected()
-                rr["result_var"].set(txt if txt else cur_val)
+                if not txt or txt in {"{empty}", "{blank}"}:
+                    rr["result_var"].set(cur_val)
+                else:
+                    rr["result_var"].set(txt)
                 recompute_all_results()
 
             ac.bind_change(on_change)
@@ -719,6 +742,9 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                 if txt == "{empty}":
                     runtime_username.set("")
                     rr["result_var"].set("")
+                elif txt == "{blank}" or not txt:
+                    runtime_username.set(current_map.get("_assigned_username", ""))
+                    rr["result_var"].set(cur_val)
                 else:
                     live_user = _username_from_option(sel)
                     runtime_username.set(live_user or current_map.get("_assigned_username", ""))
@@ -744,7 +770,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                 txt = ac_ref.get().strip()
                 sel = ac_ref.get_selected()
                 rr["ac_selected"] = sel
-                if not txt or txt == "{empty}":
+                if not txt or txt in {"{empty}", "{blank}"}:
                     rr["result_var"].set(cur_val)  # non-clearable
                 else:
                     rr["result_var"].set(txt)
@@ -871,6 +897,9 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
         if key in {"status", "assigned_to", "model"}:
             if row.get("text_widget_type") == "ac":
                 val = row["ac"].get().strip()
+
+                if val == "{blank}":
+                    return current_map.get(key, "")
 
                 if key == "assigned_to" and val == "{empty}":
                     return ""  # explicit clear
@@ -1141,10 +1170,10 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
         Compare snapshot vs current, return (payload, any_changes, need_checkin).
         Maps UI keys -> Snipe-IT API keys and coerces types.
 
-        Clearing rules:
+        Clearing rules (all via {empty}):
           - Text fields (name, serial, order_number, notes): "" (empty string)
-          - Date fields (purchase_date, expected_checkin):  "null" (string)
-          - Numeric (purchase_cost):                       None (JSON null)
+          - Date fields (purchase_date, expected_checkin):  "" (empty string)
+          - Numeric (purchase_cost):                       "" (empty string)
           - Unassign user:                                 handled via CHECKIN (need_checkin=True)
         """
         NULL_STR = "null"
@@ -1195,6 +1224,19 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
 
                 else:
                     raise ValueError("Select either a User or a Location from suggestions.")
+                continue
+
+            if key in {"status", "model"}:
+                txt = (new or "").strip()
+                sel = rows_by_key[key].get("ac_selected")
+                sel_id = _id_from_sel(sel)
+                if sel_id is None:
+                    label_map = status_label_to_id if key == "status" else model_label_to_id
+                    sel_id = label_map.get(txt)
+                if sel_id is None:
+                    raise ValueError(f"Pick a {key.replace('_', ' ').title()} from the list.")
+                payload_key = "status_id" if key == "status" else "model_id"
+                payload[payload_key] = sel_id
                 continue
 
             else:
@@ -1577,7 +1619,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
 
     def _collect_validation_errors(snapshot: dict):
         """Enforce asset_tag/date only on fields that are changing vs current.
-           Empty string on DATE_FIELDS is allowed to mean 'clear'. """
+           Empty string on DATE_FIELDS is allowed only via {empty} (clear). """
         errors = []
         for key, final_val in snapshot.items():
             if final_val == rows_by_key[key]["current"]:

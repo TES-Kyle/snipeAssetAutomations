@@ -143,17 +143,11 @@ class AutoCompleteEntry(ttk.Frame):
                     self._selected = opt
                     break
             return
-        try:
-            idx = self.listbox.curselection()[0]
-        except Exception:
-            idx = 0
-        self._selected = self._matches[idx]
-        self.set(self._selected["label"])  # fires change
-        self.hide_popup()
+        self._commit_selection()
 
 
-    def hide_popup(self):
-        """Hide the popup listbox and restore focus."""
+    def hide_popup(self, restore_focus: bool = True):
+        """Hide the popup listbox and optionally restore focus."""
         try:
             # release any implicit grabs some Tk variants might take for a transient Toplevel
             try:
@@ -163,11 +157,11 @@ class AutoCompleteEntry(ttk.Frame):
             self.popup.withdraw()
         except Exception:
             pass
-        # ensure the main window is interactive again
-        try:
-            self.winfo_toplevel().focus_force()
-        except Exception:
-            pass
+        if restore_focus:
+            try:
+                self.winfo_toplevel().focus_force()
+            except Exception:
+                pass
 
 
     # ---------- Internals ----------
@@ -249,7 +243,7 @@ class AutoCompleteEntry(ttk.Frame):
         self.listbox.selection_clear(0, tk.END)
         self.listbox.selection_set(i)
         self.listbox.activate(i)
-        self.commit_selection()
+        self._commit_selection()
         return "break"
 
     def _commit_selection(self):
@@ -287,7 +281,7 @@ class AutoCompleteEntry(ttk.Frame):
         self._matches = self._top_matches(q, limit=5)
 
         if not self._matches:
-            self.hide_popup()
+            self.hide_popup(restore_focus=False)
             return
 
         self.listbox.delete(0, tk.END)
