@@ -49,6 +49,6 @@ func_listTXT = ["Print Selected",
                 "Check In",
                 "Consisterizer",
                 "Bulk Check-in",
-                "Delete & Un-Prestage Jamf",
-                "Delete & Set PreStage Jamf",
+                "Delete & Un-Prestage",
+                "Delete & Set PreStage",
                 ]
