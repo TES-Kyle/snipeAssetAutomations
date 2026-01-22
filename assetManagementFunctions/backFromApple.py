@@ -246,6 +246,13 @@ def backFromApple(asset_tag):
     # Create a new top-level window.
     repair_window = tk.Toplevel()
 
+    # Asset info panel (helps validate the correct asset tag).
+    var_list, assetData = getAssetInfo(asset_tag)
+    info_frame, _check_vars = build_asset_info_frame(
+        repair_window, var_list, include_checkboxes=False, padx=5, pady=2
+    )
+    info_frame.pack(fill='x', padx=10, pady=5)
+
     # Frame for the "D Number" question.
     d_number_frame = tk.Frame(repair_window)
     d_number_frame.pack(fill='x', padx=10, pady=5)
@@ -257,7 +264,6 @@ def backFromApple(asset_tag):
     d_number_entry.focus_set()  # Set focus to the D number entry box
 
     # Frame for Charge/Fault/Divert.
-    _, assetData = getAssetInfo(asset_tag)
     res = requests.get(
         Key.API_URL_Base + "maintenances?limit=1&offset=0&sort=created_at&order=desc&asset_id="
         + str(assetData["id"]), headers=get_headers()).json()

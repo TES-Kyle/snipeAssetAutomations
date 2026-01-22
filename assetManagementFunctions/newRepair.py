@@ -177,15 +177,10 @@ def newRepair(asset_tag):
 
     # Info Frame (current asset details).
     var_list, assetData = getAssetInfo(asset_tag)
-    info_frame = tk.Frame(issue_window)
+    info_frame, _check_vars = build_asset_info_frame(
+        issue_window, var_list, include_checkboxes=False, padx=5, pady=5
+    )
     info_frame.grid(row=0, column=0, sticky='nsew')
-
-    for i, (name, value) in enumerate(var_list):
-        # Build a two-column label/value layout for asset metadata.
-        label_name = tk.Label(info_frame, text=name, relief='solid', borderwidth=1, anchor='e')
-        label_name.grid(row=i, column=0, sticky='ew', padx=5, pady=5)
-        label_value = tk.Label(info_frame, text=value, relief='solid', borderwidth=1, anchor='w')
-        label_value.grid(row=i, column=1, sticky='ew', padx=5, pady=5)
 
     # Entry Frame (repair fields).
     entry_frame = tk.Frame(issue_window)

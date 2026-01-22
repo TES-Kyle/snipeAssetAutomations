@@ -13,7 +13,8 @@ from assetManagementFunctions.makeCharger import makeCharger
 from assetManagementFunctions.chargerSerial import show_charger_results_tk
 from assetManagementFunctions.checkoutTo import checkoutTo
 from assetManagementFunctions.checkIn import checkIn
-from assetManagementFunctions.jamfDeleteAndPreStage import jamf_remove_prestage_and_delete
+from assetManagementFunctions.jamfDeleteAndUnprestage import jamf_remove_prestage_and_delete
+from assetManagementFunctions.jamfDeleteAndSetPrestage import jamf_delete_and_set_prestage
 
 # Consisterizer actions.
 from consisterizer.consisterizer import consisterizer
@@ -33,7 +34,8 @@ func_list = [printSelected,
              consisterizer,
              # Consisterizer alias entry for bulk check-in presets.
              lambda x: consisterizer(x, alias=bulkCheckIn),
-             jamf_remove_prestage_and_delete
+             jamf_remove_prestage_and_delete,
+             jamf_delete_and_set_prestage,
              ]
 # Display names aligned with func_list.
 func_listTXT = ["Print Selected",
@@ -47,5 +49,6 @@ func_listTXT = ["Print Selected",
                 "Check In",
                 "Consisterizer",
                 "Bulk Check-in",
-                "Delete & Un-Prestage Jamf"
+                "Delete & Un-Prestage Jamf",
+                "Delete & Set PreStage Jamf",
                 ]

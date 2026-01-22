@@ -18,7 +18,7 @@ from utilities.api_user import (
     clear_cached_api_user,
     set_api_user_static_name,
 )
-from utilities.otherApiBits import getAssetInfo
+from utilities.otherApiBits import getAssetInfo, build_asset_info_frame
 from utilities.settings import settingsMenu
 from assetManagementFunctions.assetFunctionsRouting import func_list, func_listTXT
 from otherManagementFunctions.otherFunctionsRouting import other_func_list, other_func_listTXT
@@ -108,25 +108,11 @@ def open_second_window(parent, asset_tag, main_app_state):
         messagebox.showerror("Asset Lookup Failed", f"Could not fetch asset {asset_tag}.\n\n{exc}")
         top.destroy()
         return
-    check_vars = []
-
     # Render a simple table of asset fields with optional checkboxes.
-    var_frame = tk.Frame(top)
+    var_frame, check_vars = build_asset_info_frame(
+        top, var_list, include_checkboxes=True, skip_first_checkbox=True, padx=5, pady=5
+    )
     var_frame.pack(side="top", fill="both", expand=True, padx=10, pady=10)
-    for i, (name, value) in enumerate(var_list):
-        check_var = tk.BooleanVar()
-        if i != 0:
-            tk.Checkbutton(var_frame, variable=check_var).grid(row=i, column=0, sticky='ew')
-
-        tk.Label(var_frame, text=name, relief='solid', borderwidth=1, anchor='e').grid(row=i, column=1, sticky='ew',
-                                                                                       padx=5, pady=5)
-        tk.Label(var_frame, text=value, relief='solid', borderwidth=1, anchor='w').grid(row=i, column=2, sticky='ew',
-                                                                                        padx=5, pady=5)
-        check_vars.append((check_var, value))
-
-    var_frame.grid_columnconfigure(0, weight=1)
-    var_frame.grid_columnconfigure(1, weight=1)
-    var_frame.grid_columnconfigure(2, weight=1)
 
     # Create function buttons in a grid.
     button_frame = tk.Frame(top)

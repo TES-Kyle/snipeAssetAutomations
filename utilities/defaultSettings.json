@@ -73,5 +73,11 @@
   "jamfSyncSyncComputers": "1",
   "jamfSyncSyncMobiles": "1",
   "jamfSyncTestSerial": "",
+  "jamfPrestageDryRun": "0",
+  "jamfPrestageVerifySSL": "1",
+  "jamfPrestageRateLimitDelay": "0.35",
+  "jamfPrestageStrictRemovalGuard": "1",
+  "jamfPrestageDeleteAfterRemove": "1",
+  "jamfPrestageDebugVerbose": "1",
   "assetTagRegex": "^\\d{4,5}$"
 }

@@ -1,6 +1,6 @@
 """Tests for Jamf prestage scope payload building."""
 
-from assetManagementFunctions import jamfDeleteAndPreStage as jd
+from utilities import jamfPrestageCommon as jd
 
 
 def test_build_scope_payload_from_assignments_dict():

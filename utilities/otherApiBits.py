@@ -11,6 +11,7 @@ import json
 import logging
 
 import requests
+import tkinter as tk
 from tkinter import messagebox
 
 from utilities import Key
@@ -125,6 +126,50 @@ def getAssetInfo(assetTag, allow_missing: bool = False):
         var_list.append(("Box Number", box_number))
 
     return var_list, assetData
+
+
+def build_asset_info_frame(parent, var_list, *, include_checkboxes=False,
+                           skip_first_checkbox=True, padx=5, pady=5):
+    """Create a simple asset info table frame.
+
+    Args:
+        parent: Tk widget to contain the table.
+        var_list: List of (label, value) tuples to render.
+        include_checkboxes: If True, add a checkbox column.
+        skip_first_checkbox: If True, skip checkbox for the first row.
+        padx: Horizontal padding for each cell.
+        pady: Vertical padding for each cell.
+
+    Returns:
+        (frame, check_vars) where check_vars is a list of (BooleanVar, value).
+    """
+    frame = tk.Frame(parent)
+    check_vars = []
+    for i, (name, value) in enumerate(var_list):
+        col_offset = 0
+        if include_checkboxes:
+            check_var = tk.BooleanVar()
+            if not (skip_first_checkbox and i == 0):
+                tk.Checkbutton(frame, variable=check_var).grid(row=i, column=0, sticky='ew')
+            check_vars.append((check_var, value))
+            col_offset = 1
+
+        tk.Label(frame, text=name, relief='solid', borderwidth=1, anchor='e').grid(
+            row=i, column=col_offset, sticky='ew', padx=padx, pady=pady
+        )
+        tk.Label(frame, text=value, relief='solid', borderwidth=1, anchor='w').grid(
+            row=i, column=col_offset + 1, sticky='ew', padx=padx, pady=pady
+        )
+
+    if include_checkboxes:
+        frame.grid_columnconfigure(0, weight=0)
+        frame.grid_columnconfigure(1, weight=1)
+        frame.grid_columnconfigure(2, weight=1)
+    else:
+        frame.grid_columnconfigure(0, weight=0)
+        frame.grid_columnconfigure(1, weight=1)
+
+    return frame, check_vars
 
 
 def _log_asset_data(asset_tag: str, asset_data: dict) -> None:

@@ -450,6 +450,43 @@
       ]
     },
     {
+      "name": "Jamf PreStage",
+      "description": "Jamf PreStage delete/remove/set controls.",
+      "collapsed": true,
+      "items": [
+        {
+          "key": "jamfPrestageDryRun",
+          "label": "Jamf PreStage Dry Run",
+          "description": "1 to prevent updates in Jamf."
+        },
+        {
+          "key": "jamfPrestageVerifySSL",
+          "label": "Jamf PreStage Verify SSL",
+          "description": "1 to verify SSL certificates, 0 to skip."
+        },
+        {
+          "key": "jamfPrestageRateLimitDelay",
+          "label": "Jamf PreStage Rate Limit Delay",
+          "description": "Seconds between API calls (float)."
+        },
+        {
+          "key": "jamfPrestageStrictRemovalGuard",
+          "label": "Jamf PreStage Strict Removal Guard",
+          "description": "1 to block deletes when removal is incomplete."
+        },
+        {
+          "key": "jamfPrestageDeleteAfterRemove",
+          "label": "Jamf PreStage Delete After Remove",
+          "description": "1 to delete inventory after PreStage updates."
+        },
+        {
+          "key": "jamfPrestageDebugVerbose",
+          "label": "Jamf PreStage Debug Verbose",
+          "description": "1 to log extra Jamf PreStage details."
+        }
+      ]
+    },
+    {
       "name": "Messaging",
       "description": "Messaging filters and email patterns.",
       "collapsed": true,

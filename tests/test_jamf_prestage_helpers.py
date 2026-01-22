@@ -1,6 +1,6 @@
 """Tests for Jamf PreStage helper utilities."""
 
-from assetManagementFunctions.jamfDeleteAndPreStage import _build_scope_put_payload
+from utilities.jamfPrestageCommon import _build_scope_put_payload
 
 
 def test_build_scope_put_payload_dict_assignments():
