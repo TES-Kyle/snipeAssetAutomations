@@ -114,6 +114,51 @@ def makeCharger(asset_tag):
             return False
         return True
 
+    def _serial_exists_in_snipe(serial: str) -> tuple[bool | None, str | None]:
+        """Return (exists, asset_tag) for a serial lookup, or (None, None) on errors."""
+        url = f"{SNIPE_BASE}/hardware/byserial/{serial}"
+        try:
+            r = requests.get(url, headers=_api_headers(), timeout=20)
+            r.raise_for_status()
+            data = r.json() or {}
+        except Exception as e:
+            logger.exception("Serial lookup failed for %s", serial)
+            messagebox.showerror("Serial Lookup Failed", f"Could not verify serial {serial}.\n\n{e}")
+            return None, None
+
+        if not isinstance(data, dict):
+            logger.error("Unexpected serial lookup response for %s: %r", serial, data)
+            messagebox.showerror("Serial Lookup Failed", "Unexpected response from Snipe-IT.")
+            return None, None
+
+        msg = data.get("messages") or data.get("message") or ""
+        if isinstance(msg, list):
+            msg = "; ".join(str(item) for item in msg if item is not None)
+
+        if str(data.get("status", "")).lower() == "error" and "does not exist" in str(msg):
+            return False, None
+
+        rows = data.get("rows")
+        if isinstance(rows, list) and rows:
+            row0 = rows[0] or {}
+            tag = str(row0.get("asset_tag") or row0.get("assetTag") or "").strip()
+            return True, (tag or None)
+
+        tag = str(data.get("asset_tag") or data.get("assetTag") or "").strip()
+        if tag or data.get("serial"):
+            return True, (tag or None)
+
+        total = data.get("total")
+        if total == 0:
+            return False, None
+
+        if str(msg).strip() == "Asset does not exist.":
+            return False, None
+
+        logger.warning("Serial lookup ambiguous for %s: %s", serial, data)
+        messagebox.showerror("Serial Lookup Failed", "Could not determine if the serial is already in use.")
+        return None, None
+
     def _sel_label(sel: dict | None) -> str:
         """Return the display label for a selection dict."""
         if not isinstance(sel, dict):
@@ -251,8 +296,11 @@ def makeCharger(asset_tag):
         exists = msg != "Asset does not exist."
         logger.debug("Asset existence check for %s: msg=%r exists=%s", asset_number.get(), msg, exists)
         if exists:
-            logger.warning("Charger asset already exists: %s", asset_number.get())
-            messagebox.showerror("Process Failed", "Asset already exists")
+            logger.warning("Charger asset tag already exists: %s", asset_number.get())
+            messagebox.showerror(
+                "Process Failed",
+                f"Asset tag {asset_number.get().strip()} already exists.",
+            )
             return
 
         # Gather and normalize user-entered values.
@@ -301,6 +349,24 @@ def makeCharger(asset_tag):
             return
         if not serial:
             messagebox.showerror("Validation", "Serial number is required.")
+            return
+
+        exists_serial, existing_tag = _serial_exists_in_snipe(serial)
+        logger.debug(
+            "Serial existence check for %s: exists=%s tag=%r",
+            serial,
+            exists_serial,
+            existing_tag,
+        )
+        if exists_serial is None:
+            return
+        if exists_serial:
+            tag_msg = f" (asset tag {existing_tag})" if existing_tag else ""
+            logger.warning("Charger serial already exists: %s%s", serial, tag_msg)
+            messagebox.showerror(
+                "Process Failed",
+                f"Serial {serial} already exists in Snipe-IT{tag_msg}.",
+            )
             return
 
         # Build payload for the new asset record.
