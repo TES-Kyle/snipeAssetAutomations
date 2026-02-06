@@ -15,6 +15,7 @@ from assetManagementFunctions.checkoutTo import checkoutTo
 from assetManagementFunctions.checkIn import checkIn
 from assetManagementFunctions.jamfDeleteAndUnprestage import jamf_remove_prestage_and_delete
 from assetManagementFunctions.jamfDeleteAndSetPrestage import jamf_delete_and_set_prestage
+from assetManagementFunctions.jamfRedeployFramework import redeploy_jamf_framework
 
 # Consisterizer actions.
 from consisterizer.consisterizer import consisterizer
@@ -36,6 +37,7 @@ func_list = [printSelected,
              lambda x: consisterizer(x, alias=bulkCheckIn),
              jamf_remove_prestage_and_delete,
              jamf_delete_and_set_prestage,
+             redeploy_jamf_framework
              ]
 # Display names aligned with func_list.
 func_listTXT = ["Print Selected",
@@ -51,4 +53,5 @@ func_listTXT = ["Print Selected",
                 "Bulk Check-in",
                 "Delete & Un-Prestage",
                 "Delete & Set PreStage",
+                "Holy Hand Grenade"
                 ]
