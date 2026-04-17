@@ -454,6 +454,8 @@ Please note that there may be a fine associated with this repair. Manufacturing 
 
 We will send you another update once the computer repair is complete and available for pickup.
 
+<strong>Important:</strong> Apple's repair process will likely require wiping the computer (deleting all data). Any data stored locally on the device should be backed up before the computer is shipped. Please reply to this email if any data needs to be retrieved. Data saved to Google Drive will be retained.
+
 Thank you for your attention.
 
 Sincerely,
@@ -470,6 +472,8 @@ We are sending this to let you know that {full_name} has submitted their compute
 There will not be any fine associated with this, regardless of whether we determine the student to be at fault for the damage. Please help us make sure that {full_name} is careful with their computer in the future. 
 
 We will send you another update once the computer repair is complete and available for pickup.
+
+<strong>Important:</strong> Apple's repair process will likely require wiping the computer (deleting all data). Any data stored locally on the device should be backed up before the computer is shipped. Please reply to this email if any data needs to be retrieved. Data saved to Google Drive will be retained.
 
 Thank you for your attention.
 
