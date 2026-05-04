@@ -39,6 +39,8 @@
   "defaultBoxCapacity": "12",
   "dropOffStatusId": "5",
   "dropOffPendingStatusId": "20",
+  "dropOffLostStatusId": "6", 
+  "dropOffChargerStatusId": "5",
   "dropOffChargerFieldKey": "_snipeit_chargeringoodcondition_6",
   "dropOffCordFieldKey": "_snipeit_cordingoodcondition_11",
   "dropOffBoxFieldKey": "_snipeit_box_number_5",
