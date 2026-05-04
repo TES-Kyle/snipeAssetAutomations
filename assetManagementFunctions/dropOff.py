@@ -65,6 +65,10 @@ _STATE_LINE_RE = re.compile(
     re.IGNORECASE | re.VERBOSE
 )
 
+# Notes appended during drop-off. Use {asset_tag} anywhere to insert the main device's tag.
+LOST_ASSET_NOTE = "\nThis asset was marked lost during drop off of asset {asset_tag}."    # <-- set your note text here
+CHARGER_ASSET_NOTE = "\nThis charger was checked in during drop off of asset {asset_tag}." # <-- set your note text here
+
 HELP_TEXT = (
     "What this does:\n"
     "• Checks the asset in (if currently checked out) and sets Status to 5 on drop-off\n"
@@ -151,22 +155,30 @@ def _get_box_state_asset_tag_and_capacity():
 
 
 def _get_dropoff_status_ids():
-    """Read configured drop-off status IDs with defaults.
+    """Read configured drop-off status IDs from settings.
 
     Returns:
-        (drop_status_id, pending_status_id) tuple.
+        (drop_status_id, pending_status_id, lost_status_id, charger_status_id) tuple,
+        or None if any key is missing or not a valid integer.
     """
     settings = get_settings()
-    # Parse status IDs with safe defaults.
-    try:
-        drop_status = int(settings.get("dropOffStatusId", 5))
-    except Exception:
-        drop_status = 5
-    try:
-        pending_status = int(settings.get("dropOffPendingStatusId", 20))
-    except Exception:
-        pending_status = 20
-    return drop_status, pending_status
+    _KEYS = [
+        ("dropOffStatusId",      "drop-off"),
+        ("dropOffPendingStatusId","pending drop-off"),
+        ("dropOffLostStatusId",  "lost asset"),
+        ("dropOffChargerStatusId","charger"),
+    ]
+    values = []
+    for key, label in _KEYS:
+        raw = settings.get(key)
+        try:
+            values.append(int(raw))
+        except (TypeError, ValueError):
+            msg = f"settings.json key '{key}' ({label} status ID) is missing or not a valid integer (got {raw!r})."
+            logger.error(msg)
+            messagebox.showerror("Settings Error", msg)
+            return None
+    return tuple(values)
 
 
 def _get_dropoff_field_keys():
@@ -531,6 +543,44 @@ def _update_asset_with_retry(id, assetTag, statusID, modelID, chargerCond, cordC
             if not retry:
                 return False
 
+def _update_asset_status_and_notes_with_retry(asset_id, asset_tag, status_id, model_id, new_notes):
+    """PUT /hardware/{id} to set a status and notes, leaving all other fields unchanged."""
+    configure_logging()
+    url = Key.API_URL_Base + "hardware/" + str(asset_id)
+    payload = {
+        "asset_tag": asset_tag,
+        "status_id": status_id,
+        "model_id": model_id,
+        "notes": new_notes,
+    }
+    while True:
+        try:
+            r = requests.put(url, json=payload, headers=get_headers(), timeout=20)
+            if 200 <= r.status_code < 300:
+                logger.info("Updated status/notes for asset %s (status=%s)", asset_tag, status_id)
+                return True
+            else:
+                try:
+                    msg = r.json()
+                except Exception:
+                    msg = r.text
+                logger.error("Status/notes update failed for %s (HTTP %s): %s", asset_tag, r.status_code, msg)
+                retry = messagebox.askretrycancel(
+                    "Update Failed",
+                    f"Failed to update asset {asset_tag} (HTTP {r.status_code}).\n"
+                    f"{str(msg)[:500]}\n\nRetry?"
+                )
+                if not retry:
+                    return False
+        except Exception as e:
+            logger.exception("Network error updating status/notes for %s", asset_tag)
+            retry = messagebox.askretrycancel(
+                "Network Error",
+                f"Error updating asset {asset_tag}:\n{e}\n\nRetry?"
+            )
+            if not retry:
+                return False
+
 # ----------------------------
 # Help / Box State UI
 # ----------------------------
@@ -638,6 +688,11 @@ def _open_help_dialog(parent):
     reset_frame.pack(fill="x", padx=12, pady=(0, 8))
     def reset_all():
         """Reset tracker state to defaults after confirmation."""
+        if not messagebox.askyesno(
+            "Reset All Streams",
+            "Are you sure you want to reset all streams to box 1 / computer 0?\n\nThis cannot be undone."
+        ):
+            return
         tt, fallback_cap = _get_box_state_asset_tag_and_capacity()
         if not tt:
             return
@@ -705,6 +760,11 @@ def dropOff(asset_tag):
             messagebox.showerror("Error", "Dumb dumb, answer all the questions!")
             return
 
+        charger_asset_tag = charger_tag_var.get().strip()
+        if charger_asset_tag and not re.fullmatch(r"\d{4,5}", charger_asset_tag):
+            messagebox.showerror("Invalid Charger Tag", "Charger asset tag must be 4 or 5 digits with no other characters.")
+            return
+
         seniorStatus = drop.get()         # 1=Senior, 0=Withdrawal
         q_charger = charger.get()         # 1 yes, 0 no
         q_cord = cord.get()               # 1 yes, 0 no
@@ -723,7 +783,10 @@ def dropOff(asset_tag):
         cord_str = "y" if q_cord == 1 else "n"
 
         # Status IDs from settings
-        status_id, pending_status_id = _get_dropoff_status_ids()
+        _ids = _get_dropoff_status_ids()
+        if _ids is None:
+            return
+        status_id, pending_status_id, lost_status_id, charger_status_id = _ids
 
         # Determine stream (SG/SM/SD/WG/WM/WD)
         if seniorStatus == 1:  # Senior
@@ -756,6 +819,21 @@ def dropOff(asset_tag):
         if not _checkin_asset_with_retry(str(assetData["id"])):
             return
 
+        # Build the note to append to the main device.
+        lost_tags = [tag for cb_var, tag in check_vars if cb_var.get()]
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        note_parts = [f"This device was dropped off at {now_str}."]
+        if charger_asset_tag:
+            note_parts.append(f"Charger asset {charger_asset_tag} was returned during dropoff.")
+        if lost_tags:
+            tag_list = ", ".join(lost_tags)
+            verb = "was" if len(lost_tags) == 1 else "were"
+            noun = "Asset" if len(lost_tags) == 1 else "Assets"
+            note_parts.append(f"{noun} {tag_list} {verb} marked lost during dropoff.")
+        device_note = "\n".join(note_parts)
+        existing_device_notes = (assetData.get("notes") or "").rstrip()
+        full_device_notes = (existing_device_notes + "\n" + device_note) if existing_device_notes else device_note
+
         # Update the actual device asset with Retry/Cancel
         if not _update_asset_with_retry(
             id=str(assetData["id"]),
@@ -765,7 +843,7 @@ def dropOff(asset_tag):
             chargerCond=charger_str,
             cordCond=cord_str,
             boxLabel=box_label,
-            existingNotes=assetData["notes"]
+            existingNotes=full_device_notes
         ):
             return
 
@@ -780,13 +858,50 @@ def dropOff(asset_tag):
 
         createImage([str(var1), var2, str(var3), str(var4), ""])
         logger.info("Drop-off completed for %s (box=%s)", asset_tag, box_label)
+
+        # Process any assets the user marked as lost.
+        for cb_var, lost_tag in check_vars:
+            if not cb_var.get():
+                continue
+            logger.info("Processing lost asset %s", lost_tag)
+            _var_list, lost_data = getAssetInfo(lost_tag, allow_missing=False)
+            if not lost_data or lost_data.get("status") == "error":
+                messagebox.showwarning("Lost Asset", f"Could not fetch data for {lost_tag} — skipping.")
+                continue
+            lost_id = str(lost_data["id"])
+            lost_model_id = (lost_data.get("model") or {}).get("id")
+            existing_notes = (lost_data.get("notes") or "").rstrip()
+            note_text = LOST_ASSET_NOTE.format(asset_tag=asset_tag)
+            appended_notes = (existing_notes + "\n" + note_text) if existing_notes else note_text
+            # Check in first (non-fatal if already checked in), then set status 6 + note.
+            _checkin_asset_with_retry(lost_id)
+            _update_asset_status_and_notes_with_retry(lost_id, lost_tag, lost_status_id, lost_model_id, appended_notes)
+
+        # Process charger asset if a tag was entered.
+        if charger_asset_tag:
+            logger.info("Processing charger asset %s", charger_asset_tag)
+            _var_list, charger_data = getAssetInfo(charger_asset_tag, allow_missing=False)
+            if not charger_data or charger_data.get("status") == "error":
+                messagebox.showwarning("Charger Asset", f"Could not fetch data for charger {charger_asset_tag} — skipping.")
+            else:
+                charger_asset_id = str(charger_data["id"])
+                charger_model_id = (charger_data.get("model") or {}).get("id")
+                charger_existing_notes = (charger_data.get("notes") or "").rstrip()
+                charger_note_text = CHARGER_ASSET_NOTE.format(asset_tag=asset_tag)
+                charger_appended_notes = (charger_existing_notes + "\n" + charger_note_text) if charger_existing_notes else charger_note_text
+                _checkin_asset_with_retry(charger_asset_id)
+                _update_asset_status_and_notes_with_retry(charger_asset_id, charger_asset_tag, charger_status_id, charger_model_id, charger_appended_notes)
+
         dropoff_window.destroy()
 
     # Fetch asset and confirm status
-    varlist, assetData = getAssetInfo(asset_tag)
+    var_list, assetData = getAssetInfo(asset_tag)
     proceed = False
 
-    _status_id, pending_status_id = _get_dropoff_status_ids()
+    _ids = _get_dropoff_status_ids()
+    if _ids is None:
+        return f"Drop-off aborted: status ID settings error for {asset_tag}."
+    _status_id, pending_status_id, _lost_status_id, _charger_status_id = _ids
     if assetData["status_label"]["id"] != pending_status_id:
         proceed = messagebox.askyesno(
             title="Proceed?",
@@ -798,8 +913,23 @@ def dropOff(asset_tag):
         # Window
         dropoff_window = tk.Toplevel()
 
+        #Info Frame
+        info_frame, _check_vars = build_asset_info_frame(dropoff_window, var_list, include_checkboxes=False, padx=5, pady=5)
+        info_frame.grid(row=0, column=0, sticky='nsew')
+
+        # Dropoff Frame (return fields).
+        dropoff_frame = tk.Frame(dropoff_window)
+        dropoff_frame.grid(row=0, column=1, sticky='nsew')
+
+        # User Assets Frame
+        check_vars = []
+        user_id = assetData.get('assigned_to',{}).get('id')
+        if user_id:
+            ua_frame, check_vars = build_user_asset_list_frame(dropoff_window, user_id, include_checkboxes=True, checkbox_header="Mark as Lost")
+            ua_frame.grid(row=1, column=0, sticky='nsew', columnspan=2)
+
         # Drop-Off Type
-        type_frame = tk.Frame(dropoff_window)
+        type_frame = tk.Frame(dropoff_frame)
         type_frame.pack(fill='x', padx=10, pady=5)
         type_label = tk.Label(type_frame, text="Drop-Off Type:")
         type_label.pack(side='left')
@@ -810,7 +940,7 @@ def dropOff(asset_tag):
         withdraw.pack(side='left')
 
         # Good Charger
-        charger_frame = tk.Frame(dropoff_window)
+        charger_frame = tk.Frame(dropoff_frame)
         charger_frame.pack(fill='x', padx=10, pady=5)
         charger_label = tk.Label(charger_frame, text="Do they have a good charger?")
         charger_label.pack(side='left')
@@ -820,8 +950,15 @@ def dropOff(asset_tag):
         c_no = tk.Radiobutton(charger_frame, text="No", variable=charger, value=0)
         c_no.pack(side='left')
 
+        # Charger asset tag (optional)
+        charger_tag_frame = tk.Frame(dropoff_frame)
+        charger_tag_frame.pack(fill='x', padx=10, pady=5)
+        tk.Label(charger_tag_frame, text="Charger asset tag (optional):").pack(side='left')
+        charger_tag_var = tk.StringVar()
+        tk.Entry(charger_tag_frame, textvariable=charger_tag_var, width=10).pack(side='left', padx=(5, 0))
+
         # Good Cord
-        cord_frame = tk.Frame(dropoff_window)
+        cord_frame = tk.Frame(dropoff_frame)
         cord_frame.pack(fill='x', padx=10, pady=5)
         cord_label = tk.Label(cord_frame, text="Do they have a good cord?")
         cord_label.pack(side='left')
@@ -832,7 +969,7 @@ def dropOff(asset_tag):
         cord_no.pack(side='left')
 
         # Damage level
-        repair_frame = tk.Frame(dropoff_window)
+        repair_frame = tk.Frame(dropoff_frame)
         repair_frame.pack(fill='x', padx=10, pady=5)
         repair_label = tk.Label(repair_frame, text="Damage Level:")
         repair_label.pack(side='left')
@@ -846,13 +983,22 @@ def dropOff(asset_tag):
         irrepr = tk.Radiobutton(repair_frame, text="Irreparable", variable=repair, value=3)
         irrepr.pack(side='left')
 
-        # Submit + Help buttons
-        button_row = tk.Frame(dropoff_window)
-        button_row.pack(fill='x', padx=10, pady=10)
-        submit_button = tk.Button(button_row, text="Submit", command=lambda x=assetData: process_dropoff(x))
-        submit_button.pack(side="left")
-        help_button = tk.Button(button_row, text="Help / Box State", command=lambda: _open_help_dialog(dropoff_window))
-        help_button.pack(side="right")
+        # Help button — col 0, row 2, anchored left
+        help_bar = tk.Frame(dropoff_window)
+        help_bar.grid(row=2, column=0, sticky='ew', padx=10, pady=10)
+        tk.Button(help_bar, text="Help / Box State", command=lambda: _open_help_dialog(dropoff_window)).pack(
+            side='left'
+        )
+
+        # Submit button — col 1, row 2, centered
+        submit_bar = tk.Frame(dropoff_window)
+        submit_bar.grid(row=2, column=1, sticky='ew', padx=10, pady=10)
+        submit_bar.grid_columnconfigure(0, weight=1)
+        submit_bar.grid_columnconfigure(1, weight=0)
+        submit_bar.grid_columnconfigure(2, weight=1)
+        tk.Button(submit_bar, text="Submit", command=lambda x=assetData: process_dropoff(x)).grid(
+            row=0, column=1
+        )
 
         # Center window
         dropoff_window.update_idletasks()

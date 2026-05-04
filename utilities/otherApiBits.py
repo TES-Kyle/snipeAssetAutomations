@@ -12,7 +12,7 @@ import logging
 
 import requests
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import font as tkfont, messagebox, ttk
 
 from utilities import Key
 from utilities.api_user import get_api_headers
@@ -168,6 +168,136 @@ def build_asset_info_frame(parent, var_list, *, include_checkboxes=False,
     else:
         frame.grid_columnconfigure(0, weight=0)
         frame.grid_columnconfigure(1, weight=1)
+
+    return frame, check_vars
+
+
+def build_user_asset_list_frame(parent, user_id, *, include_checkboxes=False,
+                                checkbox_header="", padx=5, pady=5):
+    """Create a frame listing all assets currently checked out to a user.
+
+    Fetches and parses the user's asset list internally rather than accepting
+    a pre-built var_list, unlike build_asset_info_frame.
+
+    Args:
+        parent: Tk widget to contain the table.
+        user_id: Snipe-IT user ID to fetch assets for.
+        include_checkboxes: If True, add a clickable checkbox column as the last column.
+        checkbox_header: Header text for the checkbox column.
+        padx: Horizontal padding around the table.
+        pady: Vertical padding around the table.
+
+    Returns:
+        (frame, check_vars) where check_vars is a list of (BooleanVar, asset_tag)
+        for each row; empty when include_checkboxes is False.
+    """
+    configure_logging()
+    frame = tk.Frame(parent)
+    check_vars = []
+
+    default_font = tkfont.nametofont("TkDefaultFont")
+    bold_font = tkfont.Font(font=default_font)
+    bold_font.configure(weight='bold')
+
+    tk.Label(frame, text="Assets assigned to computer user", font=bold_font).grid(
+        row=0, column=0, sticky='w', padx=padx, pady=(pady, 2)
+    )
+
+    url = Key.API_URL_Base + f"users/{user_id}/assets"
+    try:
+        api_headers = get_headers()
+        response = requests.get(url, headers=api_headers, timeout=20)
+        response.raise_for_status()
+        data = response.json()
+    except Exception as e:
+        logger.exception("Failed to fetch assets for user %s", user_id)
+        messagebox.showerror("User Assets Lookup Failed", f"Could not fetch assets for user {user_id}.\n\n{e}")
+        tk.Label(frame, text="Could not load user assets.", anchor='w').grid(
+            row=1, column=0, sticky='ew', padx=padx, pady=pady
+        )
+        return frame, check_vars
+
+    rows = data.get("rows") or []
+
+    col_ids = ["asset_tag", "name", "status", "model"]
+    col_headings = ["Asset Tag", "Asset Name", "Status", "Model"]
+    if include_checkboxes:
+        col_ids.append("check")
+        col_headings.append(checkbox_header or "")
+
+    # Build flat row data and measure column widths in one pass.
+    row_data = []
+    col_widths = [bold_font.measure(h) + 16 for h in col_headings]
+    for asset in rows:
+        asset_tag = asset.get("asset_tag", "")
+        vals = [
+            asset_tag,
+            asset.get("name", ""),
+            (asset.get("status_label") or {}).get("name", ""),
+            (asset.get("model") or {}).get("name", ""),
+        ]
+        if include_checkboxes:
+            vals.append("☐")
+        for i, v in enumerate(vals):
+            col_widths[i] = max(col_widths[i], default_font.measure(str(v)) + 16)
+        row_data.append((asset_tag, vals))
+
+    # ttk style — keyed to this widget so repeated calls don't bleed into other Treeviews.
+    style = ttk.Style()
+    style.configure("UserAssets.Treeview", font=default_font)
+    style.configure("UserAssets.Treeview.Heading", font=bold_font)
+
+    border_frame = tk.Frame(frame, relief='solid', borderwidth=1)
+    border_frame.grid(row=1, column=0, sticky='nsew', padx=padx, pady=pady)
+
+    tree = ttk.Treeview(
+        border_frame,
+        columns=col_ids,
+        show='headings',
+        style="UserAssets.Treeview",
+        height=max(len(row_data), 1),
+    )
+    for col_id, heading, width in zip(col_ids, col_headings, col_widths):
+        tree.heading(col_id, text=heading)
+        tree.column(col_id, width=width, minwidth=width, stretch=False)
+
+    iid_to_var = {}
+    for asset_tag, vals in row_data:
+        iid = tree.insert("", "end", values=vals)
+        if include_checkboxes:
+            cb_var = tk.BooleanVar(value=False)
+            check_vars.append((cb_var, asset_tag))
+            iid_to_var[iid] = cb_var
+
+    if not row_data:
+        tree.insert("", "end", values=["No assets checked out to this user"] + [""] * (len(col_ids) - 1))
+
+    if include_checkboxes:
+        last_col_idx = len(col_ids) - 1
+        def _toggle_check(event):
+            region = tree.identify_region(event.x, event.y)
+            if region != "cell":
+                return
+            col = tree.identify_column(event.x)
+            if int(col[1:]) - 1 != last_col_idx:
+                return
+            iid = tree.identify_row(event.y)
+            if not iid or iid not in iid_to_var:
+                return
+            cb_var = iid_to_var[iid]
+            new_val = not cb_var.get()
+            cb_var.set(new_val)
+            cur = list(tree.item(iid, "values"))
+            cur[last_col_idx] = "☑" if new_val else "☐"
+            tree.item(iid, values=cur)
+        tree.bind("<Button-1>", _toggle_check)
+
+    tree.grid(row=0, column=0, sticky='nsew')
+    border_frame.grid_columnconfigure(0, weight=1)
+    border_frame.grid_rowconfigure(0, weight=1)
+
+    frame.grid_rowconfigure(1, weight=1)
+    frame.grid_columnconfigure(0, weight=1)
 
     return frame, check_vars
 
