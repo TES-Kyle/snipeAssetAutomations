@@ -986,12 +986,10 @@ def dropOff(asset_tag):
         repair = tk.IntVar(value=0)
         none = tk.Radiobutton(repair_frame, text="Little/None", variable=repair, value=0)
         none.pack(side='left')
-        mild = tk.Radiobutton(repair_frame, text="Mild/Medium", variable=repair, value=1)
+        mild = tk.Radiobutton(repair_frame, text="Mild/Cosmetic", variable=repair, value=1)
         mild.pack(side='left')
         signif = tk.Radiobutton(repair_frame, text="Significant", variable=repair, value=2)
         signif.pack(side='left')
-        irrepr = tk.Radiobutton(repair_frame, text="Irreparable", variable=repair, value=3)
-        irrepr.pack(side='left')
 
         # Help button — col 0, row 2, anchored left
         help_bar = tk.Frame(dropoff_window)
