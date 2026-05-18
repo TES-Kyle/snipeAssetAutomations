@@ -933,7 +933,7 @@ def dropOff(asset_tag):
 
         # User Assets Frame
         check_vars = []
-        user_id = assetData.get('assigned_to',{}).get('id')
+        user_id = (assetData.get('assigned_to', {}) or {}).get('id')
         if user_id:
             ua_frame, check_vars = build_user_asset_list_frame(dropoff_window, user_id, include_checkboxes=True, checkbox_header="Mark as Lost")
             ua_frame.grid(row=1, column=0, sticky='nsew', columnspan=2)
