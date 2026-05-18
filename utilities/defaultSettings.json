@@ -39,6 +39,7 @@
   "defaultBoxCapacity": "12",
   "dropOffStatusId": "5",
   "dropOffPendingStatusId": "20",
+  "macBookCategoryID": "24",
   "dropOffLostStatusId": "6", 
   "dropOffChargerStatusId": "5",
   "dropOffChargerFieldKey": "_snipeit_chargeringoodcondition_6",

@@ -167,6 +167,7 @@ def _get_dropoff_status_ids():
         ("dropOffPendingStatusId","pending drop-off"),
         ("dropOffLostStatusId",  "lost asset"),
         ("dropOffChargerStatusId","charger"),
+        ("macBookCategoryID", "category"),
     ]
     values = []
     for key, label in _KEYS:
@@ -786,7 +787,7 @@ def dropOff(asset_tag):
         _ids = _get_dropoff_status_ids()
         if _ids is None:
             return
-        status_id, pending_status_id, lost_status_id, charger_status_id = _ids
+        status_id, pending_status_id, lost_status_id, charger_status_id, _macbook_category_id = _ids
 
         # Determine stream (SG/SM/SD/WG/WM/WD)
         if seniorStatus == 1:  # Senior
@@ -901,15 +902,24 @@ def dropOff(asset_tag):
     _ids = _get_dropoff_status_ids()
     if _ids is None:
         return f"Drop-off aborted: status ID settings error for {asset_tag}."
-    _status_id, pending_status_id, _lost_status_id, _charger_status_id = _ids
-    if assetData["status_label"]["id"] != pending_status_id:
+    _status_id, pending_status_id, _lost_status_id, _charger_status_id, _macbook_category_id = _ids
+
+    if assetData["category"]["id"] != _macbook_category_id:
+        proceed = messagebox.askyesno(
+            title="Not A MacBook!",
+            message='This asset is not a MacBook\n\nProceed anyway?'
+        )
+        logger.info("Drop-off category override prompt for %s: %s", asset_tag, proceed)
+    elif assetData["status_label"]["id"] != pending_status_id:
         proceed = messagebox.askyesno(
             title="Proceed?",
             message='This asset is not "Pending Drop-Off"\n\nProceed anyway?'
         )
-        logger.info("Drop-off override prompt for %s: %s", asset_tag, proceed)
+        logger.info("Drop-off status override prompt for %s: %s", asset_tag, proceed)
+    else:
+        proceed = True
 
-    if assetData["status_label"]["id"] == pending_status_id or proceed:
+    if proceed:
         # Window
         dropoff_window = tk.Toplevel()
 

@@ -236,6 +236,11 @@
           "description": "Status ID considered as 'Pending Drop-Off'. Integer."
         },
         {
+          "key": "macBookCategoryID",
+          "label": "MacBook Category ID",
+          "description": "Category ID considered as a valid macbook/computer to be dropped off. Integer."
+        },
+        {
           "key": "dropOffChargerFieldKey",
           "label": "Drop-Off Charger Field Key",
           "description": "Custom field key for charger condition (e.g., _snipeit_chargeringoodcondition_6)."
