@@ -44,6 +44,11 @@ class QueueLogHandler(logging.Handler):
             pass
 
 
+class StderrStreamHandler(logging.StreamHandler):
+    """StreamHandler writing to stderr — ensures launcher captures logs in launch.log."""
+    pass
+
+
 class SafeRotatingFileHandler(logging.handlers.RotatingFileHandler):
     """Rotating file handler that fsyncs on error-level records."""
 
@@ -119,8 +124,8 @@ def get_settings() -> dict:
 
 
 def _handler_exists(logger: logging.Logger, handler_type: type) -> bool:
-    """Return True if the logger already has a handler of the given type."""
-    return any(isinstance(handler, handler_type) for handler in logger.handlers)
+    """Return True if the logger already has a handler of the exact given type."""
+    return any(type(handler) is handler_type for handler in logger.handlers)
 
 
 def _update_handler_levels(logger: logging.Logger, level: int) -> None:
@@ -132,7 +137,7 @@ def _update_handler_levels(logger: logging.Logger, level: int) -> None:
     """
     # Apply the new level across supported handler types.
     for handler in logger.handlers:
-        if isinstance(handler, (logging.handlers.RotatingFileHandler, logging.StreamHandler, QueueLogHandler)):
+        if isinstance(handler, (logging.handlers.RotatingFileHandler, StderrStreamHandler, logging.StreamHandler, QueueLogHandler)):
             handler.setLevel(level)
 
 
@@ -169,6 +174,13 @@ def configure_logging(log_to_console: bool = False, log_queue=None) -> None:
         file_handler.setLevel(level)
         file_handler.setFormatter(formatter)
         root_logger.addHandler(file_handler)
+
+        # Always mirror to stderr so the macOS launcher script captures logs in launch.log.
+        stderr_handler = StderrStreamHandler()
+        stderr_handler.setLevel(level)
+        stderr_handler.setFormatter(formatter)
+        root_logger.addHandler(stderr_handler)
+
         _CONFIGURED = True
         _CURRENT_LEVEL = level
     elif level != _CURRENT_LEVEL:

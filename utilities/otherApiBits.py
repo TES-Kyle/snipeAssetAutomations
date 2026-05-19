@@ -106,6 +106,11 @@ def getAssetInfo(assetTag, allow_missing: bool = False):
     if assigned_to.get("email"):
         var_list.append(("Assigned to Email", assigned_to["email"]))
 
+    # Purchase Date
+    purchase_date = assetData.get("purchase_date") or {}
+    if purchase_date.get("date"):
+        var_list.append(("Purchase Date", purchase_date["date"]))
+
     # Custom Fields
     custom_fields = assetData.get("custom_fields", {})
 

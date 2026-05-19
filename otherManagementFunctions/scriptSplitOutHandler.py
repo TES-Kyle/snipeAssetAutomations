@@ -34,9 +34,11 @@ def _worker_func(func, log_queue):
             """No-op flush to satisfy file-like interface."""
             pass
 
-    # Redirect stdout/stderr into the queue so the UI can display output.
+    # Redirect stdout into the queue to capture print() calls.
+    # sys.stderr is intentionally left alone — QueueLogHandler already routes
+    # Python log messages to the queue, and replacing sys.stderr here would cause
+    # duplicate lines (once via StderrStreamHandler→QueueWriter, once via QueueLogHandler).
     sys.stdout = QueueWriter()
-    sys.stderr = QueueWriter()
 
     try:
         # Configure logging inside the subprocess to mirror into the queue.
