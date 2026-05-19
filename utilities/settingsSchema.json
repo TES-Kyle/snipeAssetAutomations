@@ -241,6 +241,16 @@
           "description": "Category ID considered as a valid macbook/computer to be dropped off. Integer."
         },
         {
+          "key": "dropOffLostStatusId",
+          "label": "Lost Status ID",
+          "description": "Status ID considered as 'Lost'. Integer."
+        },
+        {
+          "key": "dropOffChargerStatusId",
+          "label": "Charger Status after Drop Off",
+          "description": "Status ID for charger considered as 'Dropped off'. Integer."
+        },
+        {
           "key": "dropOffChargerFieldKey",
           "label": "Drop-Off Charger Field Key",
           "description": "Custom field key for charger condition (e.g., _snipeit_chargeringoodcondition_6)."

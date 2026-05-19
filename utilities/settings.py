@@ -136,6 +136,100 @@ def settingsMenu():
         except Exception as e:
             messagebox.showerror("USB Installer", str(e))
 
+    def sync_key_usb():
+        """Sync Key.py between the local install and a USB drive.
+
+        Opens a file picker (required on macOS to get OS-level permission to
+        read removable volumes). Auto-detects USB drives to pre-fill the
+        dialog's starting directory. Compares which variables are filled in on
+        each side and copies the more complete file in the appropriate
+        direction. If both sides have exclusive values the other lacks, no copy
+        is made and the user is informed.
+        """
+        import importlib.util
+        import glob
+        import shutil
+        from tkinter import filedialog
+
+        local_key = os.path.join(os.path.dirname(os.path.realpath(__file__)), "Key.py")
+
+        # Try to detect a USB drive with Key.py so we can pre-fill the dialog.
+        local_volume = os.path.realpath(local_key).split(os.sep)[1]
+        candidates = [
+            p for p in glob.glob("/Volumes/*/Key.py")
+            if os.path.realpath(p).split(os.sep)[2] != local_volume
+        ]
+        if candidates:
+            initial_dir = os.path.dirname(candidates[0])
+        else:
+            initial_dir = "/Volumes"
+
+        # Native file picker — macOS grants read/write access to whatever the
+        # user selects, bypassing the Removable Volumes TCC restriction.
+        usb_key = filedialog.askopenfilename(
+            title="Select Key.py on USB drive",
+            initialdir=initial_dir,
+            filetypes=[("Python files", "*.py"), ("All files", "*.*")],
+        )
+        if not usb_key:
+            return  # user cancelled
+
+        def load_filled_vars(path):
+            """Return a dict of non-empty variable names from a Key.py file."""
+            spec = importlib.util.spec_from_file_location("_key_sync_tmp", path)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return {k: v for k, v in vars(mod).items() if not k.startswith("_") and v}
+
+        try:
+            current_vars = load_filled_vars(local_key)
+        except Exception as exc:
+            messagebox.showerror("Sync Key", f"Could not read local Key.py:\n{exc}")
+            return
+
+        try:
+            usb_vars = load_filled_vars(usb_key)
+        except Exception as exc:
+            messagebox.showerror("Sync Key", f"Could not read USB Key.py:\n{exc}")
+            return
+
+        only_in_current = sorted(set(current_vars) - set(usb_vars))
+        only_in_usb = sorted(set(usb_vars) - set(current_vars))
+
+        if only_in_current and only_in_usb:
+            messagebox.showwarning(
+                "Sync Key — Conflict",
+                "Both files have credentials the other doesn't. No changes were made.\n\n"
+                f"Only in local Key.py:  {', '.join(only_in_current)}\n\n"
+                f"Only on USB:           {', '.join(only_in_usb)}\n\n"
+                "Resolve the conflict manually, then try again.",
+            )
+        elif only_in_current:
+            try:
+                shutil.copy2(local_key, usb_key)
+                messagebox.showinfo(
+                    "Sync Key — Updated USB",
+                    f"USB Key.py replaced with local Key.py.\n\n"
+                    f"Variables the USB was missing:  {', '.join(only_in_current)}",
+                )
+            except Exception as exc:
+                messagebox.showerror("Sync Key", f"Could not write to USB:\n{exc}")
+        elif only_in_usb:
+            try:
+                shutil.copy2(usb_key, local_key)
+                messagebox.showinfo(
+                    "Sync Key — Updated Local",
+                    f"Local Key.py replaced with USB Key.py.\n\n"
+                    f"Variables the local file was missing:  {', '.join(only_in_usb)}",
+                )
+            except Exception as exc:
+                messagebox.showerror("Sync Key", f"Could not write local Key.py:\n{exc}")
+        else:
+            messagebox.showinfo(
+                "Sync Key",
+                "Local Key.py and USB Key.py already have the same filled-in credentials. No changes made.",
+            )
+
     def apply():
         """Persist settings, refresh logging config, and close the window."""
         output = dict()
@@ -193,6 +287,8 @@ def settingsMenu():
     update_button.pack(side="left")
     usb_button = tk.Button(update_frame, text="Make Installer USB", command=make_installer_usb)
     usb_button.pack(side="left", padx=(10, 0))
+    sync_key_button = tk.Button(update_frame, text="Update Key", command=sync_key_usb)
+    sync_key_button.pack(side="left", padx=(10, 0))
 
     # Settings list frame (scrollable).
     list_frame = tk.Frame(settings_window)
