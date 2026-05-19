@@ -394,5 +394,13 @@ def create_main_window(root):
 if __name__ == "__main__":
     configure_logging()
     main_window = tk.Tk()
+    from utilities import Key as _Key
+    if _Key.SECRETS_LOAD_ERROR:
+        messagebox.showerror(
+            "Configuration Error",
+            "Credential Loading Error.\n\n"
+            + _Key.SECRETS_LOAD_ERROR
+            + "\n\nThe app will start but some features may not work."
+        )
     create_main_window(main_window)
     main_window.mainloop()
