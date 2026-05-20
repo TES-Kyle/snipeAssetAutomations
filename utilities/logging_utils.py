@@ -14,6 +14,7 @@ import logging
 import logging.handlers
 import os
 from typing import Optional
+from utilities.settings import get_settings as _load_settings
 
 _CONFIGURED = False
 _CURRENT_LEVEL = logging.DEBUG
@@ -22,8 +23,6 @@ UTILITIES_DIR = os.path.dirname(os.path.realpath(__file__))
 PROJECT_ROOT = os.path.dirname(UTILITIES_DIR)
 LOG_DIR = os.path.join(PROJECT_ROOT, "logs")
 LOG_FILE_NAME = "automations.log"
-SETTINGS_PATH = os.path.join(UTILITIES_DIR, "settings.json")
-DEFAULTS_PATH = os.path.join(UTILITIES_DIR, "defaultSettings.json")
 
 
 class QueueLogHandler(logging.Handler):
@@ -99,28 +98,6 @@ def _resolve_log_level(level_name: Optional[str]) -> int:
         "DEBUG": logging.DEBUG,
     }
     return mapping.get(name, logging.DEBUG)
-
-
-def _load_settings() -> dict:
-    """Load settings.json over defaults, returning a merged dict.
-
-    Returns:
-        Merged settings dict with defaults overridden by settings.json.
-    """
-    # Start with defaults, then override with settings.json.
-    settings = {}
-    settings.update(_safe_read_json(DEFAULTS_PATH))
-    settings.update(_safe_read_json(SETTINGS_PATH))
-    return settings
-
-
-def get_settings() -> dict:
-    """Return merged settings.json/defaultSettings.json for callers.
-
-    Returns:
-        Combined settings dict (settings.json overrides defaults).
-    """
-    return _load_settings()
 
 
 def _handler_exists(logger: logging.Logger, handler_type: type) -> bool:

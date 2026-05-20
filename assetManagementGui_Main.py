@@ -12,14 +12,15 @@ import tkinter as tk
 from tkinter import messagebox
 
 from utilities.labelPrinting import sendToPrinter
-from utilities.logging_utils import configure_logging, get_settings
+from utilities.logging_utils import configure_logging
 from utilities.api_user import (
     get_api_user_status,
     clear_cached_api_user,
     set_api_user_static_name,
 )
 from utilities.otherApiBits import getAssetInfo, build_asset_info_frame
-from utilities.settings import settingsMenu
+from utilities.settingsMenu import settingsMenu
+from utilities.settings import get_settings
 from assetManagementFunctions.assetFunctionsRouting import func_list, func_listTXT
 from otherManagementFunctions.otherFunctionsRouting import other_func_list, other_func_listTXT
 

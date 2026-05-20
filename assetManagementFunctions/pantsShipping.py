@@ -3,7 +3,8 @@
 import logging
 from tkinter import messagebox
 
-from utilities.logging_utils import configure_logging, get_settings
+from utilities.logging_utils import configure_logging
+from utilities.settings import  get_settings
 from utilities.otherApiBits import *
 
 logger = logging.getLogger(__name__)

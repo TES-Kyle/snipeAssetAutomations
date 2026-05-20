@@ -11,7 +11,8 @@ from jamf_pro_sdk.clients.auth import ApiClientCredentialsProvider
 from jamf_pro_sdk.clients.pro_api.pagination import FilterField, SortField
 from utilities.otherApiBits import getAssetInfoSerialAssignedTo, getAssetInfo
 from utilities import Key
-from utilities.logging_utils import configure_logging, get_settings
+from utilities.logging_utils import configure_logging
+from utilities.settings import  get_settings
 
 jamfURL = Key.jamfURL # No trailing slash
 

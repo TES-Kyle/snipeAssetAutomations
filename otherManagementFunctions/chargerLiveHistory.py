@@ -16,7 +16,8 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from assetManagementFunctions.chargerSerial import get_computer_inventory_results, parse_charger_info
-from utilities.logging_utils import configure_logging, get_settings
+from utilities.logging_utils import configure_logging
+from utilities.settings import  get_settings
 from utilities.otherApiBits import getAssetInfoSerialAssignedTo
 from utilities.api_user import get_api_key
 

@@ -11,7 +11,8 @@ from utilities.otherApiBits import (
 from utilities.autocomplete import AutoCompleteEntry
 from utilities.Key import API_URL_Base
 from utilities.api_user import get_api_headers, get_api_key
-from utilities.logging_utils import configure_logging, get_settings
+from utilities.logging_utils import configure_logging
+from utilities.settings import  get_settings
 
 import tkinter as tk
 from tkinter import ttk, messagebox

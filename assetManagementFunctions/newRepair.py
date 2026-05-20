@@ -8,7 +8,8 @@ import tkinter as tk
 from tkinter import messagebox
 
 from utilities.labelPrinting import createImage
-from utilities.logging_utils import configure_logging, get_settings
+from utilities.logging_utils import configure_logging
+from utilities.settings import  get_settings
 from utilities.messaging import *
 from utilities.otherApiBits import *
 

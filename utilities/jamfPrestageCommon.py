@@ -16,7 +16,8 @@ import time
 from typing import Optional, Tuple, Dict, List, Any, Set
 
 from utilities import Key
-from utilities.logging_utils import configure_logging, get_settings
+from utilities.logging_utils import configure_logging
+from utilities.settings import  get_settings
 from utilities.otherApiBits import getAssetInfo
 
 from jamf_pro_sdk import JamfProClient, SessionConfig

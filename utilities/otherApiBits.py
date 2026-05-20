@@ -16,7 +16,8 @@ from tkinter import font as tkfont, messagebox, ttk
 
 from utilities import Key
 from utilities.api_user import get_api_headers
-from utilities.logging_utils import configure_logging, get_settings
+from utilities.logging_utils import configure_logging
+from utilities.settings import  get_settings
 
 logger = logging.getLogger(__name__)
 

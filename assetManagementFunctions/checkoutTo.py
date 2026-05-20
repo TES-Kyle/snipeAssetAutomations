@@ -2,7 +2,8 @@
 
 import logging
 
-from utilities.logging_utils import configure_logging, get_settings
+from utilities.logging_utils import configure_logging
+from utilities.settings import  get_settings
 from utilities.otherApiBits import *
 from utilities.api_user import get_api_key
 import tkinter as tk

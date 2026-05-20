@@ -7,7 +7,8 @@ from datetime import date, datetime, timedelta
 import tkinter as tk
 from tkinter import messagebox
 
-from utilities.logging_utils import configure_logging, get_settings
+from utilities.logging_utils import configure_logging
+from utilities.settings import  get_settings
 from utilities.otherApiBits import *
 from utilities.Key import *
 from utilities.messaging import *

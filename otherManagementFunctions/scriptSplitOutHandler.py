@@ -9,7 +9,8 @@ import time
 import tkinter as tk
 from tkinter.scrolledtext import ScrolledText
 
-from utilities.logging_utils import configure_logging, get_settings
+from utilities.logging_utils import configure_logging
+from utilities.settings import  get_settings
 
 logger = logging.getLogger(__name__)
 
