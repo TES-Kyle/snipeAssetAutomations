@@ -12,6 +12,7 @@ from tkinter import font as tkfont
 from tkinter import messagebox
 
 from utilities.logging_utils import configure_logging
+from utilities.theme import get_ui_colors
 
 logger = logging.getLogger(__name__)
 
@@ -327,6 +328,8 @@ def settingsMenu():
         logger.debug("cancel: discarding changes and closing settings window")
         settings_window.destroy()
 
+    # Resolve OS theme once per window open so description labels use the right colour.
+    _colors = get_ui_colors()
     logger.debug("settingsMenu: loading settings, defaults, and schema")
     # Load persisted settings, defaults, and schema for UI layout.
     settingsDict = _safe_read_json(str(os.path.dirname(os.path.realpath(__file__))) + "/settings.json")
@@ -459,7 +462,7 @@ def settingsMenu():
                 text=description,
                 justify="left",
                 anchor="w",
-                fg="gray25",
+                fg=_colors["desc_fg"],
                 font=desc_font,
                 wraplength=700,
             )
@@ -510,7 +513,7 @@ def settingsMenu():
                 text=description,
                 justify="left",
                 anchor="w",
-                fg="gray25",
+                fg=_colors["desc_fg"],
                 font=desc_font,
                 wraplength=720,
             )

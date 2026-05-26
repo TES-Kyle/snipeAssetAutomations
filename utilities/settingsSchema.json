@@ -3,7 +3,7 @@
     {
       "name": "Logging",
       "description": "Logging controls for file output and verbosity.",
-      "collapsed": false,
+      "collapsed": true,
       "items": [
         {
           "key": "logLevel",
@@ -25,7 +25,7 @@
     {
       "name": "API Users",
       "description": "Snipe-IT API user selection for change attribution.",
-      "collapsed": false,
+      "collapsed": true,
       "items": [
         {
           "key": "apiUserStaticName",
@@ -197,16 +197,6 @@
           "key": "guiButtonColumns",
           "label": "Button Columns",
           "description": "Number of columns for function button grids."
-        },
-        {
-          "key": "guiActiveTabColor",
-          "label": "Active Tab Color",
-          "description": "Background color for active tab."
-        },
-        {
-          "key": "guiInactiveTabColor",
-          "label": "Inactive Tab Color",
-          "description": "Background color for inactive tabs."
         }
       ]
     },
@@ -362,105 +352,6 @@
           "key": "userSearchLimit",
           "label": "User Search Limit",
           "description": "Max users to load for filtered search."
-        }
-      ]
-    },
-    {
-      "name": "Battery Sync",
-      "description": "Battery sync field keys and EA names.",
-      "collapsed": true,
-      "items": [
-        {
-          "key": "batterySyncDryRun",
-          "label": "Battery Sync Dry Run",
-          "description": "1 to prevent writes to Snipe-IT."
-        },
-        {
-          "key": "batterySyncVerifySSL",
-          "label": "Battery Sync Verify SSL",
-          "description": "1 to verify SSL certificates, 0 to skip."
-        },
-        {
-          "key": "batterySyncRateLimitDelay",
-          "label": "Battery Sync Rate Limit Delay",
-          "description": "Seconds between API calls (float)."
-        },
-        {
-          "key": "batterySyncTestSerial",
-          "label": "Battery Sync Test Serial",
-          "description": "Optional serial for live updates when in test mode."
-        },
-        {
-          "key": "batterySyncDebugVerbose",
-          "label": "Battery Sync Debug Verbose",
-          "description": "1 to log extra EA details."
-        },
-        {
-          "key": "batterySyncDebugOnlyFirstN",
-          "label": "Battery Sync Debug Only First N",
-          "description": "Limit processing to N devices (blank or 0 for all)."
-        },
-        {
-          "key": "batterySyncDebugShowEaValues",
-          "label": "Battery Sync Debug Show EA Values",
-          "description": "1 to include EA values in debug logs."
-        },
-        {
-          "key": "batteryDataFieldKey",
-          "label": "Battery Data Field Key",
-          "description": "Custom field key for battery data in Snipe-IT."
-        },
-        {
-          "key": "batteryEaNameDesign",
-          "label": "Battery EA Name (Design)",
-          "description": "Jamf EA name for design capacity."
-        },
-        {
-          "key": "batteryEaNameMax",
-          "label": "Battery EA Name (Maximum)",
-          "description": "Jamf EA name for maximum capacity."
-        },
-        {
-          "key": "batteryEaNameCond",
-          "label": "Battery EA Name (Condition)",
-          "description": "Jamf EA name for condition."
-        }
-      ]
-    },
-    {
-      "name": "Jamf Sync",
-      "description": "Jamf asset tag sync controls.",
-      "collapsed": true,
-      "items": [
-        {
-          "key": "jamfSyncDryRun",
-          "label": "Jamf Sync Dry Run",
-          "description": "1 to prevent updates in Jamf."
-        },
-        {
-          "key": "jamfSyncVerifySSL",
-          "label": "Jamf Sync Verify SSL",
-          "description": "1 to verify SSL certificates, 0 to skip."
-        },
-        {
-          "key": "jamfSyncRateLimitDelay",
-          "label": "Jamf Sync Rate Limit Delay",
-          "description": "Seconds between API calls (float)."
-        },
-        {
-          "key": "jamfSyncSyncComputers",
-          "label": "Sync Computers",
-          "description": "1 to sync computer inventory."
-        },
-        {
-          "key": "jamfSyncSyncMobiles",
-          "label": "Sync Mobile Devices",
-          "description": "1 to sync mobile device inventory."
-        },
-        {
-          "key": "jamfSyncTestSerial",
-          "label": "Jamf Sync Test Serial",
-          "description": "Optional serial to update live while others dry-run."
         }
       ]
     },

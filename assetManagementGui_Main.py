@@ -21,6 +21,7 @@ from utilities.api_user import (
 from utilities.otherApiBits import getAssetInfo, build_asset_info_frame
 from utilities.settingsMenu import settingsMenu
 from utilities.settings import get_settings
+from utilities.theme import get_ui_colors
 from assetManagementFunctions.assetFunctionsRouting import func_list, func_listTXT
 from otherManagementFunctions.otherFunctionsRouting import other_func_list, other_func_listTXT
 
@@ -160,6 +161,8 @@ def create_main_window(root):
     configure_logging()
     settings = get_settings()
     root.title("Asset Management GUI")
+    # Resolve OS theme once at window creation so all tab colours are consistent.
+    _theme = get_ui_colors()
     window_state = str(settings.get("guiWindowState", "zoomed")).strip().lower()
     logger.debug("create_main_window: window_state=%s", window_state)
     # Apply requested window state when available.
@@ -171,8 +174,10 @@ def create_main_window(root):
     app_state = {}
 
     # Read GUI style settings with fallbacks.
-    ACTIVE_TAB_COLOR = settings.get("guiActiveTabColor", "#d9d9d9")
-    INACTIVE_TAB_COLOR = settings.get("guiInactiveTabColor", "#f0f0f0")
+    # Tab colours come directly from the OS theme (dark/light auto-detected).
+    ACTIVE_TAB_COLOR   = _theme["tab_active_bg"]
+    INACTIVE_TAB_COLOR = _theme["tab_inactive_bg"]
+    TAB_FG_COLOR       = _theme["tab_fg"]
     font_family = settings.get("guiFontFamily", "Arial")
     try:
         base_font_size = int(settings.get("guiFontSize", 20))
@@ -196,15 +201,16 @@ def create_main_window(root):
     def show_frame(frame_to_show):
         """Raise the selected frame and update tab button styles."""
         logger.debug("show_frame: raising frame=%s", frame_to_show)
-        # Reset all tab buttons to inactive style.
+        # Reset all tab buttons to inactive style; set fg explicitly so dark-mode
+        # system text colour doesn't bleed through the light/dark tab background.
         for button in app_state['tab_buttons'].values():
-            button.config(relief='raised', bg=INACTIVE_TAB_COLOR)
+            button.config(relief='raised', bg=INACTIVE_TAB_COLOR, fg=TAB_FG_COLOR)
 
         # Activate the selected tab.
         for frame, button in app_state['tab_buttons'].items():
             if frame == frame_to_show:
                 logger.debug("show_frame: activating tab button for frame=%s", frame)
-                button.config(relief='sunken', bg=ACTIVE_TAB_COLOR)
+                button.config(relief='sunken', bg=ACTIVE_TAB_COLOR, fg=TAB_FG_COLOR)
                 break
 
         frame_to_show.tkraise()

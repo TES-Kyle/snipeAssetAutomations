@@ -43,6 +43,7 @@ from utilities.logging_utils import configure_logging
 from utilities.settings import  get_settings
 from utilities.Key import API_URL_Base  # API creds
 from utilities.api_user import get_api_headers, get_api_key
+from utilities.theme import get_ui_colors
 
 from consisterizer.consisterizerScriptsRouting import (
     submit_func_list,
@@ -300,6 +301,17 @@ def attach_placeholder(widget: tk.Widget, text: str):
         logger.debug("attach_placeholder: unsupported widget type, skipping")
         return
 
+    # Capture the widget's configured text colour BEFORE applying placeholder
+    # styling so we can restore it faithfully on focus-in.  This avoids
+    # hardcoding "black" which would be invisible in dark mode.
+    try:
+        _normal_fg = widget.cget("fg")
+    except Exception:
+        try:
+            _normal_fg = widget.cget("foreground")
+        except Exception:
+            _normal_fg = "black"
+
     widget.placeholder_text = text
     widget.placeholder_active = True
     _widget_set_text(widget, text)
@@ -312,10 +324,10 @@ def attach_placeholder(widget: tk.Widget, text: str):
         """Clear placeholder text when the widget receives focus."""
         logger.debug("_on_focus_in: placeholder_active=%s", getattr(widget, "placeholder_active", False))
         if getattr(widget, "placeholder_active", False):
-            logger.debug("_on_focus_in: clearing placeholder text")
+            logger.debug("_on_focus_in: clearing placeholder, restoring fg=%s", _normal_fg)
             _widget_set_text(widget, "")
             try:
-                widget.config(fg="black")
+                widget.config(fg=_normal_fg)
             except Exception:
                 pass
             widget.placeholder_active = False
@@ -473,6 +485,22 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     """
     configure_logging()
     logger.info("Opening Consisterizer for %s", asset_tag)
+    # Resolve OS theme once per window open so all widget colours are consistent.
+    # These locals must be defined BEFORE any widget or style creation that uses
+    # them — Python's scoping rules treat any name assigned anywhere in a function
+    # as local throughout, so assigning them late would cause UnboundLocalError.
+    _theme = get_ui_colors()
+    logger.debug("consisterizer: theme resolved, dark=%s", _theme["bg"] == "#1e1e1e")
+    HEADER_BG     = _theme["header_bg"]
+    HEADER_FG     = _theme["header_fg"]
+    ROW_BG_1      = _theme["row_bg_1"]
+    ROW_BG_2      = _theme["row_bg_2"]
+    ROW_FG        = _theme["fg"]
+    ENTRY_BG      = _theme["entry_bg"]
+    ENTRY_FG      = _theme["entry_fg"]
+    ERROR_BG      = _theme["error_bg"]
+    ERROR_FG      = _theme["error_fg"]
+    SEPARATOR_COLOR = _theme["separator"]
 
     # -------------------------------------------------------------------------
     # Window
@@ -593,10 +621,11 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     # Styles
     # -------------------------------------------------------------------------
     style = ttk.Style(win)
+    # Error style uses theme-appropriate colours so it's visible in dark mode.
     try:
-        style.configure("ConsistError.TEntry", fieldbackground="#fff1f1", foreground="#b22222")
+        style.configure("ConsistError.TEntry", fieldbackground=ERROR_BG, foreground=ERROR_FG)
     except Exception:
-        style.configure("ConsistError.TEntry", foreground="#b22222")
+        style.configure("ConsistError.TEntry", foreground=ERROR_FG)
 
     # -------------------------------------------------------------------------
     # Top Bar — centered Asset Tag + Batch toggle
@@ -684,10 +713,6 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     # -------------------------------------------------------------------------
     # Grid (sticky header + scrollable body)
     # -------------------------------------------------------------------------
-    HEADER_BG = "#e9edf3"
-    ROW_BG_1 = "#ffffff"
-    ROW_BG_2 = "#f6f8fb"
-
     grid_box = ttk.LabelFrame(win, text="Fields")
     grid_box.pack(fill="both", expand=True, padx=12, pady=6)
     grid_box.grid_columnconfigure(0, weight=1)
@@ -702,13 +727,14 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     header.grid_columnconfigure(3, weight=1, uniform="flex", minsize=FLEX_MIN_CURRENT)
     header.grid_columnconfigure(4, weight=1, uniform="flex", minsize=FLEX_MIN_RESULT)
 
-    tk.Label(header, text="Field",   font=("Arial", 12, "bold"), bg=HEADER_BG).grid(row=0, column=0, sticky="w", padx=6, pady=4)
-    tk.Label(header, text="Updates", font=("Arial", 12, "bold"), bg=HEADER_BG).grid(row=0, column=1, sticky="w", padx=6, pady=4)
+    tk.Label(header, text="Field",   font=("Arial", 12, "bold"), bg=HEADER_BG, fg=HEADER_FG).grid(row=0, column=0, sticky="w", padx=6, pady=4)
+    tk.Label(header, text="Updates", font=("Arial", 12, "bold"), bg=HEADER_BG, fg=HEADER_FG).grid(row=0, column=1, sticky="w", padx=6, pady=4)
     reset_selected_btn = tk.Button(header, text="Reset")
     reset_selected_btn.grid(row=0, column=2, sticky="w", padx=6, pady=4)
-    tk.Label(header, text="Current", font=("Arial", 12, "bold"), bg=HEADER_BG).grid(row=0, column=3, sticky="w", padx=6, pady=4)
-    tk.Label(header, text="Result",  font=("Arial", 12, "bold"), bg=HEADER_BG).grid(row=0, column=4, sticky="w", padx=6, pady=4)
-    tk.Frame(header, bg="#d6dce5", height=1).grid(row=1, column=0, columnspan=5, sticky="ew")
+    tk.Label(header, text="Current", font=("Arial", 12, "bold"), bg=HEADER_BG, fg=HEADER_FG).grid(row=0, column=3, sticky="w", padx=6, pady=4)
+    tk.Label(header, text="Result",  font=("Arial", 12, "bold"), bg=HEADER_BG, fg=HEADER_FG).grid(row=0, column=4, sticky="w", padx=6, pady=4)
+    # Thin separator line between header and scrollable body.
+    tk.Frame(header, bg=SEPARATOR_COLOR, height=1).grid(row=1, column=0, columnspan=5, sticky="ew")
 
     # Scrollable body
     grid_canvas = tk.Canvas(grid_box, highlightthickness=0, borderwidth=0, height=80)
@@ -846,29 +872,31 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
         _bg = tk.Frame(grid_inner, bg=row_bg, height=1)
         _bg.grid(row=i + 1, column=0, columnspan=5, sticky="nsew")
 
-        # Col 0: field name label.
-        tk.Label(grid_inner, text=key, bg=row_bg).grid(row=i + 1, column=0, sticky="w", padx=6, pady=3)
+        # Col 0: field name label; explicit fg prevents dark-mode bleed.
+        tk.Label(grid_inner, text=key, bg=row_bg, fg=ROW_FG).grid(row=i + 1, column=0, sticky="w", padx=6, pady=3)
 
         # Col 2: Reset checkbox — toggling triggers a full recompute.
         reset_var = tk.BooleanVar(value=False)
         reset_var.trace_add("write", lambda *_: recompute_all_results())
+        # selectcolor matches row_bg so the checkbox indicator blends into the stripe.
         tk.Checkbutton(grid_inner, variable=reset_var, bg=row_bg, activebackground=row_bg,
+                       fg=ROW_FG, selectcolor=row_bg,
                        highlightthickness=0, bd=0).grid(row=i + 1, column=2, sticky="w", padx=6, pady=3)
 
         # Col 3: Current value (read-only label; updated when asset changes).
-        curr_lbl = tk.Label(grid_inner, text=cur, anchor="w", justify="left", bg=row_bg)
+        curr_lbl = tk.Label(grid_inner, text=cur, anchor="w", justify="left", bg=row_bg, fg=ROW_FG)
         curr_lbl.grid(row=i + 1, column=3, sticky="nsew", padx=6, pady=3)
 
         # Col 4: Result label — shows the template-expanded final value.
         result_var = tk.StringVar(value=cur)
-        res_lbl = tk.Label(grid_inner, textvariable=result_var, anchor="w", justify="left", bg=row_bg)
+        res_lbl = tk.Label(grid_inner, textvariable=result_var, anchor="w", justify="left", bg=row_bg, fg=ROW_FG)
         res_lbl.grid(row=i + 1, column=4, sticky="nsew", padx=6, pady=3)
 
-        # Capture the default foreground color so we can restore it after highlighting.
+        # Capture the result-label's default foreground so highlighting can restore it.
         try:
             fg_default = res_lbl.cget("foreground")
         except Exception:
-            fg_default = ""
+            fg_default = ROW_FG
 
         row_record = {
             "key": key,
@@ -889,7 +917,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             try:
                 ac_fg_default = ac.entry.cget("foreground")
             except Exception:
-                ac_fg_default = "black"
+                ac_fg_default = ENTRY_FG
 
             def on_change(ac_ref=ac, cur_val=cur, rr=row_record):
                 """Update result value and recompute on status change."""
@@ -915,7 +943,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             try:
                 ac_fg_default = ac.entry.cget("foreground")
             except Exception:
-                ac_fg_default = "black"
+                ac_fg_default = ENTRY_FG
 
             def on_change(ac_ref=ac, cur_val=cur, rr=row_record):
                 """Update result value and runtime username on assignee change."""
@@ -951,7 +979,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             try:
                 ac_fg_default = ac.entry.cget("foreground")
             except Exception:
-                ac_fg_default = "black"
+                ac_fg_default = ENTRY_FG
 
             def on_change(ac_ref=ac, cur_val=cur, rr=row_record):
                 """Update result value on model change."""
@@ -971,7 +999,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             row_record.update({"text_widget_type": "ac", "ac": ac, "ac_fg_default": ac_fg_default})
 
         else:
-            text = tk.Text(grid_inner, height=1, width=1, wrap="word", font=default_font, bg="white")
+            text = tk.Text(grid_inner, height=1, width=1, wrap="word", font=default_font, bg=ENTRY_BG, fg=ENTRY_FG)
             text.grid(row=i + 1, column=1, sticky="nsew", padx=6, pady=3)
             if key in PLACEHOLDERS:
                 attach_placeholder(text, PLACEHOLDERS[key])
@@ -1299,7 +1327,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                     _widget_set_text(r["text"], raw_default)
                     logger.debug("_apply_maintained_defaults: updated text key=%s to default=%s", key, raw_default)
                     try:
-                        r["text"].config(bg="white")
+                        r["text"].config(bg=ENTRY_BG)
                     except Exception:
                         pass
                     changed = True
@@ -1361,11 +1389,12 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                 mismatch_count += 1
                 logger.debug("recompute_all_results: mismatch on field=%s snapshot=%s expected=%s", k, snapshot.get(k), dval)
 
-            res_lbl.configure(foreground="#b22222" if mismatch else default_fg)
+            # Apply or clear error highlight using theme-appropriate colours.
+            res_lbl.configure(foreground=ERROR_FG if mismatch else default_fg)
 
             if row.get("text_widget_type") == "text":
                 try:
-                    row["text"].configure(bg="#fff1f1" if mismatch else "white")
+                    row["text"].configure(bg=ERROR_BG if mismatch else ENTRY_BG)
                 except Exception:
                     pass
             elif row.get("text_widget_type") == "ac":
@@ -1375,7 +1404,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                 except Exception:
                     try:
                         entry.configure(
-                            foreground="#b22222" if mismatch else row.get("ac_fg_default", "black")
+                            foreground=ERROR_FG if mismatch else row.get("ac_fg_default", ENTRY_FG)
                         )
                     except Exception:
                         pass
@@ -1433,7 +1462,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                     if key in PLACEHOLDERS:
                         attach_placeholder(t, PLACEHOLDERS[key])
                 try:
-                    t.config(bg="white")
+                    t.config(bg=ENTRY_BG)
                 except Exception:
                     pass
 
