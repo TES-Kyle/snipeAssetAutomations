@@ -158,22 +158,30 @@ Troubleshooting
 """
 
 
+# Fixed pixel widths for the Field and Reset columns.
 FIELD_COL_PX = 180
 RESET_COL_PX = 90
+# Minimum window dimensions so the layout is usable on small screens.
 MIN_W = 700
 MIN_H = 400
 
+# Minimum widths for the three flexible columns (Updates / Current / Result).
 FLEX_MIN_UPDATES = 140
 FLEX_MIN_CURRENT = 120
 FLEX_MIN_RESULT = 120
 
+# Path to the JSON file that holds conditional default profile rules.
 TEMPLATES_PATH = os.path.join("consisterizer", "defaultProfiles.json")
 
+# Fast membership test against FIELD_ORDER.
 KNOWN_FIELDS = set(FIELD_ORDER)
 
+# Regex that matches any {token} placeholder in template strings.
 TOKEN_RE = re.compile(r"\{([^{}]+)\}")
+# Fallback asset-tag regex used when the settings value is invalid.
 ASSET_TAG_RE_DEFAULT = re.compile(r"^\d{4,5}$")
 
+# Internal sentinel that marks a "{has_value}" default constraint.
 HAS_VALUE_SENTINEL = "<<HAS_VALUE>>"
 
 # API base normalization (accepts with/without trailing slash)
@@ -185,42 +193,87 @@ SNIPE_BASE = API_URL_Base.rstrip("/")  # e.g., https://host/api/v1
 # =============================================================================
 
 def _norm_field_key(k: str) -> str:
-    """Normalize field labels to consistent keys."""
+    """Normalize field labels to consistent snake_case keys.
+
+    Args:
+        k: Raw field label string (e.g. 'Asset Tag').
+
+    Returns:
+        Lowercase, space-stripped, underscore-separated key (e.g. 'asset_tag'),
+        or empty string for non-string input.
+    """
+    logger.debug("_norm_field_key: k=%s", k)
     if not isinstance(k, str):
+        logger.debug("_norm_field_key: non-string input, returning empty")
         return ""
     return k.strip().lower().replace(" ", "_")
 
 
 def valid_asset_tag(value: str) -> bool:
-    """Validate asset tags using the configured regex."""
+    """Validate an asset tag string against the configured regex.
+
+    Args:
+        value: Asset tag string to validate.
+
+    Returns:
+        True if the tag matches the configured regex, False otherwise.
+    """
+    logger.debug("valid_asset_tag: value=%s", value)
     settings = get_settings()
     pattern = settings.get("assetTagRegex", r"^\d{4,5}$")
+    logger.debug("valid_asset_tag: pattern=%s", pattern)
     try:
         regex = re.compile(pattern)
     except re.error:
         logger.error("Invalid assetTagRegex setting: %s", pattern)
         regex = ASSET_TAG_RE_DEFAULT
-    return bool(regex.match(value or ""))
+    result = bool(regex.match(value or ""))
+    logger.debug("valid_asset_tag: value=%s result=%s", value, result)
+    return result
 
 
 def valid_date(value: str) -> bool:
-    """Validate YYYY-MM-DD date strings."""
+    """Validate a date string is in YYYY-MM-DD format.
+
+    Args:
+        value: String to test.
+
+    Returns:
+        True if the string parses as a valid YYYY-MM-DD date, False otherwise.
+    """
+    logger.debug("valid_date: value=%s", value)
     try:
         datetime.strptime(value, "%Y-%m-%d")
+        logger.debug("valid_date: %s is valid", value)
         return True
     except Exception:
+        logger.debug("valid_date: %s is not a valid YYYY-MM-DD date", value)
         return False
 
 
 def _widget_get_text(widget: tk.Widget) -> str:
-    """Return current text content from an Entry or Text widget."""
+    """Return current text content from an Entry or Text widget.
+
+    Args:
+        widget: A tk.Entry or tk.Text widget.
+
+    Returns:
+        The widget's current text as a string.
+    """
+    logger.debug("_widget_get_text: widget_type=%s", type(widget).__name__)
     if isinstance(widget, tk.Text):
         return widget.get("1.0", "end-1c")
     return widget.get()
 
 
 def _widget_set_text(widget: tk.Widget, value: str):
-    """Set text content for an Entry or Text widget."""
+    """Set text content for an Entry or Text widget.
+
+    Args:
+        widget: A tk.Entry or tk.Text widget.
+        value: String to insert. Empty string clears the widget.
+    """
+    logger.debug("_widget_set_text: widget_type=%s value=%s", type(widget).__name__, value)
     if isinstance(widget, tk.Text):
         widget.delete("1.0", "end")
         if value:
@@ -232,8 +285,19 @@ def _widget_set_text(widget: tk.Widget, value: str):
 
 
 def attach_placeholder(widget: tk.Widget, text: str):
-    """Attach placeholder behavior to an Entry or Text widget."""
+    """Attach grey placeholder behavior to an Entry or Text widget.
+
+    The placeholder text is shown in grey when the widget has no content and
+    is not focused.  It is hidden on focus-in and restored on focus-out if the
+    widget is still empty.
+
+    Args:
+        widget: A tk.Entry or tk.Text widget to receive placeholder behavior.
+        text: The placeholder string to display.
+    """
+    logger.debug("attach_placeholder: widget_type=%s text=%s", type(widget).__name__, text)
     if not isinstance(widget, (tk.Entry, tk.Text)):
+        logger.debug("attach_placeholder: unsupported widget type, skipping")
         return
 
     widget.placeholder_text = text
@@ -246,7 +310,9 @@ def attach_placeholder(widget: tk.Widget, text: str):
 
     def _on_focus_in(_e):
         """Clear placeholder text when the widget receives focus."""
+        logger.debug("_on_focus_in: placeholder_active=%s", getattr(widget, "placeholder_active", False))
         if getattr(widget, "placeholder_active", False):
+            logger.debug("_on_focus_in: clearing placeholder text")
             _widget_set_text(widget, "")
             try:
                 widget.config(fg="black")
@@ -256,7 +322,10 @@ def attach_placeholder(widget: tk.Widget, text: str):
 
     def _on_focus_out(_e):
         """Restore placeholder text when leaving an empty widget."""
-        if _widget_get_text(widget).strip() == "":
+        current = _widget_get_text(widget).strip()
+        logger.debug("_on_focus_out: current_text=%s", current)
+        if current == "":
+            logger.debug("_on_focus_out: restoring placeholder text=%s", widget.placeholder_text)
             widget.placeholder_active = True
             _widget_set_text(widget, widget.placeholder_text)
             try:
@@ -269,30 +338,56 @@ def attach_placeholder(widget: tk.Widget, text: str):
 
 
 def is_effective_empty(widget: tk.Widget) -> bool:
-    """Return True if widget is empty or showing placeholder text."""
+    """Return True if a widget is empty or currently showing placeholder text.
+
+    Args:
+        widget: A tk.Entry or tk.Text widget (possibly with placeholder attached).
+
+    Returns:
+        True if no real user content is present.
+    """
+    logger.debug("is_effective_empty: widget_type=%s", type(widget).__name__)
     return getattr(widget, "placeholder_active", False) or _widget_get_text(widget).strip() == ""
 
 
 def extract_current_values(assetData: dict) -> dict:
-    """Extract a normalized set of editable fields from asset data."""
+    """Extract a normalized set of editable fields from a Snipe-IT asset payload.
+
+    Flattens nested objects (model, status_label, assigned_to, dates) into
+    simple string values keyed by FIELD_ORDER names.  All missing values become
+    empty strings rather than None so callers can compare safely.
+
+    Args:
+        assetData: Raw asset dict returned by the Snipe-IT API (or getAssetInfo).
+
+    Returns:
+        Dict with keys matching FIELD_ORDER plus '_assigned_username', all str.
+    """
+    logger.debug("extract_current_values: asset_tag=%s", assetData.get("asset_tag"))
+    # Simple scalar fields — coerce None to "".
     asset_tag = assetData.get("asset_tag") or ""
     name = assetData.get("name") or ""
     serial = assetData.get("serial") or ""
     notes = assetData.get("notes") or ""
     purchase_cost = assetData.get("purchase_cost") or ""
     order_number = assetData.get("order_number") or ""
+    # Nested object fields — Snipe-IT returns these as {"id": ..., "name": ...}.
     model_name = (assetData.get("model") or {}).get("name") or ""
     status_name = (assetData.get("status_label") or {}).get("name") or ""
+    # Assigned-to can be a user or location; we want the display name and username.
     assigned_obj = (assetData.get("assigned_to") or {})
     assigned_to = assigned_obj.get("name") or ""
     assigned_username = assigned_obj.get("username") or ""
     if not assigned_username:
+        # Fall back to deriving a username from the email address.
         email = assigned_obj.get("email") or ""
         if "@" in email:
             assigned_username = email.split("@", 1)[0]
+    # Date fields are returned as {"date": "YYYY-MM-DD", ...}; extract just the date string.
     purchase_date = (assetData.get("purchase_date") or {}).get("date") or ""
     expected_checkin = (assetData.get("expected_checkin") or {}).get("date") or ""
 
+    logger.debug("extract_current_values: model=%s status=%s assigned_to=%s", model_name, status_name, assigned_to)
     base = {
         "asset_tag": asset_tag,
         "name": name,
@@ -307,14 +402,17 @@ def extract_current_values(assetData: dict) -> dict:
         "notes": notes,
         "_assigned_username": assigned_username,
     }
+    logger.debug("extract_current_values: returning %s fields", len(base))
     return base
 
 
 def _open_help(parent):
     """Open (or focus) a simple read-only help window."""
+    logger.debug("_open_help: called")
     # Reuse a single help window if already open
     existing = getattr(parent, "_help_win", None)
     if existing and existing.winfo_exists():
+        logger.debug("_open_help: help window already open, raising it")
         try:
             existing.lift()
             existing.focus_force()
@@ -322,6 +420,7 @@ def _open_help(parent):
             pass
         return
 
+    logger.info("_open_help: creating new help window")
     win = tk.Toplevel(parent)
     parent._help_win = win
     win.title("Consisterizer Help")
@@ -381,6 +480,8 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     win = tk.Toplevel()
     win.title(f"Consisterizer — {asset_tag}")
     win.update_idletasks()
+    # Size the window to fill the screen (but never smaller than MIN_W x MIN_H),
+    # then center it.
     sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
     W = max(MIN_W, sw)
     H = max(MIN_H, sh)
@@ -389,6 +490,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     win.geometry(f"{W}x{H}+{x}+{y}")
     win.minsize(MIN_W, MIN_H)
     win.lift()
+    # F1 opens the in-app help dialog from anywhere in the window.
     win.bind("<F1>", lambda e: _open_help(win))
     try:
         win.focus_force()
@@ -409,11 +511,26 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     model_options = getAllModelOptions()
 
     def _prepend_special_option(options, label, opt_type):
-        """Ensure a special label exists at the top of an autocomplete list."""
+        """Ensure a special sentinel label exists at the top of an autocomplete list.
+
+        Used to inject virtual options like '{blank}' and '{empty}' that have no
+        real Snipe-IT IDs but need to appear in the dropdown for template tokens.
+
+        Args:
+            options: Existing list of autocomplete option dicts.
+            label: Label string to prepend (e.g. '{blank}', '{empty}').
+            opt_type: Type string for the synthetic option (e.g. 'blank', 'empty').
+
+        Returns:
+            The options list with the sentinel prepended (or unchanged if already present).
+        """
+        logger.debug("_prepend_special_option: label=%s opt_type=%s", label, opt_type)
         options = list(options or [])
         for opt in options:
             if str(opt.get("label") or "").strip() == label:
+                logger.debug("_prepend_special_option: label already present, skipping prepend")
                 return options
+        logger.debug("_prepend_special_option: prepending special option label=%s", label)
         return [{
             "label": label,
             "id": None,
@@ -423,6 +540,9 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             "meta": {},
         }] + options
 
+    # Inject sentinel options into each autocomplete list:
+    # - status/model get {blank} (keep current; they cannot be cleared to empty)
+    # - assigned_to gets both {empty} (explicit unassign) and {blank} (keep current)
     status_options = _prepend_special_option(status_options, "{blank}", "blank")
     model_options = _prepend_special_option(model_options, "{blank}", "blank")
     assignee_options = _prepend_special_option(assignee_options, "{empty}", "empty")
@@ -432,22 +552,41 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     runtime_username = tk.StringVar(value=current_map.get("_assigned_username", ""))
 
     def _username_from_option(sel: dict | None) -> str:
-        """Derive a username from a user selection option."""
+        """Derive a plain username string from an autocomplete user selection dict.
+
+        Tries the 'username' key first, then derives from 'email', then checks
+        the nested 'meta' sub-dict in the same order.
+
+        Args:
+            sel: Autocomplete selection dict (or None).
+
+        Returns:
+            Username string, or empty string if none could be determined.
+        """
+        logger.debug("_username_from_option: sel_type=%s", (sel or {}).get("type"))
         if not sel or sel.get("type") != "user":
+            logger.debug("_username_from_option: not a user selection, returning empty")
             return ""
         u = (sel.get("username") or "").strip()
         if u:
+            logger.debug("_username_from_option: found username=%s", u)
             return u
         em = (sel.get("email") or "").strip()
         if "@" in em:
-            return em.split("@", 1)[0]
+            derived = em.split("@", 1)[0]
+            logger.debug("_username_from_option: derived username from email=%s", derived)
+            return derived
         meta = sel.get("meta") or {}
         u = (meta.get("username") or "").strip()
         if u:
+            logger.debug("_username_from_option: found username in meta=%s", u)
             return u
         em = (meta.get("email") or "").strip()
         if "@" in em:
-            return em.split("@", 1)[0]
+            derived = em.split("@", 1)[0]
+            logger.debug("_username_from_option: derived username from meta email=%s", derived)
+            return derived
+        logger.debug("_username_from_option: no username found, returning empty")
         return ""
 
     # -------------------------------------------------------------------------
@@ -477,6 +616,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
 
     def _validate_tag_key(newval):
         """Validate asset tag input for numeric length constraints."""
+        logger.debug("_validate_tag_key: newval=%s", newval)
         return (newval == "") or (newval.isdigit() and len(newval) <= 5)
 
     asset_entry.configure(validate="key", validatecommand=(win.register(_validate_tag_key), "%P"))
@@ -488,6 +628,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
 
     def _help_click():
         """Open the help dialog for Consisterizer."""
+        logger.debug("_help_click: help button pressed")
         _open_help(win)
 
     # U+20DD is COMBINING ENCLOSING CIRCLE; "?\u20DD" renders as circled ? on most fonts.
@@ -507,7 +648,9 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     def _clear_entry_style_if_valid(*_):
         """Clear error styling when the asset tag looks valid."""
         v = asset_tag_var.get().strip()
+        logger.debug("_clear_entry_style_if_valid: v=%s", v)
         if re.match(r"^\d{0,5}$", v or ""):
+            logger.debug("_clear_entry_style_if_valid: clearing error style")
             try:
                 asset_entry.configure(style="")
             except Exception:
@@ -520,8 +663,10 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
 
     def _update_submit_enabled(*_):
         """Enable or disable submit based on active asset state."""
+        has_asset = has_current_asset.get()
+        logger.debug("_update_submit_enabled: has_current_asset=%s", has_asset)
         try:
-            submit_btn.configure(state=("normal" if has_current_asset.get() else "disabled"))
+            submit_btn.configure(state=("normal" if has_asset else "disabled"))
         except Exception:
             pass
 
@@ -589,10 +734,12 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
 
     def _update_scroll_state():
         """Update scrollregion and enable/disable the scrollbar."""
+        logger.debug("_update_scroll_state: updating scrollregion")
         grid_canvas.configure(scrollregion=grid_canvas.bbox("all"))
         bbox = grid_canvas.bbox("all") or (0, 0, 0, 0)
         content_h = bbox[3] - bbox[1]
         fits = content_h <= max(1, grid_canvas.winfo_height())
+        logger.debug("_update_scroll_state: content_h=%s canvas_h=%s fits=%s", content_h, grid_canvas.winfo_height(), fits)
         try:
             vscroll.state(["disabled"] if fits else ["!disabled"])
         except Exception:
@@ -603,11 +750,14 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     def _apply_wraplengths():
         """Apply wrap lengths based on available column width."""
         total = grid_canvas.winfo_width()
+        logger.debug("_apply_wraplengths: canvas_width=%s", total)
         if total <= 1:
+            logger.debug("_apply_wraplengths: canvas not yet sized, skipping")
             return
         fixed = FIELD_COL_PX + RESET_COL_PX + 24
         remaining = max(0, total - fixed)
         per_col = max(100, remaining // 3)
+        logger.debug("_apply_wraplengths: per_col=%s", per_col)
         for k, rr in rows_by_key.items():
             try:
                 rr["res_lbl"].configure(wraplength=per_col - 12)
@@ -616,6 +766,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
 
     def _sync_layout(_e=None):
         """Sync canvas layout and wrapping when sizes change."""
+        logger.debug("_sync_layout: canvas_width=%s", grid_canvas.winfo_width())
         grid_canvas.itemconfigure(inner_window, width=grid_canvas.winfo_width())
         _update_scroll_state()
         _apply_wraplengths()
@@ -628,7 +779,14 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     _SC_UNITS = 1  # slow & steady
 
     def _pointer_over_canvas():
-        """Return True if the pointer is over the scrollable grid."""
+        """Return True if the pointer is currently over the scrollable grid canvas.
+
+        Used to gate wheel-scroll events so the grid only scrolls when the
+        cursor is actually hovering over it.
+
+        Returns:
+            True if the pointer is over grid_canvas or grid_inner, False otherwise.
+        """
         try:
             x, y = win.winfo_pointerx(), win.winfo_pointery()
             w = win.winfo_containing(x, y)
@@ -641,22 +799,36 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
         return False
 
     def _on_mousewheel(event):
-        """Handle mousewheel scrolling with pointer gating."""
+        """Handle mousewheel scrolling with pointer gating.
+
+        Scrolls the grid canvas only when the pointer is over it and the
+        content is taller than the visible area.  Handles macOS delta events,
+        Linux Button-4/5 events, and Windows delta events uniformly.
+
+        Args:
+            event: Tk event with .delta and/or .num attributes.
+        """
         bbox = grid_canvas.bbox("all") or (0, 0, 0, 0)
         content_h = bbox[3] - bbox[1]
-        if not _pointer_over_canvas() or content_h <= max(1, grid_canvas.winfo_height()):
+        over_canvas = _pointer_over_canvas()
+        logger.debug("_on_mousewheel: over_canvas=%s content_h=%s", over_canvas, content_h)
+        if not over_canvas or content_h <= max(1, grid_canvas.winfo_height()):
             return
         if _IS_MAC:
             step = -_SC_UNITS if event.delta > 0 else _SC_UNITS
+            logger.debug("_on_mousewheel: mac scroll step=%s", step)
             grid_canvas.yview_scroll(step, "units")
         else:
             if getattr(event, "num", None) == 4:
+                logger.debug("_on_mousewheel: linux scroll up")
                 grid_canvas.yview_scroll(-_SC_UNITS, "units")
             elif getattr(event, "num", None) == 5:
+                logger.debug("_on_mousewheel: linux scroll down")
                 grid_canvas.yview_scroll(_SC_UNITS, "units")
             else:
                 steps = int(-event.delta / 120) if event.delta else 0
                 if steps:
+                    logger.debug("_on_mousewheel: windows scroll steps=%s", steps)
                     grid_canvas.yview_scroll(steps * _SC_UNITS, "units")
 
     win.bind_all("<MouseWheel>", _on_mousewheel)
@@ -665,26 +837,34 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
 
     # ===== Body rows =====
     for i, key in enumerate(FIELD_ORDER):
+        # Current value for this field; None becomes "" for safe comparisons.
         cur = "" if current_map.get(key) is None else str(current_map.get(key, ""))
 
+        # Alternate row background for readability.
         row_bg = ROW_BG_1 if (i % 2 == 0) else ROW_BG_2
+        # Background frame spans all 5 columns so the stripe fills the full row.
         _bg = tk.Frame(grid_inner, bg=row_bg, height=1)
         _bg.grid(row=i + 1, column=0, columnspan=5, sticky="nsew")
 
+        # Col 0: field name label.
         tk.Label(grid_inner, text=key, bg=row_bg).grid(row=i + 1, column=0, sticky="w", padx=6, pady=3)
 
+        # Col 2: Reset checkbox — toggling triggers a full recompute.
         reset_var = tk.BooleanVar(value=False)
         reset_var.trace_add("write", lambda *_: recompute_all_results())
         tk.Checkbutton(grid_inner, variable=reset_var, bg=row_bg, activebackground=row_bg,
                        highlightthickness=0, bd=0).grid(row=i + 1, column=2, sticky="w", padx=6, pady=3)
 
+        # Col 3: Current value (read-only label; updated when asset changes).
         curr_lbl = tk.Label(grid_inner, text=cur, anchor="w", justify="left", bg=row_bg)
         curr_lbl.grid(row=i + 1, column=3, sticky="nsew", padx=6, pady=3)
 
+        # Col 4: Result label — shows the template-expanded final value.
         result_var = tk.StringVar(value=cur)
         res_lbl = tk.Label(grid_inner, textvariable=result_var, anchor="w", justify="left", bg=row_bg)
         res_lbl.grid(row=i + 1, column=4, sticky="nsew", padx=6, pady=3)
 
+        # Capture the default foreground color so we can restore it after highlighting.
         try:
             fg_default = res_lbl.cget("foreground")
         except Exception:
@@ -714,10 +894,13 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             def on_change(ac_ref=ac, cur_val=cur, rr=row_record):
                 """Update result value and recompute on status change."""
                 txt = ac_ref.get().strip()
+                logger.debug("on_change(status): txt=%s cur_val=%s", txt, cur_val)
                 rr["ac_selected"] = ac_ref.get_selected()
                 if not txt or txt in {"{empty}", "{blank}"}:
+                    logger.debug("on_change(status): empty/blank, reverting to current")
                     rr["result_var"].set(cur_val)
                 else:
+                    logger.debug("on_change(status): setting result to txt=%s", txt)
                     rr["result_var"].set(txt)
                 recompute_all_results()
 
@@ -738,16 +921,20 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                 """Update result value and runtime username on assignee change."""
                 txt = ac_ref.get().strip()
                 sel = ac_ref.get_selected()
+                logger.debug("on_change(assigned_to): txt=%s sel_type=%s", txt, (sel or {}).get("type"))
                 rr["ac_selected"] = sel
 
                 if txt == "{empty}":
+                    logger.debug("on_change(assigned_to): explicit unassign, clearing username")
                     runtime_username.set("")
                     rr["result_var"].set("")
                 elif txt == "{blank}" or not txt:
+                    logger.debug("on_change(assigned_to): blank/empty, reverting to current")
                     runtime_username.set(current_map.get("_assigned_username", ""))
                     rr["result_var"].set(cur_val)
                 else:
                     live_user = _username_from_option(sel)
+                    logger.debug("on_change(assigned_to): setting user txt=%s live_user=%s", txt, live_user)
                     runtime_username.set(live_user or current_map.get("_assigned_username", ""))
                     rr["result_var"].set(txt if txt else cur_val)
 
@@ -770,10 +957,13 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                 """Update result value on model change."""
                 txt = ac_ref.get().strip()
                 sel = ac_ref.get_selected()
+                logger.debug("on_change(model): txt=%s cur_val=%s", txt, cur_val)
                 rr["ac_selected"] = sel
                 if not txt or txt in {"{empty}", "{blank}"}:
+                    logger.debug("on_change(model): non-clearable field, reverting to current")
                     rr["result_var"].set(cur_val)  # non-clearable
                 else:
+                    logger.debug("on_change(model): setting result to txt=%s", txt)
                     rr["result_var"].set(txt)
                 recompute_all_results()
 
@@ -788,10 +978,12 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
 
             def handler(_e=None, t=text):
                 """Resize the text widget and recompute results."""
+                logger.debug("handler(text): key event on text widget")
                 try:
                     dl = int(t.count("1.0", "end-1c", "displaylines")[0])
                 except Exception:
                     dl = 1
+                logger.debug("handler(text): displaylines=%s", dl)
                 t.configure(height=max(1, min(2, dl)))
                 recompute_all_results()
 
@@ -808,10 +1000,13 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     # -------------------------------------------------------------------------
     def _load_templates(path=TEMPLATES_PATH):
         """Load default profiles from JSON and normalize field keys."""
+        logger.debug("_load_templates: loading from path=%s", path)
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
+            logger.debug("_load_templates: file loaded, type=%s", type(data).__name__)
             if not isinstance(data, list):
+                logger.debug("_load_templates: data is not a list, returning empty")
                 return []
             rules = []
             for idx, r in enumerate(data):
@@ -832,8 +1027,10 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                     }
                 )
             rules.sort(key=lambda rr: (-rr["priority"], rr["_idx"]))
+            logger.info("_load_templates: loaded %s template rules from %s", len(rules), path)
             return rules
         except Exception:
+            logger.exception("_load_templates: failed to load templates from %s", path)
             return []
 
     template_rules = _load_templates()
@@ -842,96 +1039,155 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     # Evaluation helpers
     # -------------------------------------------------------------------------
     def evaluate_template_string(template: str, current_key: str, visited: set):
-        """Expand a template string into a computed value."""
+        """Expand a template string into a computed value.
+
+        Args:
+            template: Raw template string possibly containing tokens like {today}.
+            current_key: The field key being evaluated (used to avoid self-reference).
+            visited: Set of field keys already being evaluated (cycle guard).
+
+        Returns:
+            Tuple of (expanded_string, is_blank) where is_blank is True for {blank}.
+        """
+        logger.debug("evaluate_template_string: template=%s current_key=%s", template, current_key)
         if "{blank}" in template:
+            logger.debug("evaluate_template_string: template contains {blank}, returning blank sentinel")
             return "", True
         if "{empty}" in template:
+            logger.debug("evaluate_template_string: template contains {empty}, returning empty string")
             return "", False
 
         def repl(match):
             """Replace a single token within the template string."""
             token = match.group(1).strip()
+            logger.debug("repl: token=%s", token)
 
             if token == "today":
-                return datetime.now().strftime("%Y-%m-%d")
+                val = datetime.now().strftime("%Y-%m-%d")
+                logger.debug("repl: today=%s", val)
+                return val
             if token == "tomorrow":
-                return (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+                val = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+                logger.debug("repl: tomorrow=%s", val)
+                return val
             if token == "username":
-                return runtime_username.get() or current_map.get("_assigned_username", "")
+                val = runtime_username.get() or current_map.get("_assigned_username", "")
+                logger.debug("repl: username=%s", val)
+                return val
             if token.endswith("_current"):
                 base = token[:-8]
                 if base in FIELD_ORDER:
-                    return current_map.get(base, "")
+                    val = current_map.get(base, "")
+                    logger.debug("repl: %s_current=%s", base, val)
+                    return val
                 return ""
             if token in FIELD_ORDER:
                 if token in visited:
+                    logger.debug("repl: circular ref to token=%s, using current value", token)
                     return current_map.get(token, "")
+                logger.debug("repl: recursing to evaluate field token=%s", token)
                 return evaluate_row(token, visited=set(visited))
             # dotted path into original assetData
+            logger.debug("repl: trying dotted path for token=%s", token)
             parts = token.split(".")
             cur = assetData
             for p in parts:
                 if isinstance(cur, dict) and p in cur:
                     cur = cur[p]
                 else:
+                    logger.debug("repl: dotted path not found for token=%s, returning raw", token)
                     return match.group(0)
             try:
                 return str(cur if cur is not None else "")
             except Exception:
+                logger.debug("repl: could not stringify dotted path result for token=%s", token)
                 return match.group(0)
 
         expanded = TOKEN_RE.sub(repl, template)
+        logger.debug("evaluate_template_string: expanded=%s", expanded)
         return expanded, False
 
     def evaluate_row(key: str, visited=None):
-        """Compute the effective value for a field row."""
+        """Compute the effective value for a field row.
+
+        Args:
+            key: Field key to evaluate.
+            visited: Set of field keys already being evaluated (cycle guard).
+
+        Returns:
+            The evaluated string value for the field.
+        """
+        logger.debug("evaluate_row: key=%s visited=%s", key, visited)
         if visited is None:
             visited = set()
         if key in visited:
+            logger.debug("evaluate_row: circular reference for key=%s, returning current", key)
             return current_map.get(key, "")
         visited.add(key)
 
         row = rows_by_key.get(key)
         if row is None:
+            logger.debug("evaluate_row: no row found for key=%s", key)
             return current_map.get(key, "")
 
         if key in {"status", "assigned_to", "model"}:
+            logger.debug("evaluate_row: autocomplete field key=%s", key)
             if row.get("text_widget_type") == "ac":
                 val = row["ac"].get().strip()
+                logger.debug("evaluate_row: ac val=%s", val)
 
                 if val == "{blank}":
+                    logger.debug("evaluate_row: blank sentinel, returning current")
                     return current_map.get(key, "")
 
                 if key == "assigned_to" and val == "{empty}":
+                    logger.debug("evaluate_row: assigned_to explicit clear")
                     return ""  # explicit clear
 
                 if key in {"model", "status"} and (not val or val == "{empty}"):
+                    logger.debug("evaluate_row: non-clearable field empty, returning current")
                     return current_map.get(key, "")
 
                 return val if val else current_map.get(key, "")
             return current_map.get(key, "")
 
         if row.get("text_widget_type") == "text":
+            logger.debug("evaluate_row: text field key=%s", key)
             if is_effective_empty(row["text"]):
+                logger.debug("evaluate_row: widget is empty, returning current")
                 return current_map.get(key, "")
             raw = _widget_get_text(row["text"])
+            logger.debug("evaluate_row: raw text=%s", raw)
             text, is_blank = evaluate_template_string(raw, key, visited)
             if is_blank:
+                logger.debug("evaluate_row: template is blank, returning current")
                 return current_map.get(key, "")
             return text
 
+        logger.debug("evaluate_row: fallback to current for key=%s", key)
         return current_map.get(key, "")
 
     def _asset_path_value(path: str):
-        """Resolve a dotted path against the raw asset JSON."""
+        """Resolve a dotted path against the raw asset JSON.
+
+        Args:
+            path: Dot-separated path string (e.g., 'status_label.name').
+
+        Returns:
+            String value at the path, or empty string if missing.
+        """
+        logger.debug("_asset_path_value: path=%s", path)
         cur = assetData
         for part in path.split("."):
             if isinstance(cur, dict):
                 cur = cur.get(part)
             else:
+                logger.debug("_asset_path_value: path resolution failed at part=%s", part)
                 return ""
         if isinstance(cur, dict) or cur is None:
+            logger.debug("_asset_path_value: path=%s resolved to dict or None", path)
             return ""
+        logger.debug("_asset_path_value: path=%s value=%s", path, cur)
         return str(cur)
 
     # -------------------------------------------------------------------------
@@ -942,49 +1198,68 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     _applying_maintained_defaults = False
 
     def recompute_defaults(result_snapshot: dict):
-        """Compute active defaults based on template rules."""
+        """Compute active defaults based on template rules.
+
+        Args:
+            result_snapshot: Dict of current evaluated field values.
+        """
+        logger.debug("recompute_defaults: evaluating %s rules against snapshot", len(template_rules))
         active_defaults_templ.clear()
         active_defaults_eval.clear()
 
         for rule in template_rules:
             ok = True
+            logger.debug("recompute_defaults: checking rule=%s", rule.get("name"))
             for lhs, expected in (rule["conditions"] or {}).items():
                 lhs_val = (result_snapshot.get(lhs, "") if lhs in FIELD_ORDER else _asset_path_value(lhs))
                 exp_raw = str(expected).strip()
+                logger.debug("recompute_defaults: condition lhs=%s lhs_val=%s exp_raw=%s", lhs, lhs_val, exp_raw)
 
                 if exp_raw == "{has_value}":
                     if not str(lhs_val).strip():
+                        logger.debug("recompute_defaults: {has_value} condition failed for lhs=%s", lhs)
                         ok = False
                         break
                     continue
 
                 rhs, _ = evaluate_template_string(exp_raw, lhs, visited=set())
                 if str(lhs_val) != str(rhs):
+                    logger.debug("recompute_defaults: condition mismatch lhs_val=%s rhs=%s", lhs_val, rhs)
                     ok = False
                     break
 
             if not ok:
+                logger.debug("recompute_defaults: rule=%s did not match, skipping", rule.get("name"))
                 continue
 
+            logger.debug("recompute_defaults: rule=%s matched, applying defaults", rule.get("name"))
             for f, templ in (rule["defaults"] or {}).items():
                 if f not in FIELD_ORDER or f in active_defaults_templ:
                     continue
 
                 raw_t = str(templ).strip()
                 if raw_t == "{has_value}":
+                    logger.debug("recompute_defaults: field=%s has_value sentinel", f)
                     active_defaults_templ[f] = raw_t
                     active_defaults_eval[f] = HAS_VALUE_SENTINEL
                     continue
 
                 eval_t, is_blank = evaluate_template_string(raw_t, f, visited=set())
                 if is_blank:
+                    logger.debug("recompute_defaults: field=%s template is blank, skipping", f)
                     continue
 
+                logger.debug("recompute_defaults: field=%s default=%s", f, eval_t)
                 active_defaults_templ[f] = raw_t
                 active_defaults_eval[f] = eval_t
 
     def _apply_maintained_defaults() -> bool:
-        """Apply maintained defaults to rows and return True if changed."""
+        """Apply maintained defaults to rows and return True if changed.
+
+        Returns:
+            True if any widget value was changed.
+        """
+        logger.debug("_apply_maintained_defaults: checking rows for maintained defaults")
         changed = False
         for key, r in rows_by_key.items():
             if not r["reset_var"].get():
@@ -992,6 +1267,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
 
             raw_default = (active_defaults_templ.get(key, "") or "").strip()
             eval_default = active_defaults_eval.get(key, None)
+            logger.debug("_apply_maintained_defaults: key=%s raw_default=%s eval_default=%s", key, raw_default, eval_default)
 
             if r.get("text_widget_type") == "ac":
                 ac = r["ac"]
@@ -1003,6 +1279,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                     continue
 
                 cur_text = ac.get().strip()
+                logger.debug("_apply_maintained_defaults: ac key=%s cur_text=%s desired=%s", key, cur_text, desired)
                 if cur_text != desired:
                     if hasattr(ac, "set_selected_by_label") and desired != "{empty}":
                         ac.set_selected_by_label(desired)
@@ -1010,36 +1287,53 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                         ac.set(desired)
                     r["ac_selected"] = ac.get_selected()
                     r["result_var"].set("" if (key == "assigned_to" and desired == "{empty}") else desired)
+                    logger.debug("_apply_maintained_defaults: updated ac key=%s to desired=%s", key, desired)
                     changed = True
 
             else:
                 if not raw_default or raw_default == "{has_value}":
                     continue
                 cur_text = _widget_get_text(r["text"])
+                logger.debug("_apply_maintained_defaults: text key=%s cur_text=%s raw_default=%s", key, cur_text, raw_default)
                 if cur_text != raw_default:
                     _widget_set_text(r["text"], raw_default)
+                    logger.debug("_apply_maintained_defaults: updated text key=%s to default=%s", key, raw_default)
                     try:
                         r["text"].config(bg="white")
                     except Exception:
                         pass
                     changed = True
 
+        logger.debug("_apply_maintained_defaults: changed=%s", changed)
         return changed
 
     def recompute_all_results():
-        """Re-evaluate all rows, defaults, and mismatch highlighting."""
+        """Re-evaluate all rows, refresh active defaults, and apply mismatch highlighting.
+
+        This is the central "refresh" call — it should be invoked any time a
+        widget value changes, a reset happens, or the asset switches.  It:
+          1. Evaluates every field's template to produce a result snapshot.
+          2. Recomputes which default-profile rules apply given the snapshot.
+          3. Optionally pushes those defaults into checked rows (maintain mode).
+          4. Highlights Result labels and Updates widgets red where values differ
+             from their active defaults.
+        """
+        logger.debug("recompute_all_results: starting full recompute")
         nonlocal _applying_maintained_defaults
 
         snapshot = {}
         for k in FIELD_ORDER:
             snapshot[k] = evaluate_row(k, visited=set())
             rows_by_key[k]["result_var"].set(snapshot[k])
+        logger.debug("recompute_all_results: snapshot computed, running defaults")
 
         recompute_defaults(snapshot)
 
         if maintain_defaults_var.get() and not _applying_maintained_defaults:
+            logger.debug("recompute_all_results: maintain_defaults is on, applying maintained defaults")
             if _apply_maintained_defaults():
                 _applying_maintained_defaults = True
+                logger.debug("recompute_all_results: defaults changed, re-evaluating snapshot")
                 try:
                     snapshot = {}
                     for k in FIELD_ORDER:
@@ -1049,6 +1343,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                 finally:
                     _applying_maintained_defaults = False
 
+        mismatch_count = 0
         for k in FIELD_ORDER:
             row = rows_by_key[k]
             res_lbl = row["res_lbl"]
@@ -1061,6 +1356,10 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                     mismatch = (str(snapshot.get(k, "")).strip() == "")
                 else:
                     mismatch = (str(snapshot.get(k, "")) != str(dval))
+
+            if mismatch:
+                mismatch_count += 1
+                logger.debug("recompute_all_results: mismatch on field=%s snapshot=%s expected=%s", k, snapshot.get(k), dval)
 
             res_lbl.configure(foreground="#b22222" if mismatch else default_fg)
 
@@ -1080,6 +1379,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                         )
                     except Exception:
                         pass
+        logger.debug("recompute_all_results: complete, mismatch_count=%s", mismatch_count)
 
     maintain_defaults_var.trace_add("write", lambda *_: recompute_all_results())
 
@@ -1088,9 +1388,11 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     # -------------------------------------------------------------------------
     def reset_selected():
         """Reset checked rows to defaults and recompute results."""
+        logger.debug("reset_selected: resetting checked rows to defaults")
         results_snapshot = {k: evaluate_row(k, visited=set()) for k in FIELD_ORDER}
         recompute_defaults(results_snapshot)
 
+        reset_count = 0
         for r in rows_by_key.values():
             if not r["reset_var"].get():
                 continue
@@ -1098,10 +1400,12 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             key = r["key"]
             raw_default = (active_defaults_templ.get(key, None) or "").strip()
             eval_default = active_defaults_eval.get(key, None)
+            logger.debug("reset_selected: resetting key=%s raw_default=%s eval_default=%s", key, raw_default, eval_default)
 
             if r.get("text_widget_type") == "ac":
                 ac = r["ac"]
                 if eval_default and eval_default != HAS_VALUE_SENTINEL:
+                    logger.debug("reset_selected: setting ac key=%s to eval_default=%s", key, eval_default)
                     if hasattr(ac, "set_selected_by_label"):
                         ac.set_selected_by_label(eval_default)
                     else:
@@ -1109,18 +1413,22 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                     r["ac_selected"] = ac.get_selected()
                     r["result_var"].set(eval_default)
                 elif raw_default == "{empty}" and key == "assigned_to":
+                    logger.debug("reset_selected: setting assigned_to to {empty}")
                     ac.set("{empty}")
                     r["ac_selected"] = None
                     r["result_var"].set("")
                 else:
+                    logger.debug("reset_selected: clearing ac for key=%s", key)
                     ac.set("")
                     r["ac_selected"] = None
                     r["result_var"].set(r["current"])
             else:
                 t = r["text"]
                 if raw_default and raw_default != "{has_value}":
+                    logger.debug("reset_selected: setting text key=%s to raw_default=%s", key, raw_default)
                     _widget_set_text(t, raw_default)
                 else:
+                    logger.debug("reset_selected: clearing text key=%s", key)
                     _widget_set_text(t, "")
                     if key in PLACEHOLDERS:
                         attach_placeholder(t, PLACEHOLDERS[key])
@@ -1130,7 +1438,9 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                     pass
 
             r["reset_var"].set(False)
+            reset_count += 1
 
+        logger.debug("reset_selected: reset %s rows, recomputing", reset_count)
         recompute_all_results()
 
     reset_selected_btn.configure(command=reset_selected)
@@ -1139,7 +1449,15 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     # Snipe-IT helpers (ID mapping + PATCH/CHECKIN with retry)
     # -------------------------------------------------------------------------
     def _label_id_map(options):
-        """Build a label-to-ID map from autocomplete options."""
+        """Build a label-to-ID map from autocomplete options.
+
+        Args:
+            options: List of autocomplete option dicts.
+
+        Returns:
+            Dict mapping label strings to IDs.
+        """
+        logger.debug("_label_id_map: building map from %s options", len(options) if options else 0)
         m = {}
         for opt in (options or []):
             label = opt.get("label") or opt.get("name") or opt.get("text") or str(opt.get("value") or opt.get("id") or "")
@@ -1147,28 +1465,43 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             _id = opt.get("id") or opt.get("value") or (opt.get("meta") or {}).get("id")
             if label and _id is not None:
                 m[label] = _id
+        logger.debug("_label_id_map: map has %s entries", len(m))
         return m
 
     def _id_from_sel(sel):
-        """Extract a selection ID from an autocomplete selection dict."""
+        """Extract a selection ID from an autocomplete selection dict.
+
+        Args:
+            sel: Autocomplete selection dict.
+
+        Returns:
+            The ID value, or None if not found.
+        """
+        logger.debug("_id_from_sel: sel_type=%s", type(sel).__name__)
         if not isinstance(sel, dict):
+            logger.debug("_id_from_sel: not a dict, returning None")
             return None
         for k in ("id", "value", "user_id", "model_id", "status_id"):
             if sel.get(k) is not None:
+                logger.debug("_id_from_sel: found id via key=%s value=%s", k, sel[k])
                 return sel[k]
         meta = sel.get("meta") or {}
         for k in ("id", "user_id", "model_id", "status_id"):
             if meta.get(k) is not None:
+                logger.debug("_id_from_sel: found id in meta via key=%s value=%s", k, meta[k])
                 return meta[k]
+        logger.debug("_id_from_sel: no id found, returning None")
         return None
 
+    # Pre-build reverse-lookup maps so we can resolve label strings to IDs
+    # without scanning the full options lists on every submission.
     status_label_to_id = _label_id_map(status_options)
     model_label_to_id = _label_id_map(model_options)
     assignee_label_to_id = _label_id_map(assignee_options)
 
     def _build_patch_payload(snapshot: dict):
-        """
-        Compare snapshot vs current, return (payload, any_changes, need_checkin).
+        """Compare snapshot vs current, return (payload, any_changes, need_checkin).
+
         Maps UI keys -> Snipe-IT API keys and coerces types.
 
         Clearing rules (all via {empty}):
@@ -1176,7 +1509,15 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
           - Date fields (purchase_date, expected_checkin):  "" (empty string)
           - Numeric (purchase_cost):                       "" (empty string)
           - Unassign user:                                 handled via CHECKIN (need_checkin=True)
+
+        Args:
+            snapshot: Dict of current evaluated field values.
+
+        Returns:
+            Tuple of (payload, any_changes, need_checkin, must_checkin_first,
+            checkout_user_id, checkout_location_id).
         """
+        logger.debug("_build_patch_payload: building patch payload from snapshot")
         NULL_STR = "null"
         TEXT_CLEAR_EMPTY = {"name", "serial", "order_number", "notes"}
         DATE_CLEAR_NULLSTR = {"purchase_date", "expected_checkin"}
@@ -1186,41 +1527,49 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
         need_checkin = False
         checkout_user_id = None
         checkout_location_id = None
-        must_checkin_first = False  # <<<<< NEW
+        must_checkin_first = False
 
         current_assignee_type = ((assetData.get("assigned_to") or {}).get("type") or "").strip().lower()
+        logger.debug("_build_patch_payload: current_assignee_type=%s", current_assignee_type)
 
         for key in FIELD_ORDER:
             new = snapshot.get(key, "")
             old = rows_by_key[key]["current"]
             if str(new) == str(old):
                 continue
+            logger.debug("_build_patch_payload: field=%s changed old=%s new=%s", key, old, new)
             changed = True
 
             if key == "assigned_to":
                 txt = (new or "").strip()
                 sel = rows_by_key[key].get("ac_selected")
                 sel_type = ((sel or {}).get("type") or "").strip().lower()
+                logger.debug("_build_patch_payload: assigned_to txt=%s sel_type=%s", txt, sel_type)
 
                 if txt in ("", "{empty}"):
                     # explicit clear
+                    logger.info("_build_patch_payload: assigned_to cleared, marking need_checkin")
                     need_checkin = True
 
                 elif sel_type == "user":
                     checkout_user_id = _id_from_sel(sel)
+                    logger.info("_build_patch_payload: checkout to user_id=%s", checkout_user_id)
                     if checkout_user_id is None:
                         raise ValueError("Pick a *User* from the list (or type {empty} to clear).")
                     # if changing from location->user (or user->location below), require checkin first
                     if current_assignee_type and current_assignee_type != "user":
+                        logger.debug("_build_patch_payload: assignee type change, must_checkin_first=True")
                         must_checkin_first = True
 
                 elif sel_type == "location":
                     checkout_location_id = _id_from_sel(sel)
+                    logger.info("_build_patch_payload: checkout to location_id=%s", checkout_location_id)
                     if checkout_location_id is None:
                         raise ValueError("Pick a *Location* from the list.")
                     # make default/home location match too (optional)
                     payload["location_id"] = checkout_location_id
                     if current_assignee_type and current_assignee_type != "location":
+                        logger.debug("_build_patch_payload: assignee type change, must_checkin_first=True")
                         must_checkin_first = True
 
                 else:
@@ -1234,6 +1583,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                 if sel_id is None:
                     label_map = status_label_to_id if key == "status" else model_label_to_id
                     sel_id = label_map.get(txt)
+                logger.debug("_build_patch_payload: key=%s txt=%s sel_id=%s", key, txt, sel_id)
                 if sel_id is None:
                     raise ValueError(f"Pick a {key.replace('_', ' ').title()} from the list.")
                 payload_key = "status_id" if key == "status" else "model_id"
@@ -1242,21 +1592,36 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
 
             else:
                 # Any future fields default to pass-through
+                logger.debug("_build_patch_payload: passthrough field=%s value=%s", key, new)
                 payload[key] = new
 
+        logger.debug("_build_patch_payload: changed=%s need_checkin=%s must_checkin_first=%s payload_keys=%s",
+                     changed, need_checkin, must_checkin_first, list(payload.keys()))
         return payload, changed, need_checkin, must_checkin_first, checkout_user_id, checkout_location_id
 
     def _api_patch_with_retry(asset_id: int, payload: dict) -> bool:
-        """PATCH the asset and prompt the user to retry on failures."""
+        """PATCH the asset and prompt the user to retry on failures.
+
+        Args:
+            asset_id: Numeric Snipe-IT asset ID.
+            payload: Dict of field updates to send.
+
+        Returns:
+            True if the PATCH succeeded, False if cancelled.
+        """
+        logger.debug("_api_patch_with_retry: asset_id=%s payload_keys=%s", asset_id, list(payload.keys()))
         if not SNIPE_BASE or not get_api_key():
+            logger.error("_api_patch_with_retry: missing SNIPE_BASE or API key")
             messagebox.showerror("Snipe-IT", "Missing API_URL_Base or API key in utilities.Key.")
             return False
 
         url = f"{SNIPE_BASE}/hardware/{asset_id}"
         headers = get_api_headers()
+        logger.info("_api_patch_with_retry: PATCH url=%s", url)
 
         def _cursor_busy(on=True):
             """Toggle a busy cursor while API calls are in flight."""
+            logger.debug("_cursor_busy: on=%s", on)
             try:
                 win.config(cursor="watch" if on else "")
                 win.update_idletasks()
@@ -1266,9 +1631,12 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
         while True:
             try:
                 _cursor_busy(True)
+                logger.debug("_api_patch_with_retry: sending PATCH request")
                 r = requests.patch(url, json=payload, headers=headers, timeout=25)
+                logger.debug("_api_patch_with_retry: PATCH response status=%s", r.status_code)
             except requests.RequestException as e:
                 _cursor_busy(False)
+                logger.error("_api_patch_with_retry: network error=%s", e)
                 if not messagebox.askretrycancel("Network Error", f"{e}\n\nRetry?"):
                     return False
                 continue
@@ -1276,6 +1644,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                 _cursor_busy(False)
 
             if 200 <= r.status_code < 300:
+                logger.debug("_api_patch_with_retry: HTTP success, checking response body")
                 try:
                     data = r.json()
                     if str(data.get("status")).lower() == "error":
@@ -1286,23 +1655,37 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                             msg = "; ".join(str(v) for v in msgs.values())
                         else:
                             msg = str(msgs or data)
+                        logger.error("_api_patch_with_retry: Snipe-IT reported error: %s", msg)
                         if not messagebox.askretrycancel("Update failed", f"Snipe-IT error:\n{msg}\n\nRetry?"):
                             return False
                         continue
                 except Exception:
                     pass
+                logger.info("_api_patch_with_retry: PATCH succeeded for asset_id=%s", asset_id)
                 return True
 
             try:
                 detail = r.json()
             except Exception:
                 detail = r.text
+            logger.error("_api_patch_with_retry: HTTP error status=%s detail=%s", r.status_code, detail)
             if not messagebox.askretrycancel("HTTP Error", f"PATCH {r.status_code}\n{detail}\n\nRetry?"):
                 return False
 
     def _api_checkin_with_retry(asset_id: int, note: str = "Consisterizer unassign", location_id: int | None = None) -> bool:
-        """POST /hardware/{id}/checkin to unassign the asset."""
+        """POST /hardware/{id}/checkin to unassign the asset.
+
+        Args:
+            asset_id: Numeric Snipe-IT asset ID.
+            note: Note to include with the checkin.
+            location_id: Optional location ID for the checkin.
+
+        Returns:
+            True if checkin succeeded, False if cancelled.
+        """
+        logger.debug("_api_checkin_with_retry: asset_id=%s note=%s location_id=%s", asset_id, note, location_id)
         if not SNIPE_BASE or not get_api_key():
+            logger.error("_api_checkin_with_retry: missing SNIPE_BASE or API key")
             messagebox.showerror("Snipe-IT", "Missing API_URL_Base or API key in utilities.Key.")
             return False
 
@@ -1311,9 +1694,11 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
         body = {"note": note}
         if location_id is not None:
             body["location_id"] = location_id
+        logger.info("_api_checkin_with_retry: POST checkin url=%s", url)
 
         def _cursor_busy(on=True):
             """Toggle a busy cursor while API calls are in flight."""
+            logger.debug("_cursor_busy: on=%s", on)
             try:
                 win.config(cursor="watch" if on else "")
                 win.update_idletasks()
@@ -1323,9 +1708,12 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
         while True:
             try:
                 _cursor_busy(True)
+                logger.debug("_api_checkin_with_retry: sending POST checkin request")
                 r = requests.post(url, json=body, headers=headers, timeout=25)
+                logger.debug("_api_checkin_with_retry: checkin response status=%s", r.status_code)
             except requests.RequestException as e:
                 _cursor_busy(False)
+                logger.error("_api_checkin_with_retry: network error=%s", e)
                 if not messagebox.askretrycancel("Network Error", f"{e}\n\nRetry?"):
                     return False
                 continue
@@ -1333,21 +1721,25 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                 _cursor_busy(False)
 
             if 200 <= r.status_code < 300:
+                logger.debug("_api_checkin_with_retry: HTTP success, checking response body")
                 try:
                     data = r.json()
                     if str(data.get("status")).lower() == "error":
                         msg = "; ".join(data.get("messages") or []) or str(data)
+                        logger.error("_api_checkin_with_retry: Snipe-IT error: %s", msg)
                         if not messagebox.askretrycancel("Check-in failed", f"Snipe-IT error:\n{msg}\n\nRetry?"):
                             return False
                         continue
                 except Exception:
                     pass
+                logger.info("_api_checkin_with_retry: checkin succeeded for asset_id=%s", asset_id)
                 return True
 
             try:
                 detail = r.json()
             except Exception:
                 detail = r.text
+            logger.error("_api_checkin_with_retry: HTTP error status=%s detail=%s", r.status_code, detail)
             if not messagebox.askretrycancel("HTTP Error", f"CHECKIN {r.status_code}\n{detail}\n\nRetry?"):
                 return False
 
@@ -1355,8 +1747,21 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                                  location_id: int | None = None,
                                  note: str = "Consisterizer assign/checkout",
                                  expected_checkin: str | None = None) -> bool:
-        """POST a checkout and prompt for retries on failure."""
+        """POST a checkout and prompt for retries on failure.
+
+        Args:
+            asset_id: Numeric Snipe-IT asset ID.
+            user_id: User ID to check out to (exclusive with location_id).
+            location_id: Location ID to check out to (exclusive with user_id).
+            note: Note to include with the checkout.
+            expected_checkin: Optional expected checkin date string YYYY-MM-DD.
+
+        Returns:
+            True if checkout succeeded, False if cancelled.
+        """
+        logger.debug("_api_checkout_with_retry: asset_id=%s user_id=%s location_id=%s", asset_id, user_id, location_id)
         if not SNIPE_BASE or not get_api_key():
+            logger.error("_api_checkout_with_retry: missing SNIPE_BASE or API key")
             messagebox.showerror("Snipe-IT", "Missing API_URL_Base or API key in utilities.Key.")
             return False
 
@@ -1365,18 +1770,25 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
 
         body = {"note": note}
         if user_id is not None:
+            logger.debug("_api_checkout_with_retry: checkout to user_id=%s", user_id)
             body.update({"checkout_to_type": "user", "assigned_user": user_id})
         elif location_id is not None:
+            logger.debug("_api_checkout_with_retry: checkout to location_id=%s", location_id)
             body.update({"checkout_to_type": "location", "assigned_location": location_id})
         else:
+            logger.error("_api_checkout_with_retry: neither user_id nor location_id provided")
             messagebox.showerror("Snipe-IT", "Checkout requires user_id or location_id.")
             return False
 
         if expected_checkin:
             body["expected_checkin"] = expected_checkin  # "YYYY-MM-DD"
+            logger.debug("_api_checkout_with_retry: expected_checkin=%s", expected_checkin)
+
+        logger.info("_api_checkout_with_retry: POST checkout url=%s", url)
 
         def _cursor_busy(on=True):
             """Toggle a busy cursor while API calls are in flight."""
+            logger.debug("_cursor_busy: on=%s", on)
             try:
                 win.config(cursor="watch" if on else "")
                 win.update_idletasks()
@@ -1386,9 +1798,12 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
         while True:
             try:
                 _cursor_busy(True)
+                logger.debug("_api_checkout_with_retry: sending POST checkout request")
                 r = requests.post(url, json=body, headers=headers, timeout=25)
+                logger.debug("_api_checkout_with_retry: checkout response status=%s", r.status_code)
             except requests.RequestException as e:
                 _cursor_busy(False)
+                logger.error("_api_checkout_with_retry: network error=%s", e)
                 if not messagebox.askretrycancel("Network Error", f"{e}\n\nRetry?"):
                     return False
                 continue
@@ -1396,21 +1811,25 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                 _cursor_busy(False)
 
             if 200 <= r.status_code < 300:
+                logger.debug("_api_checkout_with_retry: HTTP success, checking response body")
                 try:
                     data = r.json()
                     if str(data.get("status")).lower() == "error":
                         msg = "; ".join(data.get("messages") or []) or str(data)
+                        logger.error("_api_checkout_with_retry: Snipe-IT error: %s", msg)
                         if not messagebox.askretrycancel("Checkout failed", f"Snipe-IT error:\n{msg}\n\nRetry?"):
                             return False
                         continue
                 except Exception:
                     pass
+                logger.info("_api_checkout_with_retry: checkout succeeded for asset_id=%s", asset_id)
                 return True
 
             try:
                 detail = r.json()
             except Exception:
                 detail = r.text
+            logger.error("_api_checkout_with_retry: HTTP error status=%s detail=%s", r.status_code, detail)
             if not messagebox.askretrycancel("HTTP Error", f"CHECKOUT {r.status_code}\n{detail}\n\nRetry?"):
                 return False
 
@@ -1449,54 +1868,84 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
 
     # --- Alias support -------------------------------------------------------
     def _to_alias_obj(a):
-        """Accept dict or JSON string; return dict or {}."""
+        """Accept dict or JSON string; return dict or {}.
+
+        Args:
+            a: Dict, JSON string, or None.
+
+        Returns:
+            Dict representation of the alias, or empty dict.
+        """
+        logger.debug("_to_alias_obj: input type=%s", type(a).__name__)
         if not a:
             return {}
         if isinstance(a, dict):
             return a
         if isinstance(a, str):
             try:
-                return json.loads(a)
+                result = json.loads(a)
+                logger.debug("_to_alias_obj: parsed JSON string successfully")
+                return result
             except Exception:
+                logger.debug("_to_alias_obj: failed to parse JSON string")
                 return {}
         return {}
 
     def _norm_alias_key(k: str) -> str:
         """Normalize alias keys for lookup."""
+        logger.debug("_norm_alias_key: k=%s", k)
         return (k or "").strip().lower().replace(" ", "_")
 
     # reverse lookups in case alias specifies IDs
     def _label_from_id(label_to_id: dict, wanted_id):
-        """Return the label matching a given ID from a lookup map."""
+        """Return the label matching a given ID from a lookup map.
+
+        Args:
+            label_to_id: Dict mapping label strings to IDs.
+            wanted_id: The ID to search for.
+
+        Returns:
+            The matching label string, or None.
+        """
+        logger.debug("_label_from_id: searching for id=%s in map of size=%s", wanted_id, len(label_to_id) if label_to_id else 0)
         for lbl, _id in (label_to_id or {}).items():
             if _id == wanted_id:
+                logger.debug("_label_from_id: found label=%s for id=%s", lbl, wanted_id)
                 return lbl
+        logger.debug("_label_from_id: no label found for id=%s", wanted_id)
         return None
 
     def _apply_alias(a):
-        """
+        """Apply an alias payload to prefill fields and set options.
+
         Alias schema (all optional):
         {
           "title": "Check-in",
           "batch_mode": true/false,
           "maintain_defaults": true/false,
           "set": {
-            "<field>": "<value or {empty} or template>",       # text fields
-            "status": "<label or {'id': 12} or {'label': '...'}>",
-            "model":  "<label or {'id': 34}>",
-            "assigned_to": "<label | {empty} | {'id': 7}>"
+            "<field>": "<value or {empty} or template>",
+            "status": "<label or {‘id’: 12} or {‘label’: ‘...’}>",
+            "model":  "<label or {‘id’: 34}>",
+            "assigned_to": "<label | {empty} | {‘id’: 7}>"
           },
           "reset": true | false | {"field": true/false, ...} | ["field1","field2"],
           "scripts": "all" | [0, 2, "Script Name", ...]
         }
+
+        Args:
+            a: Alias dict or JSON string.
         """
+        logger.debug("_apply_alias: applying alias")
         a = _to_alias_obj(a)
         if not a:
+            logger.debug("_apply_alias: alias is empty, skipping")
             return
 
         # 2.1 Title suffix
         title_suffix = a.get("title")
         if title_suffix:
+            logger.debug("_apply_alias: setting title suffix=%s", title_suffix)
             try:
                 win.title(f"{win.title()} • {title_suffix}")
             except Exception:
@@ -1504,12 +1953,14 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
 
         # 2.2 Top-level toggles
         if "batch_mode" in a:
+            logger.debug("_apply_alias: setting batch_mode=%s", a["batch_mode"])
             try:
                 batch_mode_var.set(bool(a["batch_mode"]))
             except Exception:
                 pass
 
         if "maintain_defaults" in a:
+            logger.debug("_apply_alias: setting maintain_defaults=%s", a["maintain_defaults"])
             try:
                 maintain_defaults_var.set(bool(a["maintain_defaults"]))
             except Exception:
@@ -1518,7 +1969,9 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
         # 2.3 Scripts selection (by index or case-insensitive name)
         scr = a.get("scripts")
         if scr:
+            logger.debug("_apply_alias: applying scripts=%s", scr)
             if scr == "all":
+                logger.debug("_apply_alias: enabling all scripts")
                 for v in script_vars:
                     v.set(True)
             else:
@@ -1527,14 +1980,17 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                 name_to_idx = {s.lower(): i for i, s in enumerate(submit_func_listTXT)}
                 for item in wanted:
                     if isinstance(item, int) and 0 <= item < len(script_vars):
+                        logger.debug("_apply_alias: enabling script index=%s", item)
                         script_vars[item].set(True)
                     elif isinstance(item, str):
                         idx = name_to_idx.get(item.lower())
                         if idx is not None:
+                            logger.debug("_apply_alias: enabling script name=%s index=%s", item, idx)
                             script_vars[idx].set(True)
 
         # 2.4 Reset checkboxes
         rst = a.get("reset")
+        logger.debug("_apply_alias: applying reset=%s type=%s", rst, type(rst).__name__)
         if isinstance(rst, bool):
             for r in rows_by_key.values():
                 r["reset_var"].set(rst)
@@ -1542,20 +1998,25 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             for k, flag in rst.items():
                 nk = _norm_alias_key(k)
                 if nk in rows_by_key:
+                    logger.debug("_apply_alias: setting reset key=%s flag=%s", nk, flag)
                     rows_by_key[nk]["reset_var"].set(bool(flag))
         elif isinstance(rst, (list, tuple)):
             want = { _norm_alias_key(x) for x in rst }
+            logger.debug("_apply_alias: reset fields=%s", want)
             for k, r in rows_by_key.items():
                 r["reset_var"].set(k in want)
 
         # 2.5 Pre-fill Updates column
         preset = a.get("set") or {}
+        logger.debug("_apply_alias: prefilling %s fields", len(preset))
         if isinstance(preset, dict):
             for k, v in preset.items():
                 fk = _norm_alias_key(k)
                 if fk not in rows_by_key:
+                    logger.debug("_apply_alias: unknown field key=%s, skipping", fk)
                     continue
                 row = rows_by_key[fk]
+                logger.debug("_apply_alias: setting field=%s value=%s", fk, v)
 
                 # Autocomplete fields
                 if fk in {"status", "assigned_to", "model"} and row.get("text_widget_type") == "ac":
@@ -1576,9 +2037,11 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                         v = vlabel if vlabel is not None else v  # fall back to raw dict if we must
 
                     v = "" if v is None else str(v)
+                    logger.debug("_apply_alias: ac field=%s resolved_value=%s", fk, v)
 
                     # For assigned_to we support {empty}
                     if fk == "assigned_to" and v.strip() == "{empty}":
+                        logger.debug("_apply_alias: setting assigned_to to {empty}")
                         ac.set("{empty}")
                         row["ac_selected"] = None
                     else:
@@ -1593,6 +2056,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                 # Text fields
                 elif row.get("text_widget_type") == "text":
                     txt = "" if v is None else str(v)
+                    logger.debug("_apply_alias: setting text field=%s txt=%s", fk, txt)
                     _widget_set_text(row["text"], txt)
                     # ensure placeholder is considered inactive if we’ve typed something
                     try:
@@ -1601,6 +2065,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                         pass
 
         # Recompute once after all sets
+        logger.debug("_apply_alias: recomputing results after alias application")
         try:
             recompute_all_results()
         except Exception:
@@ -1615,29 +2080,54 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     # Submit helpers (validate, warn, save, scripts, maybe switch)
     # -------------------------------------------------------------------------
     def _collect_snapshot():
-        """Collect current evaluated values for all fields."""
+        """Collect current evaluated values for all fields.
+
+        Returns:
+            Dict mapping field keys to their current evaluated string values.
+        """
+        logger.debug("_collect_snapshot: collecting snapshot")
         return {k: evaluate_row(k, visited=set()) for k in FIELD_ORDER}
 
     def _collect_validation_errors(snapshot: dict):
         """Enforce asset_tag/date only on fields that are changing vs current.
-           Empty string on DATE_FIELDS is allowed only via {empty} (clear). """
+
+        Empty string on DATE_FIELDS is allowed only via {empty} (clear).
+
+        Args:
+            snapshot: Dict of current evaluated field values.
+
+        Returns:
+            List of error message strings.
+        """
+        logger.debug("_collect_validation_errors: validating snapshot")
         errors = []
         for key, final_val in snapshot.items():
             if final_val == rows_by_key[key]["current"]:
                 continue
 
             if key == "asset_tag" and not valid_asset_tag(final_val):
+                logger.debug("_collect_validation_errors: invalid asset_tag=%s", final_val)
                 errors.append(f"[asset_tag] must be 4–5 digits (got '{final_val}')")
 
             if key in DATE_FIELDS:
                 if final_val == "":  # allow clearing dates with {empty}
                     continue
                 if not valid_date(final_val):
+                    logger.debug("_collect_validation_errors: invalid date key=%s value=%s", key, final_val)
                     errors.append(f"[{key}] must be YYYY-MM-DD (got '{final_val}')")
+        logger.debug("_collect_validation_errors: found %s errors", len(errors))
         return errors
 
     def _collect_default_warnings(snapshot: dict):
-        """Return warnings when values differ from active defaults."""
+        """Return warnings when values differ from active defaults.
+
+        Args:
+            snapshot: Dict of current evaluated field values.
+
+        Returns:
+            List of warning message strings.
+        """
+        logger.debug("_collect_default_warnings: checking for default mismatches")
         warnings = []
         for k in FIELD_ORDER:
             if k not in active_defaults_eval:
@@ -1646,62 +2136,85 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             actual = (snapshot.get(k, "") or "")
             if expected == HAS_VALUE_SENTINEL:
                 if str(actual).strip() == "":
+                    logger.debug("_collect_default_warnings: has_value mismatch for field=%s", k)
                     warnings.append(f"- {k}: empty, but default requires a value")
             else:
                 if str(actual) != str(expected):
+                    logger.debug("_collect_default_warnings: value mismatch field=%s actual=%s expected=%s", k, actual, expected)
                     warnings.append(f"- {k}: '{actual}' ≠ default '{expected}'")
+        logger.debug("_collect_default_warnings: found %s warnings", len(warnings))
         return warnings
 
     def _run_selected_submit_scripts(asset_tag_for_scripts: str):
-        """Run checked submit scripts. Silent on success; dialog on any failures."""
+        """Run checked submit scripts. Silent on success; dialog on any failures.
+
+        Args:
+            asset_tag_for_scripts: Asset tag to pass to each script.
+        """
+        logger.debug("_run_selected_submit_scripts: asset_tag=%s", asset_tag_for_scripts)
         had_error = False
         lines = []
         for i, var in enumerate(script_vars):
             if not var.get():
                 continue
+            logger.info("_run_selected_submit_scripts: running script=%s for asset_tag=%s", submit_func_listTXT[i], asset_tag_for_scripts)
             try:
                 ret = submit_func_list[i](asset_tag_for_scripts)
+                logger.debug("_run_selected_submit_scripts: script=%s returned=%s", submit_func_listTXT[i], ret)
                 if ret not in (None, ""):
                     lines.append(f"✓ {submit_func_listTXT[i]}: {ret}")
             except Exception as e:
+                logger.exception("_run_selected_submit_scripts: script=%s failed", submit_func_listTXT[i])
                 had_error = True
                 lines.append(f"✗ {submit_func_listTXT[i]}: {e}")
         if had_error:
+            logger.error("_run_selected_submit_scripts: one or more scripts failed")
             messagebox.showerror("Script Errors", "\n".join(lines))
 
     def _refresh_current_after_save(saved_snapshot: dict):
-        """Reload the current asset after a save completes."""
+        """Reload the current asset after a save completes.
+
+        Args:
+            saved_snapshot: The snapshot that was just saved.
+        """
         # If asset_tag changed, reload by new tag; otherwise by existing tag
         new_tag = saved_snapshot.get("asset_tag") or current_map.get("asset_tag") or ""
+        logger.debug("_refresh_current_after_save: new_tag=%s", new_tag)
         if not new_tag:
+            logger.debug("_refresh_current_after_save: no tag available, skipping refresh")
             return
+        logger.info("_refresh_current_after_save: reloading asset tag=%s", new_tag)
         _switch_asset_in_place(new_tag)
 
     def _submit_current_asset(prompt_on_warnings: bool = True) -> tuple[bool, str]:
-        """
-        Validate, warn on default mismatches, push to Snipe-IT (PATCH),
-        optionally CHECKIN to unassign, refresh, and update the status line.
+        """Validate, warn on default mismatches, push to Snipe-IT (PATCH), optionally CHECKIN to unassign, refresh, and update the status line.
+
+        Args:
+            prompt_on_warnings: Whether to show a dialog for default mismatches.
 
         Returns:
-          (ok, tag_for_scripts)
-            ok: True if the save/checkin flow succeeded
-            tag_for_scripts: the asset tag we just operated on (for script runner)
+            Tuple of (ok, tag_for_scripts) where ok is True on success.
         """
+        logger.debug("_submit_current_asset: prompt_on_warnings=%s has_current_asset=%s", prompt_on_warnings, has_current_asset.get())
         if not has_current_asset.get():
+            logger.debug("_submit_current_asset: no current asset, showing info dialog")
             messagebox.showinfo("Consisterizer", "Enter or scan an asset tag first.")
             return False, ""
 
         status_var.set("")  # clear previous message
+        logger.debug("_submit_current_asset: collecting snapshot")
         snapshot = _collect_snapshot()
 
         # Local validations (only for changed fields)
         errors = _collect_validation_errors(snapshot)
         if errors:
+            logger.debug("_submit_current_asset: validation errors=%s", errors)
             messagebox.showerror("Validation Errors", "Please fix the following:\n\n" + "\n".join(errors))
             return False, (current_map.get("asset_tag") or "")
 
         warnings = _collect_default_warnings(snapshot) if prompt_on_warnings else []
         if warnings:
+            logger.debug("_submit_current_asset: default warnings count=%s", len(warnings))
             show = warnings[:10]
             extra = len(warnings) - len(show)
             if extra > 0:
@@ -1711,34 +2224,42 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                 "Some values differ from the current defaults:\n\n" + "\n".join(show) + "\n\nProceed anyway?"
             )
             if not proceed:
+                logger.debug("_submit_current_asset: user declined to proceed past warnings")
                 return False, (current_map.get("asset_tag") or "")
 
         # Build PATCH payload
+        logger.debug("_submit_current_asset: building patch payload")
         try:
             (payload, any_changes, need_checkin, must_checkin_first,
              to_user_id, to_loc_id) = _build_patch_payload(snapshot)
         except ValueError as ve:
+            logger.error("_submit_current_asset: validation error building payload: %s", ve)
             messagebox.showerror("Validation", str(ve))
             return False, (current_map.get("asset_tag") or "")
 
         asset_id = assetData.get("id")
+        logger.debug("_submit_current_asset: asset_id=%s any_changes=%s need_checkin=%s", asset_id, any_changes, need_checkin)
         if any_changes and payload:
+            logger.info("_submit_current_asset: PATCHing asset_id=%s", asset_id)
             if not _api_patch_with_retry(asset_id, payload):
                 return False, (current_map.get("asset_tag") or "")
 
         # Assignment transitions
         if need_checkin:
             # explicit unassign
+            logger.info("_submit_current_asset: checking in asset_id=%s to unassign", asset_id)
             if not _api_checkin_with_retry(asset_id, note="Consisterizer: unassign"):
                 return False, (current_map.get("asset_tag") or "")
 
         # type change needs a checkin before the checkout
         if must_checkin_first and not need_checkin:
+            logger.info("_submit_current_asset: must_checkin_first, checking in asset_id=%s", asset_id)
             if not _api_checkin_with_retry(asset_id, note="Consisterizer: switch assignee type"):
                 return False, (current_map.get("asset_tag") or "")
 
         if to_user_id is not None or to_loc_id is not None:
             # optionally pass a desired expected_checkin date from snapshot
+            logger.info("_submit_current_asset: checking out asset_id=%s user_id=%s loc_id=%s", asset_id, to_user_id, to_loc_id)
             if not _api_checkout_with_retry(asset_id,
                                             user_id=to_user_id,
                                             location_id=to_loc_id,
@@ -1746,30 +2267,44 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                 return False, (current_map.get("asset_tag") or "")
 
         if any_changes or need_checkin or to_user_id is not None or to_loc_id is not None:
+            logger.debug("_submit_current_asset: refreshing UI after save")
             _refresh_current_after_save(snapshot)
 
         # Quiet status line with asset tag
         tag_for_scripts = snapshot.get("asset_tag") or current_map.get("asset_tag") or ""
         if any_changes or need_checkin:
+            logger.info("_submit_current_asset: saved tag=%s", tag_for_scripts)
             status_var.set(f"Saved {tag_for_scripts}.")
         else:
+            logger.debug("_submit_current_asset: no changes detected")
             status_var.set("No changes.")
 
         # IMPORTANT: do NOT run scripts here anymore.
         return True, tag_for_scripts
 
     def _switch_asset_in_place(new_tag: str) -> bool:
-        """Reload asset data and refresh the UI for a new tag."""
+        """Reload asset data and refresh the UI for a new tag.
+
+        Args:
+            new_tag: Asset tag to load.
+
+        Returns:
+            True if asset loaded successfully, False on error.
+        """
+        logger.debug("_switch_asset_in_place: new_tag=%s", new_tag)
         nonlocal assetData, current_map
 
+        logger.info("_switch_asset_in_place: fetching asset info for tag=%s", new_tag)
         try:
             _vl, new_assetData = getAssetInfo(new_tag)
         except Exception as e:
+            logger.exception("_switch_asset_in_place: failed to load tag=%s", new_tag)
             messagebox.showerror("Load Failed", f"Could not fetch asset '{new_tag}'.\n{e}")
             return False
 
         assetData = new_assetData
         current_map = extract_current_values(assetData)
+        logger.debug("_switch_asset_in_place: asset loaded, updating UI rows")
 
         try:
             win.title(f"Consisterizer — {new_tag}")
@@ -1786,15 +2321,26 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                 pass
 
         # refresh {username} runtime based on assigned_to
+        logger.debug("_switch_asset_in_place: refreshing runtime_username")
         ar = rows_by_key.get("assigned_to")
         if ar and ar.get("text_widget_type") == "ac":
             ac_txt = ar["ac"].get().strip()
             sel = ar.get("ac_selected")
+            logger.debug("_switch_asset_in_place: ac_txt=%s sel_type=%s", ac_txt, (sel or {}).get("type"))
             if ac_txt == "{empty}":
+                logger.debug("_switch_asset_in_place: assigned_to is {empty}, clearing username")
                 runtime_username.set("")
             elif sel and sel.get("type") == "user":
                 def _from_sel(s):
-                    """Extract a username from a selection dict."""
+                    """Extract a username from a selection dict.
+
+                    Args:
+                        s: Selection dict from autocomplete.
+
+                    Returns:
+                        Username string, or empty string if none found.
+                    """
+                    logger.debug("_from_sel: extracting username from sel")
                     u = (s.get("username") or "").strip()
                     if u:
                         return u
@@ -1809,35 +2355,51 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                     if "@" in em:
                         return em.split("@", 1)[0]
                     return ""
-                runtime_username.set(_from_sel(sel) or current_map.get("_assigned_username", ""))
+                uname = _from_sel(sel) or current_map.get("_assigned_username", "")
+                logger.debug("_switch_asset_in_place: setting runtime_username=%s", uname)
+                runtime_username.set(uname)
             else:
+                logger.debug("_switch_asset_in_place: using current_map username")
                 runtime_username.set(current_map.get("_assigned_username", ""))
         else:
+            logger.debug("_switch_asset_in_place: no ac assigned_to widget, using current_map username")
             runtime_username.set(current_map.get("_assigned_username", ""))
 
+        logger.debug("_switch_asset_in_place: recomputing results after switch")
         recompute_all_results()
         return True
 
     def _clear_to_wait_for_next(saved_tag: str | None = None):
         """Clear only CURRENT/RESULT and go to a 'waiting' state.
-           Keep all Updates inputs and Reset checkboxes intact."""
+
+        Keeps all Updates inputs and Reset checkboxes intact.
+
+        Args:
+            saved_tag: Optional tag that was just saved, for the status line.
+        """
+        logger.debug("_clear_to_wait_for_next: saved_tag=%s", saved_tag)
         nonlocal assetData, current_map
         assetData = {}
         current_map = {k: "" for k in FIELD_ORDER}
 
         # Recompute runtime {username} from the Updates 'assigned_to' (if user picked one).
+        logger.debug("_clear_to_wait_for_next: recalculating runtime_username")
         ar = rows_by_key.get("assigned_to")
         if ar and ar.get("text_widget_type") == "ac":
             ac_txt = ar["ac"].get().strip()
             sel = ar.get("ac_selected")
+            logger.debug("_clear_to_wait_for_next: ac_txt=%s", ac_txt)
             if ac_txt == "{empty}":
                 runtime_username.set("")
             else:
-                runtime_username.set(_username_from_option(sel) or "")
+                uname = _username_from_option(sel) or ""
+                logger.debug("_clear_to_wait_for_next: setting runtime_username=%s", uname)
+                runtime_username.set(uname)
         else:
             runtime_username.set("")
 
         # Clear ONLY the Current + Result columns; do NOT touch Updates widgets or reset checkboxes.
+        logger.debug("_clear_to_wait_for_next: clearing current and result columns")
         for k, r in rows_by_key.items():
             r["current"] = ""
             try:
@@ -1854,6 +2416,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             # - r["reset_var"]
 
         # Reset defaults highlight state against the empty current map
+        logger.debug("_clear_to_wait_for_next: clearing defaults and recomputing")
         try:
             active_defaults_templ.clear()
             active_defaults_eval.clear()
@@ -1867,17 +2430,25 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
         except Exception:
             pass
         if saved_tag:
+            logger.info("_clear_to_wait_for_next: saved tag=%s, entering waiting state", saved_tag)
             status_var.set(f"Saved {saved_tag}. Ready for next asset.")
         else:
+            logger.info("_clear_to_wait_for_next: entering waiting state")
             status_var.set("Ready for next asset.")
         has_current_asset.set(False)
         asset_entry.focus_set()
 
     def _load_asset_from_entry() -> bool:
-        """Load whatever is typed in the centered Asset Tag box."""
+        """Load whatever is typed in the centered Asset Tag box.
+
+        Returns:
+            True if asset was loaded successfully, False otherwise.
+        """
         tag = asset_tag_var.get().strip()
+        logger.debug("_load_asset_from_entry: tag=%s", tag)
         if not valid_asset_tag(tag):
             pattern = get_settings().get("assetTagRegex", r"^\d{4,5}$")
+            logger.debug("_load_asset_from_entry: invalid tag=%s pattern=%s", tag, pattern)
             messagebox.showerror("Asset Tag", f"Asset tag does not match pattern: {pattern}")
             try:
                 asset_entry.configure(style="ConsistError.TEntry")
@@ -1885,8 +2456,10 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                 pass
             asset_entry.focus_set()
             return False
+        logger.info("_load_asset_from_entry: loading asset tag=%s", tag)
         ok = _switch_asset_in_place(tag)
         if ok:
+            logger.debug("_load_asset_from_entry: asset loaded successfully, clearing entry")
             has_current_asset.set(True)
             try:
                 asset_tag_var.set("")
@@ -1896,12 +2469,12 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             status_var.set(f"Loaded {tag}.")
             asset_entry.focus_set()
             return True
+        logger.debug("_load_asset_from_entry: _switch_asset_in_place failed for tag=%s", tag)
         return False
 
 
     def _submit_and_maybe_switch() -> bool:
-        """
-        Submit flow with correct order of operations.
+        """Submit flow with correct order of operations.
 
         Batch mode:
           1) Validate the *next* Asset Tag entry (must be 4–5 digits).
@@ -1912,14 +2485,20 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
         Non-batch mode:
           1) Save/update the current asset.
           2) Run selected scripts.
-          3) Close the window.
+          3) Clear to waiting state.
+
+        Returns:
+            True if the submit flow completed successfully.
         """
+        logger.debug("_submit_and_maybe_switch: batch_mode=%s", batch_mode_var.get())
         # --- 1) (Batch only) validate the next asset tag up front ---
         new_tag = None
         if batch_mode_var.get():
             new_tag = asset_tag_var.get().strip()
+            logger.debug("_submit_and_maybe_switch: batch mode, next_tag=%s", new_tag)
             if not valid_asset_tag(new_tag):
                 pattern = get_settings().get("assetTagRegex", r"^\d{4,5}$")
+                logger.debug("_submit_and_maybe_switch: invalid next_tag=%s", new_tag)
                 messagebox.showerror("Asset Tag", f"Asset tag does not match pattern: {pattern}")
                 try:
                     asset_entry.configure(style="ConsistError.TEntry")
@@ -1929,17 +2508,22 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                 return False
 
         # --- 2) Save/update current asset in Snipe-IT ---
+        logger.info("_submit_and_maybe_switch: submitting current asset")
         ok, tag_for_scripts = _submit_current_asset(prompt_on_warnings=True)
         if not ok:
+            logger.debug("_submit_and_maybe_switch: submit failed, aborting")
             return False
 
         # --- 3) Run scripts for the asset we just saved ---
+        logger.debug("_submit_and_maybe_switch: running submit scripts for tag=%s", tag_for_scripts)
         _run_selected_submit_scripts(tag_for_scripts)
 
         # --- 4) Switch UI to next asset (batch) or close (non-batch) ---
         if batch_mode_var.get():
+            logger.info("_submit_and_maybe_switch: switching to next asset tag=%s", new_tag)
             if not _switch_asset_in_place(new_tag):
                 # _switch_asset_in_place already shows an error; keep user on current asset.
+                logger.debug("_submit_and_maybe_switch: switch to next asset failed")
                 return False
             try:
                 asset_tag_var.set("")
@@ -1950,16 +2534,21 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             return True
         else:
             # In one-at-a-time mode, clear to waiting state instead of closing.
+            logger.debug("_submit_and_maybe_switch: non-batch mode, clearing to waiting state")
             _clear_to_wait_for_next(tag_for_scripts)
             return True
 
     # Bind Enter on the “next asset tag” box to same submit flow
     def _on_asset_tag_return(_e=None):
         """Handle Enter to submit or load the next asset tag."""
+        has_asset = has_current_asset.get()
+        logger.debug("_on_asset_tag_return: has_current_asset=%s", has_asset)
         # If there is an asset loaded, Enter should submit; if we’re waiting, Enter loads the tag
-        if has_current_asset.get():
+        if has_asset:
+            logger.debug("_on_asset_tag_return: triggering submit flow")
             _submit_and_maybe_switch()
         else:
+            logger.debug("_on_asset_tag_return: triggering asset load from entry")
             _load_asset_from_entry()
         return "break"
 
@@ -1972,14 +2561,19 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     # -------------------------------------------------------------------------
     # Initial compute
     # -------------------------------------------------------------------------
+    # Force the inner frame to lay out so the scrollregion is correct on open.
     grid_inner.update_idletasks()
     grid_canvas.configure(scrollregion=grid_canvas.bbox("all"))
 
+    # Defer a synthetic Configure event so column widths and wrap-lengths are
+    # computed after Tkinter finishes its first geometry pass.
     win.after_idle(lambda: grid_canvas.event_generate("<Configure>"))
 
+    # Run the first full template evaluation to populate all Result labels.
     win.update_idletasks()
     recompute_all_results()
 
+    # Re-apply geometry to ensure the window stays at the intended size/position.
     win.geometry(f"{W}x{H}+{x}+{y}")
     win.minsize(MIN_W, MIN_H)
     return f"Consisterizer opened for {asset_tag}."

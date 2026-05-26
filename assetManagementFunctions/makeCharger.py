@@ -42,6 +42,7 @@ def makeCharger(asset_tag):
         Status message string for the main UI.
     """
     configure_logging()
+    logger.info("makeCharger: starting for asset_tag=%s", asset_tag)
     settings = get_settings()
     try:
         charger_category_id = int(settings.get("chargerCategoryId", CHARGER_CATEGORY_ID_DEFAULT))
@@ -49,9 +50,11 @@ def makeCharger(asset_tag):
         charger_category_id = CHARGER_CATEGORY_ID_DEFAULT
     name_prefix = settings.get("chargerNamePrefix", "Charger-")
     name_default = settings.get("chargerNameDefault", "Charger")
+    logger.debug("makeCharger: charger_category_id=%s name_prefix=%s name_default=%s", charger_category_id, name_prefix, name_default)
     # ------------------------ serial autodetect (macOS) ------------------------
     def get_charger_serial_number():
         """Return the local charger serial number on macOS, if available."""
+        logger.debug("get_charger_serial_number: platform=%s", platform.system())
         if platform.system() != "Darwin":
             raise OSError("Unsupported operating system")
         try:
@@ -63,44 +66,69 @@ def makeCharger(asset_tag):
                 stderr=subprocess.PIPE,
                 universal_newlines=True,
             )
-            return (result.stdout.strip().split(': ', 1)[-1] or "").strip()
+            serial = (result.stdout.strip().split(': ', 1)[-1] or "").strip()
+            logger.debug("get_charger_serial_number: detected serial=%s", serial)
+            return serial
         except Exception:
+            logger.debug("get_charger_serial_number: failed to detect serial, returning empty")
             return ""
 
     def serial_updater():
         """Continuously refresh the serial number entry from the system."""
+        logger.debug("serial_updater: starting continuous serial refresh loop")
         while True:
             try:
-                serial_number.set(get_charger_serial_number())
+                new_serial = get_charger_serial_number()
+                logger.debug("serial_updater: refreshed serial=%s", new_serial)
+                serial_number.set(new_serial)
                 time.sleep(0.25)
             except Exception as e:
+                logger.exception("serial_updater: error during serial refresh")
                 messagebox.showerror(title="Error", message=str(e))
                 break
 
     def start_serial_update():
         """Launch the background serial updater thread."""
+        logger.debug("start_serial_update: launching serial updater daemon thread")
         threading.Thread(target=serial_updater, daemon=True).start()
 
     # ------------------------ helpers ------------------------
     def _id_from_sel(sel: dict | None):
-        """Extract an ID value from a selection dict."""
+        """Extract an ID value from a selection dict.
+
+        Args:
+            sel: Selection dict from an AutoCompleteEntry widget.
+
+        Returns:
+            ID value or None if not found.
+        """
+        logger.debug("_id_from_sel: sel=%s", sel)
         if not isinstance(sel, dict):
             return None
         for k in ("id", "value", "user_id", "model_id", "status_id", "location_id"):
             if sel.get(k) is not None:
+                logger.debug("_id_from_sel: found id via key=%s value=%s", k, sel[k])
                 return sel[k]
         meta = sel.get("meta") or {}
         for k in ("id", "user_id", "model_id", "status_id", "location_id"):
             if meta.get(k) is not None:
+                logger.debug("_id_from_sel: found id via meta key=%s value=%s", k, meta[k])
                 return meta[k]
+        logger.debug("_id_from_sel: no id found in sel")
         return None
 
     def _api_headers():
         """Return Snipe-IT headers using the active API user."""
+        logger.debug("_api_headers: returning API headers")
         return get_api_headers()
 
     def _busy_cursor(on=True):
-        """Toggle the busy cursor for the charger window."""
+        """Toggle the busy cursor for the charger window.
+
+        Args:
+            on: If True, show busy cursor; if False, restore default.
+        """
+        logger.debug("_busy_cursor: on=%s", on)
         try:
             charger_window.config(cursor="watch" if on else "")
             charger_window.update_idletasks()
@@ -108,7 +136,12 @@ def makeCharger(asset_tag):
             pass
 
     def _require_api_creds():
-        """Validate that API URL and key are available."""
+        """Validate that API URL and key are available.
+
+        Returns:
+            True if credentials are present, False otherwise.
+        """
+        logger.debug("_require_api_creds: checking SNIPE_BASE=%s", bool(SNIPE_BASE))
         if not SNIPE_BASE or not get_api_key():
             logger.error("Missing API_URL_Base or API key in utilities.Key")
             messagebox.showerror("Snipe-IT", "Missing API_URL_Base or API key in utilities.Key.")
@@ -116,12 +149,22 @@ def makeCharger(asset_tag):
         return True
 
     def _serial_exists_in_snipe(serial: str) -> tuple[bool | None, str | None]:
-        """Return (exists, asset_tag) for a serial lookup, or (None, None) on errors."""
+        """Return (exists, asset_tag) for a serial lookup, or (None, None) on errors.
+
+        Args:
+            serial: Serial number string to look up in Snipe-IT.
+
+        Returns:
+            Tuple of (exists, asset_tag); exists is None on API errors.
+        """
+        logger.debug("_serial_exists_in_snipe: serial=%s", serial)
         url = f"{SNIPE_BASE}/hardware/byserial/{serial}"
         try:
+            logger.info("_serial_exists_in_snipe: querying Snipe-IT for serial=%s", serial)
             r = requests.get(url, headers=_api_headers(), timeout=20)
             r.raise_for_status()
             data = r.json() or {}
+            logger.debug("_serial_exists_in_snipe: response data keys=%s", list(data.keys()) if isinstance(data, dict) else type(data).__name__)
         except Exception as e:
             logger.exception("Serial lookup failed for %s", serial)
             messagebox.showerror("Serial Lookup Failed", f"Could not verify serial {serial}.\n\n{e}")
@@ -137,23 +180,28 @@ def makeCharger(asset_tag):
             msg = "; ".join(str(item) for item in msg if item is not None)
 
         if str(data.get("status", "")).lower() == "error" and "does not exist" in str(msg):
+            logger.debug("_serial_exists_in_snipe: serial=%s does not exist in Snipe-IT", serial)
             return False, None
 
         rows = data.get("rows")
         if isinstance(rows, list) and rows:
             row0 = rows[0] or {}
             tag = str(row0.get("asset_tag") or row0.get("assetTag") or "").strip()
+            logger.debug("_serial_exists_in_snipe: serial=%s exists, tag=%s", serial, tag)
             return True, (tag or None)
 
         tag = str(data.get("asset_tag") or data.get("assetTag") or "").strip()
         if tag or data.get("serial"):
+            logger.debug("_serial_exists_in_snipe: serial=%s exists (direct), tag=%s", serial, tag)
             return True, (tag or None)
 
         total = data.get("total")
         if total == 0:
+            logger.debug("_serial_exists_in_snipe: total=0 for serial=%s", serial)
             return False, None
 
         if str(msg).strip() == "Asset does not exist.":
+            logger.debug("_serial_exists_in_snipe: 'Asset does not exist' for serial=%s", serial)
             return False, None
 
         logger.warning("Serial lookup ambiguous for %s: %s", serial, data)
@@ -161,29 +209,54 @@ def makeCharger(asset_tag):
         return None, None
 
     def _sel_label(sel: dict | None) -> str:
-        """Return the display label for a selection dict."""
+        """Return the display label for a selection dict.
+
+        Args:
+            sel: Selection dict from an AutoCompleteEntry widget.
+
+        Returns:
+            Display label string, or empty string if not found.
+        """
         if not isinstance(sel, dict):
             return ""
-        return (sel.get("label") or sel.get("name") or str(sel.get("id") or "")).strip()
+        label = (sel.get("label") or sel.get("name") or str(sel.get("id") or "")).strip()
+        logger.debug("_sel_label: label=%s", label)
+        return label
 
     def _require_ac_pick(ac: AutoCompleteEntry, field_name: str) -> tuple[int | None, bool]:
-        """
-        Returns (id_or_None, ok_bool).
-        ok only if entry text is non-empty AND matches the selected option label.
+        """Validate that an AutoCompleteEntry has a valid selection.
+
+        Args:
+            ac: The AutoCompleteEntry widget to validate.
+            field_name: Human-readable field name for error messages.
+
+        Returns:
+            (id, ok) tuple; ok is False and id is None when validation fails.
         """
         txt = (ac.get() or "").strip()
         sel = ac.get_selected()
         lbl = _sel_label(sel)
+        logger.debug("_require_ac_pick: field=%s txt=%s sel=%s lbl=%s", field_name, txt, sel, lbl)
         if not txt or not sel or (lbl and txt != lbl):
+            logger.warning("_require_ac_pick: validation failed for field=%s txt=%s", field_name, txt)
             messagebox.showerror("Validation", f"{field_name} is required — pick from the suggestions.")
             return None, False
-        return _id_from_sel(sel), True
+        resolved_id = _id_from_sel(sel)
+        logger.debug("_require_ac_pick: resolved id=%s for field=%s", resolved_id, field_name)
+        return resolved_id, True
 
     logger.debug("Using chargerCategoryId=%s for model filtering", charger_category_id)
 
     # ---- Model filter (charger-only) ----
     def _is_charger_model(opt: dict) -> bool:
-        """Return True when a model option looks like a charger."""
+        """Return True when a model option looks like a charger.
+
+        Args:
+            opt: Model option dict from the API results.
+
+        Returns:
+            True if the option matches the charger category or label.
+        """
         label = (opt.get("label") or opt.get("name") or "").lower()
         meta = opt.get("meta") or {}
         if isinstance(meta.get("category"), dict):
@@ -192,6 +265,7 @@ def makeCharger(asset_tag):
         else:
             cat_id = meta.get("category_id")
             cat_name = (meta.get("category_name") or "").lower()
+        logger.debug("_is_charger_model: label=%s cat_id=%s cat_name=%s", label, cat_id, cat_name)
         if charger_category_id is not None and cat_id == charger_category_id:
             return True
         if "charger" in cat_name:
@@ -209,7 +283,14 @@ def makeCharger(asset_tag):
 
     # Inline placeholder support for AutoCompleteEntry
     def _set_loading_placeholder(ac: AutoCompleteEntry, text="loading…", disable=True):
-        """Apply a disabled placeholder to an autocomplete entry."""
+        """Apply a disabled placeholder to an autocomplete entry.
+
+        Args:
+            ac: AutoCompleteEntry widget to update.
+            text: Placeholder text to display.
+            disable: If True, disable the entry widget.
+        """
+        logger.debug("_set_loading_placeholder: text=%s disable=%s", text, disable)
         try:
             ac.entry.configure(foreground="#666")
             ac.entry.delete(0, tk.END)
@@ -221,9 +302,14 @@ def makeCharger(asset_tag):
             pass
 
     def _clear_placeholder_if_loading(ac: AutoCompleteEntry):
-        """Remove loading placeholder state if it is active."""
+        """Remove loading placeholder state if it is active.
+
+        Args:
+            ac: AutoCompleteEntry widget to clear.
+        """
         # clear only if we set our loading placeholder
         if getattr(ac, "_placeholder_active", False):
+            logger.debug("_clear_placeholder_if_loading: clearing placeholder")
             try:
                 ac.entry.state(["!disabled"])
                 ac.entry.delete(0, tk.END)
@@ -235,28 +321,38 @@ def makeCharger(asset_tag):
     def _apply_preloaded_options_to_widgets():
         """Push preloaded options into autocomplete widgets."""
         # Runs on Tk thread
+        logger.debug("_apply_preloaded_options_to_widgets: status_ready=%s assignee_ready=%s model_ready=%s",
+                     status_options_ready.is_set(), assignee_options_ready.is_set(), model_options_ready.is_set())
         if status_options_ready.is_set():
+            logger.debug("_apply_preloaded_options_to_widgets: applying %s status options", len(status_options_data))
             _clear_placeholder_if_loading(status_ac)
             status_ac.set_options(status_options_data)
         if assignee_options_ready.is_set():
+            logger.debug("_apply_preloaded_options_to_widgets: applying %s assignee options", len(assignee_options_data))
             _clear_placeholder_if_loading(assignee_ac)
             assignee_ac.set_options(assignee_options_data)
         if model_options_ready.is_set():
+            logger.debug("_apply_preloaded_options_to_widgets: applying %s model options", len(model_options_data))
             _clear_placeholder_if_loading(model_ac)
             model_ac.set_options(model_options_data)
 
     def _preload_options_thread():
         """Fetch options in the background and notify the UI."""
         nonlocal status_options_data, assignee_options_data, model_options_data
+        logger.debug("_preload_options_thread: starting background preload")
         try:
             status_options_data = getAllStatusOptions() or []
+            logger.debug("_preload_options_thread: loaded %s status options", len(status_options_data))
         except Exception:
+            logger.exception("_preload_options_thread: failed to load status options")
             status_options_data = []
         status_options_ready.set()
 
         try:
             assignee_options_data = getAllAssigneeOptions() or []
+            logger.debug("_preload_options_thread: loaded %s assignee options", len(assignee_options_data))
         except Exception:
+            logger.exception("_preload_options_thread: failed to load assignee options")
             assignee_options_data = []
         assignee_options_ready.set()
 
@@ -264,11 +360,14 @@ def makeCharger(asset_tag):
             m_opts = getAllModelOptions() or []
             model_options_data = sorted([o for o in m_opts if _is_charger_model(o)],
                                         key=lambda o: (o.get("label") or "").lower())
+            logger.debug("_preload_options_thread: loaded %s charger model options", len(model_options_data))
         except Exception:
+            logger.exception("_preload_options_thread: failed to load model options")
             model_options_data = []
         model_options_ready.set()
 
         try:
+            logger.debug("_preload_options_thread: scheduling UI update on Tk thread")
             charger_window.after(0, _apply_preloaded_options_to_widgets)
         except Exception:
             pass
@@ -332,23 +431,30 @@ def makeCharger(asset_tag):
         assn_type = (assn_sel or {}).get("type", "").strip().lower() if assn_sel else ""
         user_id = None
         location_id = None
+        logger.debug("submit: assn_sel=%s assn_type=%s", assn_sel, assn_type)
         if assn_sel:
             if assn_type == "user":
                 user_id = _id_from_sel(assn_sel)
+                logger.debug("submit: assigning to user_id=%s", user_id)
             elif assn_type == "location":
                 location_id = _id_from_sel(assn_sel)
+                logger.debug("submit: assigning to location_id=%s", location_id)
             else:
+                logger.warning("submit: unknown assn_type=%s", assn_type)
                 messagebox.showerror("Checkout To", "Pick a *User* or *Location* from suggestions, or leave blank.")
                 return
 
         # Field checks for required inputs.
         if not status_id:
+            logger.warning("submit: no status_id; aborting")
             messagebox.showerror("Validation", "Status is required (pick from list).")
             return
         if not model_id:
+            logger.warning("submit: no model_id; aborting")
             messagebox.showerror("Validation", "Model is required (pick from list).")
             return
         if not serial:
+            logger.warning("submit: no serial; aborting")
             messagebox.showerror("Validation", "Serial number is required.")
             return
 
@@ -410,6 +516,7 @@ def makeCharger(asset_tag):
                     data = r.json()
                 except Exception:
                     data = {}
+                # HTTP 2xx but Snipe-IT returned a logical error in the body.
                 if str(data.get("status", "")).lower() == "error":
                     msgs = data.get("messages")
                     msg = "; ".join(msgs) if isinstance(msgs, list) else str(msgs or data)
@@ -417,6 +524,7 @@ def makeCharger(asset_tag):
                     if not messagebox.askretrycancel("Create failed", f"Snipe-IT error:\n{msg}\n\nRetry?"):
                         return
                     continue
+                # Extract the new asset ID from the response payload.
                 asset_id = (data.get("payload") or {}).get("id")
                 if not asset_id:
                     logger.error("Charger asset created but ID missing in response")
@@ -424,6 +532,7 @@ def makeCharger(asset_tag):
                     return
                 logger.info("Charger asset created: %s", asset_id)
                 break
+            # Non-2xx response; parse detail for the user prompt.
             try:
                 detail = r.json()
             except Exception:
@@ -458,6 +567,7 @@ def makeCharger(asset_tag):
                 if 200 <= r.status_code < 300:
                     try:
                         data = r.json()
+                        # HTTP 2xx but Snipe-IT returned a logical error in the body.
                         if str(data.get("status")).lower() == "error":
                             msg = "; ".join(data.get("messages") or []) or str(data)
                             logger.error("Charger checkout failed: %s", msg)
@@ -467,6 +577,7 @@ def makeCharger(asset_tag):
                     except Exception:
                         pass
                     break
+                # Non-2xx checkout response; parse detail for the user prompt.
                 try:
                     detail = r.json()
                 except Exception:
@@ -583,13 +694,21 @@ def makeCharger(asset_tag):
 
     # ---------- Purchase Cost ----------
     def _validate_float(P):
-        """Allow empty or float-like text for purchase cost."""
+        """Allow empty or float-like text for purchase cost.
+
+        Args:
+            P: Proposed new value of the entry widget.
+
+        Returns:
+            True if the value is acceptable, False otherwise.
+        """
         if P == "":
             return True
         try:
             float(P)
             return True
         except ValueError:
+            logger.debug("_validate_float: invalid float input: %s", P)
             return False
 
     cost_frame = ttk.Frame(charger_window)
@@ -606,15 +725,26 @@ def makeCharger(asset_tag):
     date_partial_re = re.compile(r"^\d{0,4}(-\d{0,2}(-\d{0,2})?)?$")
 
     def _validate_date(P: str) -> bool:
-        """Allow partial/complete YYYY-MM-DD input."""
+        """Allow partial/complete YYYY-MM-DD input.
+
+        Args:
+            P: Proposed new value of the date entry widget.
+
+        Returns:
+            True if the value is an acceptable partial or full date, False otherwise.
+        """
         # Permit deletion
         if P == "":
             return True
         # Disallow anything longer than 10
         if len(P) > 10:
+            logger.debug("_validate_date: input too long: %s", P)
             return False
         # Only digits and hyphens in allowed positions, with partials OK
-        return bool(date_partial_re.fullmatch(P))
+        result = bool(date_partial_re.fullmatch(P))
+        if not result:
+            logger.debug("_validate_date: invalid date input: %s", P)
+        return result
 
     date_frame = ttk.Frame(charger_window)
     date_frame.pack(fill="x", padx=10, pady=6)

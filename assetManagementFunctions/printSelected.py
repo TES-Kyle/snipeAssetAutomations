@@ -20,18 +20,23 @@ def printSelected(asset_tag, *args):
         Status message string for the main UI.
     """
     configure_logging()
+    logger.debug("printSelected: asset_tag=%s args_count=%s", asset_tag, len(args))
     if args:
         # Use the provided print payload when custom fields are supplied.
         printVar = args[0]
         logger.debug("Print selected args for %s: %s", asset_tag, args)
+        logger.info("printSelected: printing custom fields for %s", asset_tag)
         createImage(printVar)
         return f"Label printed for {asset_tag} (custom fields)."
     else:
         # Fall back to asset lookup and print the asset tag only.
         logger.debug("No print args provided for %s; using asset tag only", asset_tag)
+        logger.debug("printSelected: fetching asset info for %s", asset_tag)
         junk, genericValues = getAssetInfo(asset_tag)
+        logger.debug("printSelected: asset fetched asset_tag=%s", genericValues.get("asset_tag"))
         # Build the single-line label payload for the printer.
         printData = list()
         printData.append(genericValues["asset_tag"])
+        logger.info("printSelected: printing asset_tag label for %s", asset_tag)
         createImage(printData)
         return f"Label printed for {asset_tag} (asset tag only)."

@@ -34,6 +34,7 @@ def get_computer_inventory_results():
         page_size = int(settings.get("chargerSerialPageSize", CHARGER_PAGE_SIZE_DEFAULT))
     except Exception:
         page_size = CHARGER_PAGE_SIZE_DEFAULT
+    logger.debug("get_computer_inventory_results called, page_size=%s", page_size)
 
     # Build a Jamf client using OAuth credentials.
     jamfClient = JamfProClient(
@@ -66,8 +67,10 @@ def parse_charger_info(values_str):
         List of (datetime, charger_serial) tuples parsed from the input.
     """
     configure_logging()
+    logger.debug("parse_charger_info: parsing %s chars of history", len(values_str or ""))
     entries = []
     lines = values_str.split('\n')
+    logger.debug("parse_charger_info: processing %s lines", len(lines))
     for line in lines:
         line = line.strip()
         if not line:
@@ -75,6 +78,7 @@ def parse_charger_info(values_str):
         # Split into date/time parts and charger serial.
         parts = line.rsplit(maxsplit=1)
         if len(parts) != 2:
+            logger.debug("parse_charger_info: skipping line with unexpected part count: %s", line[:50])
             continue
         date_part = parts[0]
         charger_serial = parts[1]
@@ -82,6 +86,7 @@ def parse_charger_info(values_str):
         tokens = date_part.split()
         # If we have 6 tokens, assume the 5th is a timezone and remove it.
         if len(tokens) == 6:
+            logger.debug("parse_charger_info: stripping timezone token from %s", date_part)
             tokens.pop(4)
 
         # Zero-pad the day if needed to match the expected format.
@@ -92,10 +97,12 @@ def parse_charger_info(values_str):
 
         # Parse the normalized timestamp into a datetime.
         date_str = " ".join(tokens)
+        logger.debug("parse_charger_info: parsing date_str=%s serial=%s", date_str, charger_serial)
         dt = datetime.strptime(date_str, "%a %b %d %H:%M:%S %Y")
 
         # Add the parsed entry for later sorting.
         entries.append((dt, charger_serial))
+    logger.debug("parse_charger_info: parsed %s entries", len(entries))
     return entries
 
 def chargerSerial(assetTag):
@@ -126,13 +133,14 @@ def chargerSerial(assetTag):
     logger.debug("Using charger EA name: %s", charger_ea_name)
 
     charger_matches = []
+    logger.debug("chargerSerial: scanning %s computers for charger matches", len(computers))
     for comp in computers:
         # Only consider records with a hardware section.
         hardware = comp.hardware
         if not hardware:
             continue
         comp_serial = hardware.serialNumber or "UNKNOWN"
-        
+
         if hardware.extensionAttributes:
             for ea in hardware.extensionAttributes:
                 # Match the EA that contains charger usage history.
@@ -140,11 +148,13 @@ def chargerSerial(assetTag):
                     values = ea.values or []
                     if not values:
                         continue
+                    logger.debug("chargerSerial: found EA '%s' on comp_serial=%s with %s values", charger_ea_name, comp_serial, len(values))
                     # Parse all history entries and capture matches for this charger.
                     all_values_str = "\n".join(values)
                     entries = parse_charger_info(all_values_str)
                     for (dt, cserial) in entries:
                         if cserial == TARGET_CHARGER_SERIAL:
+                            logger.debug("chargerSerial: match found on comp_serial=%s at %s", comp_serial, dt)
                             assignedTo = getAssetInfoSerialAssignedTo(comp_serial)
                             charger_matches.append((dt, comp_serial, assignedTo))
     logger.info("Found %s charger matches for %s", len(charger_matches), TARGET_CHARGER_SERIAL)
@@ -163,30 +173,29 @@ def chargerSerial(assetTag):
     return result_str
 
 def show_charger_results_tk(assetTag):
-    """
-    Display charger usage results in a new Tkinter window.
-    This function creates a new Toplevel window to display the charger usage
-    results for a given asset tag. The results are fetched using the 
-    `chargerSerial` function and displayed in a read-only Text widget. 
-    A close button is also provided to close the window.
-    Parameters:
-    assetTag (str): The asset tag for which to fetch and display charger usage results.
-    Returns:
-    None
+    """Display charger usage results in a new Tkinter window.
+
+    Args:
+        assetTag: The asset tag for which to fetch and display charger usage results.
     """
     configure_logging()
+    logger.debug("show_charger_results_tk: assetTag=%s", assetTag)
     # Create a new window (Toplevel) so it doesn't block the main window
+    logger.debug("show_charger_results_tk: creating Toplevel window")
     top = tk.Toplevel()
     top.title("Charger Usage Results")
 
     # Get the charger usage info
+    logger.info("show_charger_results_tk: fetching charger results for %s", assetTag)
     results = chargerSerial(assetTag)
+    logger.debug("show_charger_results_tk: results length=%s", len(results))
 
     # Use a Text widget to display results.
     text_widget = tk.Text(top, wrap="word", width=80, height=20)
     text_widget.insert("1.0", results)
     text_widget.config(state="disabled")  # make read-only
     text_widget.pack(padx=10, pady=10)
+    logger.debug("show_charger_results_tk: results displayed in text widget")
 
     # Add a close button for explicit dismissal.
     close_button = ttk.Button(top, text="Close", command=top.destroy)

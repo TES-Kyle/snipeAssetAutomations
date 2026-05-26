@@ -33,11 +33,14 @@ def print_label():
     The image file is expected to be named 'barcode-label.jpg' and located
     in the utilities directory. If missing, a user-facing error is shown.
     """
+    logger.debug("print_label: called")
     # Resolve the expected label path relative to the project root.
     script_dir = os.path.dirname(os.path.realpath(__file__))
     label_path = os.path.join(script_dir, "utilities/barcode-label.jpg")
+    logger.debug("print_label: label_path=%s", label_path)
     if os.path.isfile(label_path):
         # Dispatch the image to the configured printer.
+        logger.info("print_label: sending label to printer, path=%s", label_path)
         sendToPrinter(label_path)
         logger.info("Label sent to printer: %s", label_path)
         return
@@ -58,16 +61,19 @@ def open_second_window(parent, asset_tag, main_app_state):
         asset_tag: Asset tag entered by the user.
         main_app_state: State dict from main window, used to update result label.
     """
+    logger.debug("open_second_window: asset_tag=%s", asset_tag)
     # Load settings and derive layout settings.
     settings = get_settings()
     try:
         button_cols = int(settings.get("guiButtonColumns", 4))
     except Exception:
         button_cols = 4
+    logger.debug("open_second_window: button_cols=%s", button_cols)
 
     # Create the detail window and set its title.
     top = tk.Toplevel(parent)
     top.title("Asset Detail Functions")
+    logger.debug("open_second_window: toplevel window created")
 
     # This nested function handles the logic when a function button is clicked.
     def run_func(func_index, asset_tag):
@@ -77,15 +83,19 @@ def open_second_window(parent, asset_tag, main_app_state):
             func_index: Index into func_list/func_listTXT.
             asset_tag: Asset tag passed to the automation.
         """
+        logger.debug("run_func: func_index=%s func_name=%s asset_tag=%s", func_index, func_listTXT[func_index], asset_tag)
         # Build the checked value list to pass to the automation.
         checked_values = [value for var, value in check_vars if var.get()]
         checked_values.insert(0, asset_tag)
+        logger.debug("run_func: checked_values=%s", checked_values)
 
         try:
             # Prefer the function signature that accepts checked values.
+            logger.info("run_func: invoking %s for asset_tag=%s", func_listTXT[func_index], asset_tag)
             result = func_list[func_index](asset_tag, checked_values)
         except TypeError:
             # Fallback to the basic signature when args aren't supported.
+            logger.debug("run_func: TypeError on full signature, retrying with basic signature")
             result = func_list[func_index](asset_tag)
         except Exception as exc:
             logger.exception("Asset function failed (%s) for tag %s", func_listTXT[func_index], asset_tag)
@@ -96,12 +106,14 @@ def open_second_window(parent, asset_tag, main_app_state):
             return
 
         # Update the main window result text and close the detail window.
+        logger.info("run_func: completed func=%s asset_tag=%s result=%s", func_listTXT[func_index], asset_tag, result)
         main_app_state["result_text"].set(result)
         logger.info("Asset function completed: %s (tag=%s)", func_listTXT[func_index], asset_tag)
         top.destroy()
 
     # --- Widget Layout ---
     # Load asset info for the top section table.
+    logger.debug("open_second_window: fetching asset info for tag=%s", asset_tag)
     try:
         var_list, _ = getAssetInfo(asset_tag)
     except Exception as exc:
@@ -109,6 +121,7 @@ def open_second_window(parent, asset_tag, main_app_state):
         messagebox.showerror("Asset Lookup Failed", f"Could not fetch asset {asset_tag}.\n\n{exc}")
         top.destroy()
         return
+    logger.debug("open_second_window: asset info loaded, building frame")
     # Render a simple table of asset fields with optional checkboxes.
     var_frame, check_vars = build_asset_info_frame(
         top, var_list, include_checkboxes=True, skip_first_checkbox=True, padx=5, pady=5
@@ -116,6 +129,7 @@ def open_second_window(parent, asset_tag, main_app_state):
     var_frame.pack(side="top", fill="both", expand=True, padx=10, pady=10)
 
     # Create function buttons in a grid.
+    logger.debug("open_second_window: adding %s function buttons", len(func_listTXT))
     button_frame = tk.Frame(top)
     button_frame.pack(side="top", fill="both", padx=10, pady=5)
     for i, text in enumerate(func_listTXT):
@@ -131,6 +145,7 @@ def open_second_window(parent, asset_tag, main_app_state):
     screen_height = top.winfo_screenheight()
     x = (screen_width / 2) - (top.winfo_width() / 2)
     y = (screen_height / 2) - (top.winfo_height() / 2)
+    logger.debug("open_second_window: centering at x=%s y=%s", int(x), int(y))
     top.geometry(f"+{int(x)}+{int(y)}")
 
 
@@ -140,13 +155,16 @@ def create_main_window(root):
     Args:
         root: Root Tkinter object (tk.Tk).
     """
+    logger.debug("create_main_window: starting window construction")
     # Ensure logging is configured before any UI events fire.
     configure_logging()
     settings = get_settings()
     root.title("Asset Management GUI")
     window_state = str(settings.get("guiWindowState", "zoomed")).strip().lower()
+    logger.debug("create_main_window: window_state=%s", window_state)
     # Apply requested window state when available.
     if window_state == "zoomed":
+        logger.debug("create_main_window: applying zoomed state")
         root.state("zoomed")
 
     # Shared mutable state for widgets and callbacks.
@@ -169,6 +187,7 @@ def create_main_window(root):
     except Exception:
         button_cols = 4
     small_font_size = max(10, base_font_size - 8)
+    logger.debug("create_main_window: font_family=%s base_font_size=%s button_cols=%s", font_family, base_font_size, button_cols)
 
     # =========================================================================
     # == Nested Functions (Callbacks and Helpers)
@@ -176,6 +195,7 @@ def create_main_window(root):
 
     def show_frame(frame_to_show):
         """Raise the selected frame and update tab button styles."""
+        logger.debug("show_frame: raising frame=%s", frame_to_show)
         # Reset all tab buttons to inactive style.
         for button in app_state['tab_buttons'].values():
             button.config(relief='raised', bg=INACTIVE_TAB_COLOR)
@@ -183,6 +203,7 @@ def create_main_window(root):
         # Activate the selected tab.
         for frame, button in app_state['tab_buttons'].items():
             if frame == frame_to_show:
+                logger.debug("show_frame: activating tab button for frame=%s", frame)
                 button.config(relief='sunken', bg=ACTIVE_TAB_COLOR)
                 break
 
@@ -190,17 +211,20 @@ def create_main_window(root):
 
     def clear_radiobuttons():
         """Reset the selected asset function radio button."""
+        logger.debug("clear_radiobuttons: clearing func_var selection")
         app_state['func_var'].set(-1)
 
     def process_asset(event=None):
         """Validate the asset tag and route to the selected automation or detail window."""
         # Read the asset tag and clear the entry for the next scan.
         asset_tag = app_state['asset_entry'].get()
+        logger.debug("process_asset: asset_tag=%s", asset_tag)
         app_state['asset_entry'].delete(0, tk.END)
 
         # Validate the tag using the configured regex.
         settings = get_settings()
         pattern = settings.get("assetTagRegex", r"^\d{4,5}$")
+        logger.debug("process_asset: validating against pattern=%s", pattern)
         try:
             is_valid = re.match(pattern, asset_tag)
         except re.error:
@@ -211,7 +235,9 @@ def create_main_window(root):
         if is_valid:
             # Route to the selected function or open the detail picker.
             selected_func_index = app_state['func_var'].get()
+            logger.debug("process_asset: tag valid, selected_func_index=%s", selected_func_index)
             if selected_func_index != -1:
+                logger.info("process_asset: invoking %s for asset_tag=%s", func_listTXT[selected_func_index], asset_tag)
                 try:
                     result = func_list[selected_func_index](asset_tag)
                     app_state['result_text'].set(result)
@@ -227,6 +253,7 @@ def create_main_window(root):
                         f"'{func_listTXT[selected_func_index]}' failed for asset {asset_tag}.\n\n{exc}",
                     )
             else:
+                logger.debug("process_asset: no function selected, opening detail window for tag=%s", asset_tag)
                 open_second_window(root, asset_tag, app_state)
         else:
             # Reject invalid tags and alert the user.
@@ -288,7 +315,15 @@ def create_main_window(root):
     api_user_label.pack(side="top", anchor="e")
 
     def _format_remaining(seconds):
-        """Return MM:SS string for a remaining seconds value."""
+        """Return MM:SS string for a remaining seconds value.
+
+        Args:
+            seconds: Number of seconds remaining, or None.
+
+        Returns:
+            Formatted string like '02:30', or empty string if None.
+        """
+        logger.debug("_format_remaining: seconds=%s", seconds)
         if seconds is None:
             return ""
         secs = max(0, int(seconds))
@@ -296,41 +331,54 @@ def create_main_window(root):
 
     def _update_api_user_status():
         """Update the API user indicator and logout button state."""
+        logger.debug("_update_api_user_status: polling status")
         status = get_api_user_status()
         mode = status.get("mode")
         name = status.get("name")
         remaining = status.get("expires_in")
+        logger.debug("_update_api_user_status: mode=%s name=%s", mode, name)
 
         if mode == "static" and name:
+            logger.debug("_update_api_user_status: static user=%s", name)
             api_user_text.set(f"API user: {name} (static)")
             logout_btn.config(state="normal")
         elif mode == "cached" and name:
+            logger.debug("_update_api_user_status: cached user=%s remaining=%s", name, remaining)
             api_user_text.set(f"API user: {name}\nAuto-logout in {_format_remaining(remaining)}")
             logout_btn.config(state="normal")
         elif mode == "fallback":
             if status.get("detail") == "static_missing":
+                logger.debug("_update_api_user_status: fallback mode, static_missing")
                 api_user_text.set("API user: Default key\nStatic user missing")
                 logout_btn.config(state="normal")
             else:
+                logger.debug("_update_api_user_status: fallback mode, default key")
                 api_user_text.set("API user: Default key")
                 logout_btn.config(state="disabled")
         elif mode == "prompt":
+            logger.debug("_update_api_user_status: prompt mode, no user set")
             api_user_text.set("API user: not set\nPrompt on use")
             logout_btn.config(state="disabled")
         else:
+            logger.debug("_update_api_user_status: unknown mode=%s", mode)
             api_user_text.set("API user: none")
             logout_btn.config(state="disabled")
 
     def _poll_api_user_status():
         """Poll the API user status on a steady interval."""
+        logger.debug("_poll_api_user_status: tick")
         _update_api_user_status()
         root.after(1000, _poll_api_user_status)
 
     def _logout_api_user():
         """Clear any cached API user so the next call prompts."""
+        logger.debug("_logout_api_user: logout requested")
         status = get_api_user_status()
+        logger.debug("_logout_api_user: current mode=%s detail=%s", status.get("mode"), status.get("detail"))
         if status.get("mode") == "static" or status.get("detail") == "static_missing":
+            logger.info("_logout_api_user: clearing static API user name")
             set_api_user_static_name("none")
+        logger.info("_logout_api_user: clearing cached API user")
         clear_cached_api_user()
         _update_api_user_status()
 
@@ -339,18 +387,22 @@ def create_main_window(root):
     logout_btn.pack(side="top", anchor="e", pady=(2, 0))
 
     # MODIFIED: Settings button is now packed inside its pre-packed frame
+    logger.debug("create_main_window: adding settings button")
     tk.Button(settings_frame, text="⚙️", command=settingsMenu, font=(font_family, base_font_size)).pack(pady=5)
 
     # Initialize API user indicator loop.
+    logger.debug("create_main_window: starting API user status poll loop")
     _poll_api_user_status()
 
     # --- Tab 1: Asset Functions ---
+    logger.debug("create_main_window: building Tab 1 - Asset Functions")
     tab1 = app_state['tab1_frame']
     app_state['asset_entry'] = tk.Entry(tab1, font=(font_family, base_font_size), width=30)
     app_state['asset_entry'].pack(pady=20)
     app_state['asset_entry'].bind('<Return>', process_asset)
     app_state['asset_entry'].bind('<KP_Enter>', process_asset)
     app_state['asset_entry'].focus_set()
+    logger.debug("create_main_window: asset entry widget created and focused")
 
     button_frame = tk.Frame(tab1)
     button_frame.pack(padx=10, pady=20, anchor='center')
@@ -362,6 +414,7 @@ def create_main_window(root):
     func_frame.pack(pady=20)
 
     app_state['func_var'] = tk.IntVar(value=-1)
+    logger.debug("create_main_window: adding %s asset function radio buttons", len(func_listTXT))
     for i, text in enumerate(func_listTXT):
         row, col = divmod(i, button_cols)
         lf = tk.Frame(func_frame)
@@ -374,18 +427,20 @@ def create_main_window(root):
     tk.Label(tab1, textvariable=app_state['result_text'], font=(font_family, base_font_size)).pack(pady=20)
 
     # --- Tab 2: Other Functions ---
+    logger.debug("create_main_window: building Tab 2 - Other Functions")
     tab2 = app_state['tab2_frame']
 
     other_frame = tk.LabelFrame(tab2, text='Other Functions', font=(font_family, base_font_size))
     other_frame.pack(pady=20)
 
+    logger.debug("create_main_window: adding %s other function buttons", len(other_func_listTXT))
     for i, text in enumerate(other_func_listTXT):
         row, col = divmod(i, button_cols)
         button = tk.Button(other_frame, text=text, command=other_func_list[i], height=2, font=(font_family, base_font_size))
         button.grid(row=row, column=col, sticky='ew', padx=10, pady=10)
 
-
     # Select the first tab on startup.
+    logger.info("create_main_window: window construction complete, showing tab 1")
     show_frame(app_state['tab1_frame'])
 
 
@@ -394,14 +449,18 @@ def create_main_window(root):
 # =========================================================================
 if __name__ == "__main__":
     configure_logging()
+    logger.info("assetManagementGui_Main: application starting")
     main_window = tk.Tk()
     from utilities import Key as _Key
     if _Key.SECRETS_LOAD_ERROR:
+        logger.error("assetManagementGui_Main: secrets load error: %s", _Key.SECRETS_LOAD_ERROR)
         messagebox.showerror(
             "Configuration Error",
             "Credential Loading Error.\n\n"
             + _Key.SECRETS_LOAD_ERROR
             + "\n\nThe app will start but some features may not work."
         )
+    logger.debug("assetManagementGui_Main: calling create_main_window")
     create_main_window(main_window)
+    logger.info("assetManagementGui_Main: entering mainloop")
     main_window.mainloop()

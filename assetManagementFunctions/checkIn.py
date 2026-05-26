@@ -25,25 +25,31 @@ def checkIn(asset_tag, checkOutOrigin=None):
         Status string for the main UI on success, otherwise None.
     """
     configure_logging()
+    logger.info("checkIn: starting check-in for asset_tag=%s checkOutOrigin=%s", asset_tag, checkOutOrigin)
     url = "https://trinityes.snipe-it.io/api/v1"
     ignore_name = False
 
 
     def on_enter_pressed(event):
         """Handle Enter key submission."""
+        logger.debug("on_enter_pressed: Enter key pressed, submitting check-in for %s", asset_tag)
         submit()
 
     def submit():
         """Perform the check-in API call and close the window."""
+        logger.debug("submit: checking in asset_tag=%s", asset_tag)
 
         # Resolve the selected status label into an ID.
         statusID = fetch_statuses(status_var.get())
+        logger.debug("submit: fetched status map for %s: %s", asset_tag, statusID)
 
         # Extract the single status ID from the lookup mapping.
         statusID = statusID[list(statusID.keys())[0]]
+        logger.debug("submit: resolved statusID=%s for %s", statusID, asset_tag)
 
         # Block submission if the status list did not resolve to an ID.
         if not statusID:
+            logger.warning("submit: no status ID resolved for %s", asset_tag)
             messagebox.showerror("Error", "Status label is required")
             return
 
@@ -79,6 +85,7 @@ def checkIn(asset_tag, checkOutOrigin=None):
         Returns:
             Dict mapping status label -> status ID.
         """
+        logger.debug("fetch_statuses: filter_str=%s", filter_str)
         settings = get_settings()
         try:
             limit_full = int(settings.get("statusSearchLimit", 30))
@@ -88,22 +95,27 @@ def checkIn(asset_tag, checkOutOrigin=None):
             limit_filtered = int(settings.get("statusSearchLimitFiltered", 5))
         except Exception:
             limit_filtered = 5
+        logger.debug("fetch_statuses: limit_full=%s limit_filtered=%s", limit_full, limit_filtered)
 
         # Choose the appropriate endpoint depending on filter text.
         if filter_str:
+            logger.debug("fetch_statuses: fetching filtered statuses for filter=%s", filter_str)
             response = requests.get(
                 url + f"/statuslabels?search={filter_str}&limit={limit_filtered}",
                 headers=get_headers(),
             )
         else:
+            logger.debug("fetch_statuses: fetching all statuses with limit=%s", limit_full)
             response = requests.get(url + f"/statuslabels?limit={limit_full}", headers=get_headers())
 
         # Return empty list on errors to avoid crashing the UI.
         if response.status_code != 200:
+            logger.error("fetch_statuses: API returned status=%s", response.status_code)
             return []
 
         data = response.json()
         statuses = {status['name']: status['id'] for status in data['rows']}
+        logger.debug("fetch_statuses: returned %s status options", len(statuses))
         return statuses
 
     def update_status_list():
@@ -117,11 +129,13 @@ def checkIn(asset_tag, checkOutOrigin=None):
 
     def on_status_tab_complete(event):
         """Autocomplete the first status option on Tab."""
+        logger.debug("on_status_tab_complete: Tab pressed for %s", asset_tag)
         values = status_combobox['values']
         if values:
             status_combobox.set(values[0])
+            logger.debug("on_status_tab_complete: set combobox to first option: %s", values[0])
         return "break"
-    
+
     def flash_window(window, duration=3000, interval=500):
         """Flash the window background to draw attention.
 
@@ -130,32 +144,37 @@ def checkIn(asset_tag, checkOutOrigin=None):
             duration: Total duration in milliseconds.
             interval: Toggle interval in milliseconds.
         """
-        """
-        Flash the window background for `duration` milliseconds,
-        toggling every `interval` milliseconds.
-        """
+        logger.debug("flash_window: starting flash duration=%s interval=%s", duration, interval)
         start_time = time.time() * 1000  # current time in ms
         colors = itertools.cycle(["yellow", "white"])  # Alternate colors
         def toggle_color():
             """Toggle the flash color until the duration elapses."""
             elapsed = (time.time() * 1000) - start_time
+            logger.debug("toggle_color: elapsed=%s ms duration=%s ms", elapsed, duration)
             if elapsed < duration:
                 # Change the background color
-                window.configure(bg=next(colors))
+                new_color = next(colors)
+                logger.debug("toggle_color: setting bg to %s", new_color)
+                window.configure(bg=new_color)
                 # Schedule another toggle
                 window.after(interval, toggle_color)
             else:
                 # Reset to original color when done
+                logger.debug("toggle_color: flash complete, resetting bg")
                 window.configure(bg="SystemButtonFace")  # or whatever the original color was
 
         toggle_color()
     
 
+    logger.debug("checkIn: creating check-in window for %s", asset_tag)
     checkin_window = tk.Toplevel()
+    logger.debug("checkIn: fetching asset info for %s", asset_tag)
     var_list, assetData = getAssetInfo(asset_tag)
+    logger.debug("checkIn: asset fetched id=%s name=%s", assetData.get("id"), assetData.get("name"))
 
     checkin_window.geometry('500x150')
     if checkOutOrigin is not None:
+        logger.debug("checkIn: checkOutOrigin set, showing already-checked-in warning")
         w = tk.Label(checkin_window, text="THIS ASSET IS STILL CHECKED IN.")
         w.pack()
 

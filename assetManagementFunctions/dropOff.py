@@ -1,3 +1,19 @@
+"""Drop-off automation (shared state via Snipe-IT asset Notes) + Help/Box State UI + Reset + Check-In.
+
+- 6 box streams: SG, SM, SD, WG, WM, WD (Senior/Withdrawal × Good/Mild/Damaged)
+- Box label: "<STREAM>-NN" (2 digits; 3 digits at 100+)
+- Shared box tallies live in the Notes of a dedicated Snipe-IT asset (tag in settings)
+- Pull state -> assign new label -> push state (tight window)
+- Checks asset in from the user via POST /hardware/{id}/checkin (Retry/Cancel)
+- Retry/Cancel messageboxes for all network calls
+- Help screen: shows current state, updates capacity, explains damage levels,
+  provides "Reset All", and shows a mapping for the two-letter stream acronyms.
+
+settings.json must include:
+  boxStateAssetTag, defaultBoxCapacity, dropOffStatusId, dropOffPendingStatusId,
+  dropOffLostStatusId, dropOffChargerStatusId, macBookCategoryID, and field key overrides.
+"""
+
 import json
 import logging
 import os
@@ -13,30 +29,6 @@ from utilities.settings import  get_settings
 from utilities.otherApiBits import *
 
 logger = logging.getLogger(__name__)
-
-"""
-Drop-off automation (shared state via Snipe-IT asset Notes) + Help/Box State UI + Reset + Check-In
-
-- Status always -> ID 5
-- Hinge removed everywhere
-- No notes appended to the *device* asset
-- 6 box streams: SG, SM, SD, WG, WM, WD
-  * map damage: good=0, mild/medium=1, damaged/repair=2|3
-- Box label: "<STREAM>-NN" (2 digits; 3 digits at 100+)
-- Shared box tallies live in the Notes of a dedicated Snipe-IT asset (tag in settings)
-- Pull state -> assign new label -> push state (tight window)
-- **Checks asset in** from the user via POST /hardware/{id}/checkin (Retry/Cancel)
-- Retry/Cancel messageboxes for all network calls
-- Help screen: shows current state, updates capacity, explains damage levels,
-  provides "Reset All", and shows a mapping for the two-letter stream acronyms.
-
-settings.json must include (located at ../utilities/settings.json relative to this file):
-  {
-    "boxStateAssetTag": "BOX-STATE-TRACKER",
-    "defaultBoxCapacity": "12",
-    ... other existing keys ...
-  }
-"""
 
 # ----------------------------
 # Constants / regex
@@ -95,7 +87,9 @@ def _settings_path():
     # settings.json is one directory up, then in 'utilities'
     # <this_file_dir>/../utilities/settings.json
     base = os.path.dirname(os.path.realpath(__file__))
-    return os.path.join(os.path.dirname(base), "utilities", "settings.json")
+    path = os.path.join(os.path.dirname(base), "utilities", "settings.json")
+    logger.debug("_settings_path: resolved path=%s", path)
+    return path
 
 def _load_settings():
     """Load settings.json for the drop-off workflow.
@@ -104,10 +98,15 @@ def _load_settings():
         Dict of settings values or {} on failure.
     """
     configure_logging()
+    logger.debug("_load_settings: loading settings for drop-off workflow")
     try:
         # Read settings from disk with a fallback on any failure.
-        with open(_settings_path(), "r", encoding="utf-8") as f:
-            return json.load(f)
+        path = _settings_path()
+        logger.debug("_load_settings: reading file=%s", path)
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        logger.debug("_load_settings: loaded %s keys", len(data))
+        return data
     except Exception:
         logger.exception("Failed to read settings.json for drop-off workflow")
         messagebox.showerror(
@@ -117,16 +116,28 @@ def _load_settings():
         return {}
 
 def _save_settings_key(key: str, value):
-    """Best-effort write-back to settings.json to keep defaults in sync."""
+    """Best-effort write-back to settings.json to keep defaults in sync.
+
+    Args:
+        key: Settings key to update.
+        value: New value to write (will be stored as string).
+
+    Returns:
+        True on success, False on failure.
+    """
     configure_logging()
+    logger.debug("_save_settings_key: key=%s value=%s", key, value)
     try:
         p = _settings_path()
+        logger.debug("_save_settings_key: reading %s", p)
         # Load existing settings, update one key, and write back.
         with open(p, "r", encoding="utf-8") as f:
             data = json.load(f)
         data[key] = str(value)
+        logger.info("_save_settings_key: writing key=%s to %s", key, p)
         with open(p, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
+        logger.debug("_save_settings_key: write complete for key=%s", key)
         return True
     except Exception as e:
         logger.exception("Failed to update settings.json key %s", key)
@@ -140,18 +151,23 @@ def _get_box_state_asset_tag_and_capacity():
         (tag, capacity) tuple with validated defaults.
     """
     configure_logging()
+    logger.debug("_get_box_state_asset_tag_and_capacity: loading settings")
     s = _load_settings()
     tag = s.get("boxStateAssetTag", "").strip()
     cap = s.get("defaultBoxCapacity", "12")
+    logger.debug("_get_box_state_asset_tag_and_capacity: raw tag=%s raw cap=%s", tag, cap)
     try:
         cap = int(cap)
     except Exception:
+        logger.debug("_get_box_state_asset_tag_and_capacity: invalid cap value, defaulting to 12")
         cap = 12
     if cap < 1:
+        logger.debug("_get_box_state_asset_tag_and_capacity: cap < 1, clamping to 1")
         cap = 1
     if not tag:
         logger.error("settings.json missing boxStateAssetTag")
         messagebox.showerror("Settings Error", "settings.json is missing 'boxStateAssetTag'.")
+    logger.debug("_get_box_state_asset_tag_and_capacity: returning tag=%s cap=%s", tag, cap)
     return tag, cap
 
 
@@ -162,6 +178,7 @@ def _get_dropoff_status_ids():
         (drop_status_id, pending_status_id, lost_status_id, charger_status_id) tuple,
         or None if any key is missing or not a valid integer.
     """
+    logger.debug("_get_dropoff_status_ids: reading drop-off status IDs from settings")
     settings = get_settings()
     _KEYS = [
         ("dropOffStatusId",      "drop-off"),
@@ -173,6 +190,7 @@ def _get_dropoff_status_ids():
     values = []
     for key, label in _KEYS:
         raw = settings.get(key)
+        logger.debug("_get_dropoff_status_ids: key=%s raw=%s", key, raw)
         try:
             values.append(int(raw))
         except (TypeError, ValueError):
@@ -180,6 +198,7 @@ def _get_dropoff_status_ids():
             logger.error(msg)
             messagebox.showerror("Settings Error", msg)
             return None
+    logger.debug("_get_dropoff_status_ids: resolved values=%s", values)
     return tuple(values)
 
 
@@ -189,26 +208,34 @@ def _get_dropoff_field_keys():
     Returns:
         Tuple of (charger_field_key, cord_field_key, box_field_key).
     """
+    logger.debug("_get_dropoff_field_keys: reading custom field keys from settings")
     settings = get_settings()
     # Normalize and fallback to default field keys for each metadata field.
     charger_key = settings.get("dropOffChargerFieldKey", "_snipeit_chargeringoodcondition_6").strip()
     cord_key = settings.get("dropOffCordFieldKey", "_snipeit_cordingoodcondition_11").strip()
     box_key = settings.get("dropOffBoxFieldKey", "_snipeit_box_number_5").strip()
+    logger.debug("_get_dropoff_field_keys: raw charger_key=%s cord_key=%s box_key=%s", charger_key, cord_key, box_key)
     if not charger_key:
         charger_key = "_snipeit_chargeringoodcondition_6"
     if not cord_key:
         cord_key = "_snipeit_cordingoodcondition_11"
     if not box_key:
         box_key = "_snipeit_box_number_5"
+    logger.debug("_get_dropoff_field_keys: final charger_key=%s cord_key=%s box_key=%s", charger_key, cord_key, box_key)
     return charger_key, cord_key, box_key
 
 # ----------------------------
 # Snipe-IT helpers (tracker asset)
 # ----------------------------
 def _get_asset_by_tag_with_retry(asset_tag: str):
-    """
-    GET /hardware/bytag/{asset_tag}
-    Returns (ok: bool, data: dict or None)
+    """Fetch a Snipe-IT asset by tag with Retry/Cancel on failure.
+
+    Args:
+        asset_tag: Asset tag string to look up via the Snipe-IT API.
+
+    Returns:
+        (ok, data) tuple; ok is True and data is the asset dict on success,
+        or (False, None) if the user cancels after repeated failures.
     """
     configure_logging()
     url = Key.API_URL_Base + "hardware/bytag/" + str(asset_tag)
@@ -238,9 +265,14 @@ def _get_asset_by_tag_with_retry(asset_tag: str):
                 return False, None
 
 def _put_asset_notes_with_retry(asset_id: str, new_notes: str):
-    """
-    PUT /hardware/{id} with just the 'notes' field.
-    Returns True on success, False if user cancels.
+    """Update only the notes field of a Snipe-IT asset with Retry/Cancel.
+
+    Args:
+        asset_id: Numeric Snipe-IT asset ID as a string.
+        new_notes: Full replacement notes text to write.
+
+    Returns:
+        True on success, False if the user cancels after repeated failures.
     """
     configure_logging()
     url = Key.API_URL_Base + "hardware/" + str(asset_id)
@@ -282,10 +314,13 @@ def _init_default_state(capacity: int):
     Returns:
         State dict with per-stream counters.
     """
-    return {
+    logger.debug("_init_default_state: capacity=%s streams=%s", capacity, STREAMS)
+    state = {
         "capacity": capacity,
         "streams": {code: {"box": 1, "count": 0} for code in STREAMS},
     }
+    logger.debug("_init_default_state: initialized state with %s streams", len(state["streams"]))
+    return state
 
 def _format_state_line(state) -> str:
     """Serialize the state into a single-line representation.
@@ -296,11 +331,14 @@ def _format_state_line(state) -> str:
     Returns:
         One-line string suitable for notes storage.
     """
+    logger.debug("_format_state_line: formatting state with capacity=%s", state.get("capacity"))
     parts = [f"box capacity {int(state['capacity'])}"]
     for code in STREAMS:
         s = state["streams"][code]
         parts.append(f"{code} box {int(s['box'])} computer {int(s['count'])}")
-    return "; ".join(parts)
+    line = "; ".join(parts)
+    logger.debug("_format_state_line: result length=%s", len(line))
+    return line
 
 def _format_state_notes(state) -> str:
     """Wrap the state line with a header and timestamp.
@@ -311,36 +349,55 @@ def _format_state_notes(state) -> str:
     Returns:
         Notes text with header + state line.
     """
+    logger.debug("_format_state_notes: building notes with timestamp")
     header = f"# BOX STATE (updated {datetime.now().isoformat(timespec='seconds')})"
-    return header + "\n" + _format_state_line(state) + "\n"
+    notes = header + "\n" + _format_state_line(state) + "\n"
+    logger.debug("_format_state_notes: notes length=%s", len(notes))
+    return notes
 
 def _detect_malformed_notes(notes_text: str) -> bool:
+    """Return True if notes_text is non-empty but doesn't look like tracker state.
+
+    Args:
+        notes_text: Raw notes string from the tracker asset.
+
+    Returns:
+        True if the notes exist but lack expected format markers.
     """
-    Return True if notes_text is non-empty but doesn't look like our state.
-    Criteria: must contain 'box capacity' and at least one '<STREAM> box'.
-    """
+    logger.debug("_detect_malformed_notes: checking notes length=%s", len(notes_text) if isinstance(notes_text, str) else "non-str")
     if not isinstance(notes_text, str):
         return False
     text = notes_text.strip()
     if not text:
+        logger.debug("_detect_malformed_notes: empty notes, not malformed")
         return False
     if "box capacity" not in text.lower():
+        logger.debug("_detect_malformed_notes: missing 'box capacity' marker")
         return True
     if not re.search(r"\b(SG|SM|SD|WG|WM|WD)\s+box\b", text, re.IGNORECASE):
+        logger.debug("_detect_malformed_notes: missing stream box marker")
         return True
+    logger.debug("_detect_malformed_notes: notes appear well-formed")
     return False
 
 def _parse_state_from_notes(notes_text: str, default_capacity: int):
+    """Parse a forgiving single-line state from tracker notes.
+
+    Args:
+        notes_text: Raw notes string from the tracker asset.
+        default_capacity: Fallback capacity when notes are empty or unparseable.
+
+    Returns:
+        State dict with capacity and per-stream box/count values.
     """
-    Parse a forgiving single-line state; tolerate spacing/semicolons/newlines.
-    If empty string -> default blank state (caller may push it).
-    If malformed but non-empty -> we still parse what we can; caller warns.
-    """
+    logger.debug("_parse_state_from_notes: default_capacity=%s notes_len=%s", default_capacity, len(notes_text) if isinstance(notes_text, str) else "non-str")
     if not isinstance(notes_text, str) or not notes_text.strip():
+        logger.debug("_parse_state_from_notes: empty notes; returning default state")
         return _init_default_state(default_capacity)
 
     lines = [ln.strip() for ln in notes_text.splitlines() if ln.strip()]
     if not lines:
+        logger.debug("_parse_state_from_notes: no non-empty lines; returning default state")
         return _init_default_state(default_capacity)
 
     state_line = None
@@ -350,10 +407,12 @@ def _parse_state_from_notes(notes_text: str, default_capacity: int):
             break
     if state_line is None:
         state_line = lines[-1]
+    logger.debug("_parse_state_from_notes: using state_line length=%s", len(state_line))
 
     state = _init_default_state(default_capacity)
 
     tokens = re.split(r"[;\n]+", state_line)
+    logger.debug("_parse_state_from_notes: parsing %s tokens", len(tokens))
     for tok in tokens:
         tok = tok.strip()
         if not tok:
@@ -366,6 +425,7 @@ def _parse_state_from_notes(notes_text: str, default_capacity: int):
         n2 = m.group("num2")
         if key == "box capacity":
             state["capacity"] = max(1, n1)
+            logger.debug("_parse_state_from_notes: set capacity=%s", state["capacity"])
         else:
             code = key.split()[0].upper()
             box_num = max(1, n1)
@@ -373,28 +433,43 @@ def _parse_state_from_notes(notes_text: str, default_capacity: int):
             count_num = int(n2) if n2 is not None else prev_count
             count_num = max(0, count_num)
             state["streams"][code] = {"box": box_num, "count": count_num}
+            logger.debug("_parse_state_from_notes: stream %s box=%s count=%s", code, box_num, count_num)
 
     for code in STREAMS:
         state["streams"].setdefault(code, {"box": 1, "count": 0})
         state["streams"][code]["box"] = max(1, state["streams"][code]["box"])
         state["streams"][code]["count"] = max(0, state["streams"][code]["count"])
 
+    logger.debug("_parse_state_from_notes: parse complete, capacity=%s", state.get("capacity"))
     return state
 
 def _format_seq(box_number: int) -> str:
-    """Format box numbers with leading zeros (2 or 3 digits)."""
+    """Format box numbers with leading zeros (2 or 3 digits).
+
+    Args:
+        box_number: Integer box number to format.
+
+    Returns:
+        Zero-padded string representation of the box number.
+    """
+    logger.debug("_format_seq: box_number=%s", box_number)
     return f"{box_number:02d}" if box_number < 100 else f"{box_number:03d}"
 
 def _assign_from_remote_state(stream_code: str, default_capacity: int):
-    """
-    Pull tracker notes, validate/normalize, compute new label, push notes (tight window).
-    - If notes empty: initialize fresh state and push it, then continue.
-    - If notes malformed: warn and offer to reset; if declined, cancel.
-    Returns (ok: bool, box_label: str or None).
+    """Pull tracker notes, assign a box label, and push updated notes.
+
+    Args:
+        stream_code: Two-letter stream code (e.g. SG, WD).
+        default_capacity: Box capacity to use when initializing fresh state.
+
+    Returns:
+        (ok, box_label) tuple; ok is False and box_label is None on failure.
     """
     configure_logging()
+    logger.debug("_assign_from_remote_state: stream_code=%s default_capacity=%s", stream_code, default_capacity)
     tracker_tag, fallback_cap = _get_box_state_asset_tag_and_capacity()
     if not tracker_tag:
+        logger.error("_assign_from_remote_state: no tracker tag; aborting")
         return False, None
 
     logger.info("Assigning box for stream %s", stream_code)
@@ -406,13 +481,16 @@ def _assign_from_remote_state(stream_code: str, default_capacity: int):
     tracker_notes = tracker.get("notes", "")
     empty_notes = (not isinstance(tracker_notes, str)) or (not tracker_notes.strip())
     malformed = _detect_malformed_notes(tracker_notes)
+    logger.debug("_assign_from_remote_state: tracker_id=%s empty_notes=%s malformed=%s", tracker_id, empty_notes, malformed)
 
     if empty_notes:
+        logger.info("_assign_from_remote_state: initializing fresh tracker state for tracker %s", tracker_id)
         state = _init_default_state(default_capacity or fallback_cap)
         if not _put_asset_notes_with_retry(tracker_id, _format_state_notes(state)):
             return False, None
     else:
         if malformed:
+            logger.warning("_assign_from_remote_state: malformed tracker notes; prompting reset")
             do_reset = messagebox.askyesno(
                 "Tracker Note Looks Wrong",
                 "The tracker asset's note exists but doesn't match the expected format.\n\n"
@@ -421,41 +499,59 @@ def _assign_from_remote_state(stream_code: str, default_capacity: int):
                 "No = cancel this drop-off"
             )
             if not do_reset:
+                logger.info("_assign_from_remote_state: user declined reset; canceling")
                 return False, None
+            logger.info("_assign_from_remote_state: resetting tracker state after malformed notes")
             state = _init_default_state(default_capacity or fallback_cap)
             if not _put_asset_notes_with_retry(tracker_id, _format_state_notes(state)):
                 return False, None
         else:
+            logger.debug("_assign_from_remote_state: parsing existing notes for tracker %s", tracker_id)
             state = _parse_state_from_notes(tracker_notes, default_capacity or fallback_cap)
 
     cap = int(state.get("capacity") or fallback_cap)
     if cap < 1:
         cap = fallback_cap
+    logger.debug("_assign_from_remote_state: effective capacity=%s", cap)
 
     stream_code = stream_code.upper()
     s = state["streams"].get(stream_code, {"box": 1, "count": 0})
+    logger.debug("_assign_from_remote_state: stream=%s current box=%s count=%s", stream_code, s["box"], s["count"])
 
     if s["count"] >= cap:
+        logger.debug("_assign_from_remote_state: box full, advancing to next box")
         s["box"] += 1
         s["count"] = 0
     s["count"] += 1
     state["streams"][stream_code] = s
+    logger.debug("_assign_from_remote_state: updated stream=%s box=%s count=%s", stream_code, s["box"], s["count"])
 
     new_notes = _format_state_notes(state)
+    logger.info("_assign_from_remote_state: pushing updated state for stream=%s", stream_code)
     ok = _put_asset_notes_with_retry(tracker_id, new_notes)
     if not ok:
         return False, None
 
-    return True, f"{stream_code}-{_format_seq(s['box'])}"
+    label = f"{stream_code}-{_format_seq(s['box'])}"
+    logger.info("_assign_from_remote_state: assigned label=%s", label)
+    return True, label
 
 # ----------------------------
 # PUT/POST (device) with Retry/Cancel
 # ----------------------------
 def _checkin_asset_with_retry(id, note="Checked in via Drop-Off automation"):
-    """
-    POST /hardware/{id}/checkin
-    - Treats "already checked in/not checked out" responses as non-fatal and continues.
-    Returns True if checked in or already in, False if user cancels on other errors.
+    """Check in an asset via Snipe-IT with Retry/Cancel on error.
+
+    Treats "already checked in" / "not checked out" responses as non-fatal
+    and returns True without prompting the user.
+
+    Args:
+        id: Numeric Snipe-IT asset ID (string or int) to check in.
+        note: Optional check-in note to include in the API payload.
+
+    Returns:
+        True if the asset was checked in or was already checked in,
+        False if the user cancels after a non-recoverable error.
     """
     configure_logging()
     url = Key.API_URL_Base + "hardware/" + str(id) + "/checkin"
@@ -495,8 +591,20 @@ def _checkin_asset_with_retry(id, note="Checked in via Drop-Off automation"):
                 return False
 
 def _update_asset_with_retry(id, assetTag, statusID, modelID, chargerCond, cordCond, boxLabel, existingNotes):
-    """
-    PUT /hardware/{id} to set status=5, custom fields, and preserve existing notes.
+    """Update a drop-off device's status and custom fields with Retry/Cancel.
+
+    Args:
+        id: Numeric Snipe-IT asset ID (string or int).
+        assetTag: Asset tag string (used in the PUT payload and error messages).
+        statusID: Status ID integer to assign on drop-off.
+        modelID: Model ID integer for the asset.
+        chargerCond: 'y' if a good charger is present, 'n' otherwise.
+        cordCond: 'y' if a good cord is present, 'n' otherwise.
+        boxLabel: Box label string to write into the box custom field.
+        existingNotes: Notes text to preserve in the payload.
+
+    Returns:
+        True on success, False if the user cancels after repeated failures.
     """
     configure_logging()
     putURL = Key.API_URL_Base + "hardware/" + str(id)
@@ -546,7 +654,18 @@ def _update_asset_with_retry(id, assetTag, statusID, modelID, chargerCond, cordC
                 return False
 
 def _update_asset_status_and_notes_with_retry(asset_id, asset_tag, status_id, model_id, new_notes):
-    """PUT /hardware/{id} to set a status and notes, leaving all other fields unchanged."""
+    """Update only the status and notes of a Snipe-IT asset with Retry/Cancel.
+
+    Args:
+        asset_id: Numeric Snipe-IT asset ID (string or int).
+        asset_tag: Asset tag string (used in payload and error messages).
+        status_id: New status ID integer to apply.
+        model_id: Existing model ID integer (required by Snipe-IT PUT).
+        new_notes: Full replacement notes text to write.
+
+    Returns:
+        True on success, False if the user cancels after repeated failures.
+    """
     configure_logging()
     url = Key.API_URL_Base + "hardware/" + str(asset_id)
     payload = {
@@ -587,21 +706,19 @@ def _update_asset_status_and_notes_with_retry(asset_id, asset_tag, status_id, mo
 # Help / Box State UI
 # ----------------------------
 def _open_help_dialog(parent):
+    """Open the Help and Box State dialog.
+
+    Args:
+        parent: Parent Tkinter widget for the dialog.
     """
-    Shows:
-      - Tracker asset tag
-      - Current box state (live from tracker Notes)
-      - Capacity editor (updates tracker + settings.json)
-      - Reset All: sets all streams to box 1 / computer 0 (keeps capacity)
-      - How-it-works + damage level guidance
-      - Stream acronym key (SG/SM/SD/WG/WM/WD)
-    """
+    logger.debug("_open_help_dialog: opening help dialog")
     settings = _load_settings()
     tracker_tag = settings.get("boxStateAssetTag", "").strip()
     try:
         default_cap = int(settings.get("defaultBoxCapacity", 12))
     except Exception:
         default_cap = 12
+    logger.debug("_open_help_dialog: tracker_tag=%s default_cap=%s", tracker_tag, default_cap)
 
     dlg = tk.Toplevel(parent)
     dlg.title("Drop-Off: Help & Box State")
@@ -625,14 +742,19 @@ def _open_help_dialog(parent):
 
     def refresh_state():
         """Fetch tracker notes and update the displayed state."""
+        logger.debug("refresh_state: refreshing state for tracker_tag=%s", tracker_tag)
         if not tracker_tag:
+            logger.error("refresh_state: no tracker_tag set")
             messagebox.showerror("Tracker Missing", "boxStateAssetTag is not set in settings.json.")
             return
         ok, tracker = _get_asset_by_tag_with_retry(tracker_tag)
         if not ok or not tracker:
+            logger.error("refresh_state: failed to fetch tracker asset")
             return
         notes = tracker.get("notes", "")
+        logger.debug("refresh_state: tracker notes length=%s", len(notes))
         if _detect_malformed_notes(notes):
+            logger.warning("refresh_state: malformed notes detected for tracker %s", tracker_tag)
             messagebox.showwarning(
                 "Note Format Warning",
                 "The tracker note exists but doesn't match the expected format.\n"
@@ -641,6 +763,7 @@ def _open_help_dialog(parent):
         state = _parse_state_from_notes(notes, default_cap)
         state_var.set(_format_state_line(state))
         cap_entry_var.set(str(state.get("capacity", default_cap)))
+        logger.debug("refresh_state: state display updated")
 
     tk.Button(state_frame, text="Refresh", command=refresh_state).pack(padx=10, pady=(0, 10), anchor="e")
 
@@ -654,31 +777,41 @@ def _open_help_dialog(parent):
 
     def save_capacity():
         """Save capacity changes to the tracker and settings."""
+        logger.debug("save_capacity: attempting to save new capacity")
         try:
             new_cap = int(cap_entry_var.get())
         except Exception:
+            logger.warning("save_capacity: invalid capacity value entered")
             messagebox.showerror("Invalid Capacity", "Please enter a whole number (≥1).")
             return
         if new_cap < 1:
+            logger.warning("save_capacity: capacity value < 1: %s", new_cap)
             messagebox.showerror("Invalid Capacity", "Capacity must be at least 1.")
             return
+        logger.info("save_capacity: saving new capacity=%s", new_cap)
 
         tt, fallback_cap = _get_box_state_asset_tag_and_capacity()
         if not tt:
+            logger.error("save_capacity: no tracker tag; aborting")
             return
         ok, tracker = _get_asset_by_tag_with_retry(tt)
         if not ok or not tracker:
+            logger.error("save_capacity: failed to fetch tracker asset")
             return
 
         tracker_id = str(tracker["id"])
+        logger.debug("save_capacity: tracker_id=%s", tracker_id)
         state = _parse_state_from_notes(tracker.get("notes", ""), fallback_cap)
         state["capacity"] = new_cap
         new_notes = _format_state_notes(state)
+        logger.info("save_capacity: pushing updated notes with capacity=%s", new_cap)
         ok = _put_asset_notes_with_retry(tracker_id, new_notes)
         if not ok:
+            logger.error("save_capacity: failed to push updated notes")
             return
 
         _save_settings_key("defaultBoxCapacity", new_cap)
+        logger.debug("save_capacity: settings key updated")
 
         state_var.set(_format_state_line(state))
         # messagebox.showinfo("Capacity Updated", f"Capacity set to {new_cap}.")
@@ -690,30 +823,40 @@ def _open_help_dialog(parent):
     reset_frame.pack(fill="x", padx=12, pady=(0, 8))
     def reset_all():
         """Reset tracker state to defaults after confirmation."""
+        logger.debug("reset_all: prompting user for reset confirmation")
         if not messagebox.askyesno(
             "Reset All Streams",
             "Are you sure you want to reset all streams to box 1 / computer 0?\n\nThis cannot be undone."
         ):
+            logger.info("reset_all: user declined reset")
             return
+        logger.info("reset_all: user confirmed reset; proceeding")
         tt, fallback_cap = _get_box_state_asset_tag_and_capacity()
         if not tt:
+            logger.error("reset_all: no tracker tag; aborting")
             return
         ok, tracker = _get_asset_by_tag_with_retry(tt)
         if not ok or not tracker:
+            logger.error("reset_all: failed to fetch tracker asset")
             return
         tracker_id = str(tracker["id"])
+        logger.debug("reset_all: tracker_id=%s", tracker_id)
 
         notes = tracker.get("notes", "")
         st = _parse_state_from_notes(notes, fallback_cap)
         cap = st.get("capacity", fallback_cap)
+        logger.debug("reset_all: preserving capacity=%s", cap)
 
         new_state = _init_default_state(cap)
         new_notes = _format_state_notes(new_state)
+        logger.info("reset_all: pushing reset state to tracker %s", tracker_id)
         ok = _put_asset_notes_with_retry(tracker_id, new_notes)
         if not ok:
+            logger.error("reset_all: failed to push reset state")
             return
 
         state_var.set(_format_state_line(new_state))
+        logger.info("reset_all: all streams reset to box 1 / computer 0")
         # messagebox.showinfo("Reset Complete", "All streams reset to box 1 / computer 0 (capacity unchanged).")
 
     tk.Button(reset_frame, text="Reset All Streams", command=reset_all).pack(side="left", padx=10, pady=8)
@@ -756,7 +899,12 @@ def dropOff(asset_tag):
     configure_logging()
     logger.info("Starting drop-off for asset %s", asset_tag)
     def process_dropoff(assetData):
-        """Validate answers, update state, and apply drop-off updates."""
+        """Validate answers, update state, and apply drop-off updates.
+
+        Args:
+            assetData: Asset data dict from Snipe-IT for the asset being dropped off.
+        """
+        logger.debug("process_dropoff: asset_tag=%s asset_id=%s", assetData.get("asset_tag"), assetData.get("id"))
         # Validate required fields
         if charger.get() < 0 or drop.get() < 0:
             messagebox.showerror("Error", "Dumb dumb, answer all the questions!")
@@ -897,27 +1045,34 @@ def dropOff(asset_tag):
         dropoff_window.destroy()
 
     # Fetch asset and confirm status
+    logger.debug("dropOff: fetching asset info for %s", asset_tag)
     var_list, assetData = getAssetInfo(asset_tag)
+    logger.debug("dropOff: asset fetched id=%s name=%s", assetData.get("id"), assetData.get("name"))
     proceed = False
 
     _ids = _get_dropoff_status_ids()
     if _ids is None:
+        logger.error("dropOff: status ID settings error for %s", asset_tag)
         return f"Drop-off aborted: status ID settings error for {asset_tag}."
     _status_id, pending_status_id, _lost_status_id, _charger_status_id, _macbook_category_id = _ids
+    logger.debug("dropOff: resolved status IDs for %s: drop=%s pending=%s lost=%s charger=%s", asset_tag, _status_id, pending_status_id, _lost_status_id, _charger_status_id)
 
     if assetData["category"]["id"] != _macbook_category_id:
+        logger.info("dropOff: asset %s is not a MacBook (category=%s); prompting override", asset_tag, assetData["category"]["id"])
         proceed = messagebox.askyesno(
             title="Not A MacBook!",
             message='This asset is not a MacBook\n\nProceed anyway?'
         )
         logger.info("Drop-off category override prompt for %s: %s", asset_tag, proceed)
     elif assetData["status_label"]["id"] != pending_status_id:
+        logger.info("dropOff: asset %s status=%s not pending drop-off; prompting override", asset_tag, assetData["status_label"]["id"])
         proceed = messagebox.askyesno(
             title="Proceed?",
             message='This asset is not "Pending Drop-Off"\n\nProceed anyway?'
         )
         logger.info("Drop-off status override prompt for %s: %s", asset_tag, proceed)
     else:
+        logger.debug("dropOff: asset %s is MacBook with pending status; proceeding", asset_tag)
         proceed = True
 
     if proceed:

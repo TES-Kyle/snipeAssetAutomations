@@ -41,8 +41,7 @@ logger = logging.getLogger(__name__)
 # Helper: SFTP open + CSV reader
 # ---------------------------------------------------------------------
 def _open_sftp():
-    """
-    Open an SFTP connection to the remote host and change into 'upload_data'.
+    """Open an SFTP connection to the remote host and change into 'upload_data'.
 
     Returns:
         (transport, sftp) tuple. Caller MUST close both resources when finished:
@@ -56,17 +55,22 @@ def _open_sftp():
         Exception on failure to connect or change directory.
     """
     configure_logging()
+    logger.debug("_open_sftp: connecting to %s:22", ruvna_hostname)
     # Establish an SFTP connection and switch to the expected directory.
     transport = None
     sftp = None
     try:
         transport = paramiko.Transport((ruvna_hostname, 22))
+        logger.debug("_open_sftp: transport created; authenticating as %s", ruvna_username)
         transport.connect(username=ruvna_username, password=ruvna_password)
+        logger.debug("_open_sftp: authenticated; opening SFTPClient")
         sftp = paramiko.SFTPClient.from_transport(transport)
         sftp.chdir('upload_data')
+        logger.info("_open_sftp: SFTP connection established, chdir to upload_data")
         return transport, sftp
     except Exception:
         # Ensure any partially-opened resources are closed before re-raising
+        logger.debug("_open_sftp: exception during connect; closing partial resources")
         try:
             if sftp:
                 sftp.close()
@@ -81,8 +85,7 @@ def _open_sftp():
 
 
 def _read_remote_csv(sftp, filename):
-    """
-    Read a CSV file from an open SFTP client and return a list of rows.
+    """Read a CSV file from an open SFTP client and return a list of rows.
 
     Args:
         sftp: open paramiko SFTPClient
@@ -92,12 +95,14 @@ def _read_remote_csv(sftp, filename):
         List of rows (each row is a list of strings).
     """
     configure_logging()
+    logger.debug("_read_remote_csv: reading %s via SFTP", filename)
     # Read the CSV from SFTP into a list of rows.
     rows = []
     with sftp.open(filename, 'r') as remote_file:
         reader = csv.reader(remote_file)
         for row in reader:
             rows.append(row)
+    logger.debug("_read_remote_csv: read %s rows from %s", len(rows), filename)
     return rows
 
 
@@ -105,36 +110,35 @@ def _read_remote_csv(sftp, filename):
 # get_parents
 # ---------------------------------------------------------------------
 def get_parents(email):
-    """
-    Return a list of parent email addresses for the student matching `email`.
+    """Return a list of parent email addresses for the student matching the given email.
 
-    The function will attempt to connect to the SFTP server and read:
-      - students.csv
-      - families.csv
+    Connects to the SFTP server and reads students.csv and families.csv.
+    Searches students.csv for a row where column index 6 matches the given email
+    (case-insensitive), then collects parent emails from the corresponding family
+    row at columns 6, 12, 18, ... (every 6th column starting at index 6).
 
-    It searches students.csv for a row where column index 6 (7th column) matches `email`
-    (case-insensitive). If a match is found, it looks up the family row in families.csv
-    with the same family id (assumed in column 0) and collects parent emails from
-    columns 6, 12, 18, ... (every 6th column starting at index 6) as in your original layout.
-
-    If the SFTP connection fails, a retry/Cancel dialog is shown. If Cancel, returns [].
+    If the SFTP connection fails, a retry/cancel dialog is shown; returns [] on
+    cancel or unrecoverable error.
 
     Args:
-        email: student email (string)
+        email: Student email address to look up.
 
     Returns:
-        list of parent email strings (may be empty).
+        List of parent email strings (may be empty if not found or on error).
     """
     configure_logging()
+    logger.debug("get_parents: looking up parents for email=%s", email)
     # Retry loop for transient SFTP failures.
     trying = True
     while trying:
         try:
+            logger.debug("get_parents: opening SFTP connection")
             # Pull both student and family CSVs from the server.
             transport, sftp = _open_sftp()
             try:
                 students = _read_remote_csv(sftp, 'students.csv')
                 families = _read_remote_csv(sftp, 'families.csv')
+                logger.debug("get_parents: loaded %s student rows and %s family rows", len(students), len(families))
             finally:
                 # Always close SFTP resources
                 try:
@@ -149,9 +153,11 @@ def get_parents(email):
             # Find the student row by email, then map to family rows.
             search_value = str(email).lower()
             result = []
+            logger.debug("get_parents: searching for student email=%s", search_value)
 
             for row in students:
                 if len(row) > 6 and row[6].lower() == search_value:
+                    logger.debug("get_parents: found student row for %s; searching family rows", email)
                     # found student row; find corresponding family row(s)
                     for jrow in families:
                         if len(jrow) > 2 and jrow[0] == row[0]:
@@ -159,8 +165,10 @@ def get_parents(email):
                             for item in jrow[6::6]:
                                 if item:
                                     result.append(item)
+                            logger.debug("get_parents: found %s parent email(s) for %s", len(result), email)
                             return result
             # if not found return empty list
+            logger.debug("get_parents: student %s not found; returning []", email)
             return result
 
         except SSHException as e:
@@ -180,29 +188,32 @@ def get_parents(email):
 # get_phone_number
 # ---------------------------------------------------------------------
 def get_phone_number(email):
-    """
-    Return the student's phone number (string) found in students.csv.
+    """Return the student's phone number from students.csv on the SFTP server.
 
-    Searches students.csv for the row where column index 6 equals the given email
-    (case-insensitive) and returns column index 5 (as in your original code).
+    Searches students.csv for the row where column index 6 matches the given
+    email (case-insensitive) and returns column index 5 as the phone number.
 
-    If SFTP fails, shows retry/Cancel dialog. On Cancel or not found, returns None.
+    If SFTP fails, shows a retry/cancel dialog. Returns None on cancel,
+    unreachable server, or when the student is not found.
 
     Args:
-        email: student email (string)
+        email: Student email address to look up.
 
     Returns:
-        phone number string (may be None if not found).
+        Phone number string, or None if not found or on error.
     """
     configure_logging()
+    logger.debug("get_phone_number: looking up phone for email=%s", email)
     # Retry loop for transient SFTP failures.
     trying = True
     while trying:
         try:
+            logger.debug("get_phone_number: opening SFTP connection")
             # Pull the students CSV from the server.
             transport, sftp = _open_sftp()
             try:
                 students = _read_remote_csv(sftp, 'students.csv')
+                logger.debug("get_phone_number: loaded %s student rows", len(students))
             finally:
                 try:
                     sftp.close()
@@ -215,9 +226,13 @@ def get_phone_number(email):
 
             # Find the matching student row by email.
             search_value = str(email).lower()
+            logger.debug("get_phone_number: searching for email=%s", search_value)
             for row in students:
                 if len(row) > 6 and row[6].lower() == search_value:
-                    return row[5]  # keep same column index as your original file
+                    phone = row[5]
+                    logger.debug("get_phone_number: found phone=%s for email=%s", phone, email)
+                    return phone  # keep same column index as your original file
+            logger.debug("get_phone_number: email=%s not found in students.csv; returning None", email)
             return None
 
         except SSHException as e:
@@ -236,30 +251,41 @@ def get_phone_number(email):
 # send_text_message
 # ---------------------------------------------------------------------
 def send_text_message(number: str, content: str):
-    """
-    Send an SMS via RingCentral using JWT auth.
+    """Send an SMS via RingCentral using JWT authentication.
 
-    Number normalization rules:
-      - Remove spaces, hyphens, dots, and parentheses.
-      - If cleaned number starts with '+' and has 7-15 digits after '+', accept it.
-      - If cleaned number has exactly 10 digits, assume US and prepend '+1'.
-      - If cleaned number has 7-15 digits (no '+'), prepend '+' and use it.
-      - Otherwise raise ValueError.
+    Normalizes the phone number before sending:
+      - Removes spaces, hyphens, dots, and parentheses.
+      - If cleaned number starts with '+' and has 7-15 digits after '+', uses it.
+      - If cleaned number has exactly 10 digits, assumes US and prepends '+1'.
+      - If cleaned number has 7-15 digits (no '+'), prepends '+' and uses it.
+      - Otherwise raises ValueError.
 
-    This keeps things permissive enough for xxx-xxx-xxxx while catching clearly invalid values.
+    Args:
+        number: Destination phone number (any common format; see normalization rules).
+        content: SMS message body text.
+
+    Returns:
+        RingCentral API response data dict on success.
+
+    Raises:
+        ValueError: When the phone number cannot be normalized to a valid format.
+        RuntimeError: When the RingCentral API returns an error response.
     """
     configure_logging()
+    logger.debug("send_text_message: number=%s, content length=%s", number, len(content) if content else 0)
     # Normalize/validate the phone number before sending.
     if not number:
         raise ValueError("No phone number provided to send_text_message")
 
     raw = str(number).strip()
+    logger.debug("send_text_message: raw number=%s", raw)
 
     # Normalize: remove common separators but preserve leading '+'.
     if raw.startswith('+'):
         cleaned = '+' + re.sub(r"[^\d]", "", raw[1:])
     else:
         cleaned = re.sub(r"[^\d]", "", raw)
+    logger.debug("send_text_message: cleaned number=%s", cleaned)
 
     # Validate/form the final number to send.
     if cleaned.startswith('+'):
@@ -267,23 +293,29 @@ def send_text_message(number: str, content: str):
         if not (7 <= len(digits) <= 15):
             raise ValueError(f"Phone number looks invalid after cleanup: {number} -> {cleaned}")
         final_number = cleaned
+        logger.debug("send_text_message: international format detected, final_number=%s", final_number)
     else:
         # cleaned contains only digits
         if len(cleaned) == 10:
             # common US format -> assume +1
             final_number = f"+1{cleaned}"
+            logger.debug("send_text_message: 10-digit US number, final_number=%s", final_number)
         elif 7 <= len(cleaned) <= 15:
             # no plus but plausible; prepend '+' and use it
             final_number = f"+{cleaned}"
+            logger.debug("send_text_message: plausible number without '+', final_number=%s", final_number)
         else:
             raise ValueError(f"Phone number looks invalid after cleanup: {number} -> {cleaned}")
 
+    logger.info("send_text_message: sending SMS to %s via RingCentral", final_number)
     # Proceed with RingCentral send using final_number.
     sdk = SDK(ringCentralClientID, ringCentralClientSecret, ringCentralURLBase)
     platform = sdk.platform()
     try:
         # Authenticate to RingCentral before sending SMS.
+        logger.debug("send_text_message: logging in to RingCentral with JWT")
         platform.login(jwt=ringCentralUserJWT)
+        logger.debug("send_text_message: RingCentral login successful")
 
         # Build the SMS payload.
         body = {
@@ -291,6 +323,7 @@ def send_text_message(number: str, content: str):
             "to": [{"phoneNumber": final_number}],
             "text": content
         }
+        logger.debug("send_text_message: SMS payload built, from=%s to=%s", ringCentralFromNumber, final_number)
 
         # Send the SMS and return the response payload.
         resp = platform.post("/restapi/v1.0/account/~/extension/~/sms", body)
@@ -314,6 +347,7 @@ def send_text_message(number: str, content: str):
         raise
     finally:
         # Always attempt to logout to avoid lingering sessions.
+        logger.debug("send_text_message: logging out from RingCentral platform")
         try:
             platform.logout()
         except Exception:
@@ -325,61 +359,69 @@ def send_text_message(number: str, content: str):
 # message (email + optional text + parent email)
 # ---------------------------------------------------------------------
 def message(content, recipient, subject=None, text_student_recipient=False, email_recipient=True, email_parent=False):
-    """
-    Unified send function for email and/or SMS.
+    """Send an email and/or SMS to a student, optionally CC'ing parents.
 
-    Parameters:
-      - content: message body (string)
-      - recipient: student email address (string)
-      - subject: optional subject string (may be None)
-      - text_student_recipient: if True, also send an SMS to the student (phone from students.csv)
-      - email_recipient: if True, send email to the 'recipient' address
-      - email_parent: if True, also email parent addresses (looked up via get_parents)
-
-    Behavior:
-      - If text_student_recipient is True but no phone found, shows an error dialog and continues.
-      - Uses Gmail SMTP to send HTML-formatted emails to recipients. If there are no email recipients, SMTP is skipped.
-      - Shows messagebox popups on email login/send failure.
+    Args:
+        content: Message body text.
+        recipient: Student email address used as the primary recipient.
+        subject: Optional email subject line (None for empty subject).
+        text_student_recipient: If True, also send an SMS to the student's
+            phone number (looked up via students.csv on the SFTP server).
+        email_recipient: If True, include the student email in the email list.
+        email_parent: If True, also email parent addresses (looked up via
+            get_parents for the given recipient).
 
     Returns:
-      None
+        None. Shows messagebox dialogs on send failure.
     """
     configure_logging()
+    logger.debug("message: recipient=%s, subject=%s, text_student=%s, email_recipient=%s, email_parent=%s",
+                 recipient, subject, text_student_recipient, email_recipient, email_parent)
     # Normalize inputs and prepare recipient list.
     recipients = []
     subject_safe = str(subject) if subject is not None else ""
+    logger.debug("message: subject_safe=%s", subject_safe)
 
     if email_recipient:
         recipients.append(recipient)
+        logger.debug("message: added direct recipient %s", recipient)
 
     if text_student_recipient:
+        logger.debug("message: looking up phone number for SMS to %s", recipient)
         # Attempt to send SMS to student's phone
         phone = get_phone_number(recipient)
         if not phone:
+            logger.debug("message: no phone found for %s; skipping SMS", recipient)
             messagebox.showerror("Texting failed", f"No phone number found for {recipient}. SMS not sent.")
         else:
+            logger.info("message: sending SMS to phone=%s", phone)
             try:
                 sms_body = f"{subject_safe}\n\n{content}" if subject_safe else content
                 send_text_message(phone, sms_body)
+                logger.debug("message: SMS sent successfully to %s", phone)
             except Exception as e:
                 # send_text_message already displays a messagebox for API errors, but show a fallback as well
                 logger.exception("Failed to send SMS to %s", phone)
                 messagebox.showerror("Texting failed", f"Failed to send SMS to {phone}:\n{e}")
 
     if email_parent:
+        logger.debug("message: looking up parents for %s", recipient)
         parents = get_parents(recipient)
         if parents:
             recipients += parents
+            logger.debug("message: added %s parent email(s): %s", len(parents), parents)
 
     # If there are no email recipients, skip SMTP entirely.
     if not recipients:
         logger.info("No email recipients configured; skipping email send.")
         return
 
+    logger.info("message: sending email to %s recipient(s): %s", len(recipients), recipients)
     # Attempt SMTP login.
     try:
         s = smtplib.SMTP_SSL(host='smtp.gmail.com', port=465, timeout=30)
         s.login(*tech_email_info)
+        logger.debug("message: SMTP login successful")
     except Exception as e:
         logger.exception("Failed to login to SMTP")
         messagebox.showerror("Email login failed", f"Failed to login to SMTP: {e}")
@@ -388,6 +430,7 @@ def message(content, recipient, subject=None, text_student_recipient=False, emai
     # Build HTML template once.
     header_img_url = "https://bbk12e1-cdn.myschoolcdn.com/ftpimages/425/logo/NEW2016MainSiteLogo.png"
     html_content = content.replace("\n", "<br>")
+    logger.debug("message: HTML template built, content length=%s", len(html_content))
     html_template = f"""
     <html>
       <body style="font-family: Arial, sans-serif; margin:0; padding:0; font-size:16px; line-height:1.5; background:#f4f4f4;">
@@ -417,6 +460,7 @@ def message(content, recipient, subject=None, text_student_recipient=False, emai
     # Send the email(s).
     try:
         for r in recipients:
+            logger.debug("message: sending email to %s", r)
             try:
                 # Build and send one message per recipient.
                 msg = EmailMessage()
@@ -427,6 +471,7 @@ def message(content, recipient, subject=None, text_student_recipient=False, emai
                 # If recipient is the tech/support address, send from tech_email_info[0], else from support_email
                 msg['From'] = tech_email_info[0] if r == support_email else support_email
                 msg['To'] = r
+                logger.debug("message: built email from=%s to=%s", msg['From'], r)
 
                 s.send_message(msg)
                 logger.info("Email sent to %s", r)
@@ -435,6 +480,7 @@ def message(content, recipient, subject=None, text_student_recipient=False, emai
                 logger.exception("Failed to send email to %s", r)
                 messagebox.showerror("Email send failed", f"Failed to send email to {r}:\n{e}")
     finally:
+        logger.debug("message: quitting SMTP session")
         try:
             s.quit()
         except Exception:
@@ -445,7 +491,15 @@ def message(content, recipient, subject=None, text_student_recipient=False, emai
 # Pre-written message templates (unchanged, only docstrings added)
 # ---------------------------------------------------------------------
 def repair_notice(full_name):
-    """Return a standard 'repair submitted' message body that may include fines."""
+    """Return a standard 'repair submitted' message body that may include fines.
+
+    Args:
+        full_name: The student's full name to embed in the message.
+
+    Returns:
+        Multi-line string containing the formatted repair notice.
+    """
+    logger.debug("repair_notice: full_name=%s", full_name)
     return f"""Hello,
 
 We are sending this to let you know that {full_name} has submitted their computer for repair.
@@ -464,7 +518,15 @@ Trinity Episcopal School IT Department
 
 
 def repair_notice_no_fine(full_name):
-    """Return a 'repair submitted' message body (no-fine version)."""
+    """Return a 'repair submitted' message body indicating no fine will be charged.
+
+    Args:
+        full_name: The student's full name to embed in the message.
+
+    Returns:
+        Multi-line string containing the formatted repair notice.
+    """
+    logger.debug("repair_notice_no_fine: full_name=%s", full_name)
     return f"""Hello,
 
 We are sending this to let you know that {full_name} has submitted their computer for repair.
@@ -483,7 +545,15 @@ Trinity Episcopal School IT Department
 
 
 def ready_no_fine(full_name):
-    """Return a 'ready for pickup' message body indicating no fine."""
+    """Return a 'ready for pickup' message body indicating no fine will be charged.
+
+    Args:
+        full_name: The student's full name to embed in the message.
+
+    Returns:
+        Multi-line string containing the formatted pickup notice.
+    """
+    logger.debug("ready_no_fine: full_name=%s", full_name)
     return f"""Hello,
 
 We are pleased to inform you that the Macbook Air for {full_name} has been repaired and is now ready for pickup. 
@@ -501,7 +571,16 @@ Trinity Episcopal School IT Department
 
 
 def ready_fine(full_name, fine_amount):
-    """Return a 'ready for pickup' message body indicating a fine amount."""
+    """Return a 'ready for pickup' message body stating the fine amount due.
+
+    Args:
+        full_name: The student's full name to embed in the message.
+        fine_amount: Dollar amount of the fine to display (no '$' prefix needed).
+
+    Returns:
+        Multi-line string containing the formatted pickup notice with fine.
+    """
+    logger.debug("ready_fine: full_name=%s, fine_amount=%s", full_name, fine_amount)
     return f"""Hello,
 
 We are pleased to inform you that the Macbook Air for {full_name} has been repaired and is now ready for pickup. 
@@ -522,43 +601,67 @@ Trinity Episcopal School IT Department
 # Helper: remove_fine_warning and is_email
 # ---------------------------------------------------------------------
 def remove_fine_warning(student_email):
-    """
-    Check settings.json patterns for warning matches and prompt the user.
+    """Check settings.json patterns for warning matches and prompt the user.
 
-    Returns True if the user chose to remove the fine (Yes), False otherwise.
+    Reads emailWarnPattern from settings.json, then checks the student's email
+    and their parent emails against each semicolon-separated regex pattern. If
+    any match is found, a yes/no dialog asks whether to remove the fine.
+
+    Args:
+        student_email: The student's email address to check against patterns.
+
+    Returns:
+        True if the user chose to remove the fine (Yes); False otherwise or
+        when no pattern matches.
     """
+    logger.debug("remove_fine_warning: student_email=%s", student_email)
     try:
         # Load warning patterns from settings.json.
         settings_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "settings.json")
+        logger.debug("remove_fine_warning: reading settings from %s", settings_path)
         with open(settings_path, "r") as fh:
             settings = json.load(fh)
         warn_patterns = settings.get("emailWarnPattern", "").split(";")
+        logger.debug("remove_fine_warning: loaded %s warn patterns", len(warn_patterns))
     except Exception as e:
+        logger.exception("remove_fine_warning: failed to read settings.json")
         messagebox.showerror("Settings error", f"Failed to read settings.json:\n{e}")
         return False
 
     # Check student + parent emails for warning pattern matches.
     emails = [student_email] + get_parents(student_email)
+    logger.debug("remove_fine_warning: checking %s email(s) against patterns", len(emails))
     for email in emails:
         for pattern in warn_patterns:
             pattern = pattern.strip()
             if not pattern:
                 continue
+            logger.debug("remove_fine_warning: testing email=%s against pattern=%s", email, pattern)
             try:
                 if re.match(pattern, email.strip()):
+                    logger.info("remove_fine_warning: match found email=%s pattern=%s; prompting user", email, pattern)
                     return messagebox.askyesno("Warning", f"This repair is emailing {email}, which matches warning pattern {pattern}, would you like to remove this fine?")
             except re.error:
                 # If pattern is invalid, skip it (could also show an error)
+                logger.debug("remove_fine_warning: invalid regex pattern=%s; skipping", pattern)
                 continue
+    logger.debug("remove_fine_warning: no pattern matches found; returning False")
     return False
 
 
 def is_email(email):
-    """
-    Basic email address validation.
+    """Return True if the string looks like a valid email address.
 
-    Returns True if the string looks like an email address, False otherwise.
+    Uses a simple regex pattern covering most common email formats. Does not
+    perform DNS or SMTP validation.
+
+    Args:
+        email: Candidate email string to validate.
+
+    Returns:
+        True when the string matches the email pattern; False otherwise.
     """
+    logger.debug("is_email checking: %s", email)
     # Normalize input to a string for regex validation.
     email = str(email)
     if re.match(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", email):

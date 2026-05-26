@@ -28,7 +28,10 @@ def get_headers() -> dict:
     Returns:
         Dict of request headers for Snipe-IT calls.
     """
-    return get_api_headers()
+    logger.debug("get_headers: building API headers via get_api_headers")
+    result = get_api_headers()
+    logger.debug("get_headers: returning %s header keys", len(result))
+    return result
 
 
 def getAssetInfo(assetTag, allow_missing: bool = False):
@@ -149,9 +152,11 @@ def build_asset_info_frame(parent, var_list, *, include_checkboxes=False,
     Returns:
         (frame, check_vars) where check_vars is a list of (BooleanVar, value).
     """
+    logger.debug("build_asset_info_frame: var_list length=%s, include_checkboxes=%s", len(var_list), include_checkboxes)
     frame = tk.Frame(parent)
     check_vars = []
     for i, (name, value) in enumerate(var_list):
+        logger.debug("build_asset_info_frame: row %s name=%s value=%s", i, name, value)
         col_offset = 0
         if include_checkboxes:
             check_var = tk.BooleanVar()
@@ -168,6 +173,7 @@ def build_asset_info_frame(parent, var_list, *, include_checkboxes=False,
         )
 
     if include_checkboxes:
+        logger.debug("build_asset_info_frame: configuring checkbox column weights")
         frame.grid_columnconfigure(0, weight=0)
         frame.grid_columnconfigure(1, weight=1)
         frame.grid_columnconfigure(2, weight=1)
@@ -175,6 +181,7 @@ def build_asset_info_frame(parent, var_list, *, include_checkboxes=False,
         frame.grid_columnconfigure(0, weight=0)
         frame.grid_columnconfigure(1, weight=1)
 
+    logger.debug("build_asset_info_frame: built frame with %s rows, %s check_vars", len(var_list), len(check_vars))
     return frame, check_vars
 
 
@@ -198,23 +205,27 @@ def build_user_asset_list_frame(parent, user_id, *, include_checkboxes=False,
         for each row; empty when include_checkboxes is False.
     """
     configure_logging()
+    logger.debug("build_user_asset_list_frame: user_id=%s, include_checkboxes=%s", user_id, include_checkboxes)
     frame = tk.Frame(parent)
     check_vars = []
 
     default_font = tkfont.nametofont("TkDefaultFont")
     bold_font = tkfont.Font(font=default_font)
     bold_font.configure(weight='bold')
+    logger.debug("build_user_asset_list_frame: fonts initialized")
 
     tk.Label(frame, text="Assets assigned to computer user", font=bold_font).grid(
         row=0, column=0, sticky='w', padx=padx, pady=(pady, 2)
     )
 
     url = Key.API_URL_Base + f"users/{user_id}/assets"
+    logger.info("build_user_asset_list_frame: fetching assets for user %s from %s", user_id, url)
     try:
         api_headers = get_headers()
         response = requests.get(url, headers=api_headers, timeout=20)
         response.raise_for_status()
         data = response.json()
+        logger.debug("build_user_asset_list_frame: API response status=%s", response.status_code)
     except Exception as e:
         logger.exception("Failed to fetch assets for user %s", user_id)
         messagebox.showerror("User Assets Lookup Failed", f"Could not fetch assets for user {user_id}.\n\n{e}")
@@ -224,12 +235,14 @@ def build_user_asset_list_frame(parent, user_id, *, include_checkboxes=False,
         return frame, check_vars
 
     rows = data.get("rows") or []
+    logger.debug("build_user_asset_list_frame: received %s asset rows", len(rows))
 
     col_ids = ["asset_tag", "name", "status", "model"]
     col_headings = ["Asset Tag", "Asset Name", "Status", "Model"]
     if include_checkboxes:
         col_ids.append("check")
         col_headings.append(checkbox_header or "")
+        logger.debug("build_user_asset_list_frame: checkbox column added with header=%s", checkbox_header)
 
     # Build flat row data and measure column widths in one pass.
     row_data = []
@@ -247,11 +260,15 @@ def build_user_asset_list_frame(parent, user_id, *, include_checkboxes=False,
         for i, v in enumerate(vals):
             col_widths[i] = max(col_widths[i], default_font.measure(str(v)) + 16)
         row_data.append((asset_tag, vals))
+        logger.debug("build_user_asset_list_frame: added row for asset_tag=%s", asset_tag)
+
+    logger.debug("build_user_asset_list_frame: %s data rows prepared, col_widths=%s", len(row_data), col_widths)
 
     # ttk style — keyed to this widget so repeated calls don't bleed into other Treeviews.
     style = ttk.Style()
     style.configure("UserAssets.Treeview", font=default_font)
     style.configure("UserAssets.Treeview.Heading", font=bold_font)
+    logger.debug("build_user_asset_list_frame: ttk style configured")
 
     border_frame = tk.Frame(frame, relief='solid', borderwidth=1)
     border_frame.grid(row=1, column=0, sticky='nsew', padx=padx, pady=pady)
@@ -274,24 +291,37 @@ def build_user_asset_list_frame(parent, user_id, *, include_checkboxes=False,
             cb_var = tk.BooleanVar(value=False)
             check_vars.append((cb_var, asset_tag))
             iid_to_var[iid] = cb_var
+    logger.debug("build_user_asset_list_frame: tree populated; iid_to_var size=%s", len(iid_to_var))
 
     if not row_data:
         tree.insert("", "end", values=["No assets checked out to this user"] + [""] * (len(col_ids) - 1))
+        logger.debug("build_user_asset_list_frame: no assets row inserted")
 
     if include_checkboxes:
         last_col_idx = len(col_ids) - 1
+        logger.debug("build_user_asset_list_frame: binding click handler for checkbox column idx=%s", last_col_idx)
         def _toggle_check(event):
+            """Toggle the checkbox state for the clicked row in the asset list.
+
+            Args:
+                event: Tk mouse event containing x/y coordinates.
+            """
+            logger.debug("_toggle_check: click event at x=%s y=%s", event.x, event.y)
             region = tree.identify_region(event.x, event.y)
             if region != "cell":
+                logger.debug("_toggle_check: click not in cell region (%s); ignoring", region)
                 return
             col = tree.identify_column(event.x)
             if int(col[1:]) - 1 != last_col_idx:
+                logger.debug("_toggle_check: click in col %s, not last_col_idx %s; ignoring", col, last_col_idx)
                 return
             iid = tree.identify_row(event.y)
             if not iid or iid not in iid_to_var:
+                logger.debug("_toggle_check: iid=%s not in iid_to_var; ignoring", iid)
                 return
             cb_var = iid_to_var[iid]
             new_val = not cb_var.get()
+            logger.debug("_toggle_check: toggling iid=%s to new_val=%s", iid, new_val)
             cb_var.set(new_val)
             cur = list(tree.item(iid, "values"))
             cur[last_col_idx] = "☑" if new_val else "☐"
@@ -412,28 +442,34 @@ def _get_paged(url: str, headers: dict | None = None, limit: int = 500, extra_pa
     Returns:
         List of row dicts across all pages.
     """
+    logger.debug("_get_paged: url=%s, limit=%s, extra_params=%s", url, limit, extra_params)
     # Construct a base URL and iterate paginated results.
     base = Key.API_URL_Base.rstrip("/")
     offset = 0
     rows_all = []
     headers = headers or get_headers()
+    logger.debug("_get_paged: starting pagination loop for %s", url)
     while True:
         try:
             sep = "&" if "?" in url else "?"
             page_url = f"{base}{url}{sep}limit={limit}&offset={offset}"
             if extra_params:
                 page_url += f"&{extra_params.lstrip('&')}"
+            logger.debug("_get_paged: fetching page offset=%s, url=%s", offset, page_url)
             r = requests.get(page_url, headers=headers, timeout=20)
             r.raise_for_status()
             data = r.json()
             rows = data.get("rows") or data.get("data") or []
+            logger.debug("_get_paged: page offset=%s returned %s rows", offset, len(rows))
         except Exception:
             logger.exception("Failed to fetch paged data from %s", url)
             break
         rows_all.extend(rows)
         if len(rows) < limit:
+            logger.debug("_get_paged: last page reached (rows=%s < limit=%s)", len(rows), limit)
             break
         offset += limit
+    logger.debug("_get_paged: total rows fetched from %s: %s", url, len(rows_all))
     return rows_all
 
 def getAllStatusOptions():
@@ -442,8 +478,10 @@ def getAllStatusOptions():
     Returns:
         List of dicts: {"label": <status name>, "id": <status id>, "meta": {...}}
     """
+    logger.debug("getAllStatusOptions: fetching status labels from Snipe-IT")
     # /api/v1/statuslabels?type=asset is the endpoint.
     rows = _get_paged("/statuslabels", get_headers(), extra_params="type=asset")
+    logger.debug("getAllStatusOptions: received %s raw status rows", len(rows))
     out = []
     for st in rows:
         out.append({
@@ -451,6 +489,7 @@ def getAllStatusOptions():
             "id": st.get("id"),
             "meta": st,
         })
+    logger.debug("getAllStatusOptions: built %s status option entries", len(out))
     # Unique & sorted.
     seen, uniq = set(), []
     for o in out:
@@ -458,7 +497,9 @@ def getAllStatusOptions():
             continue
         seen.add(o["id"])
         uniq.append(o)
-    return sorted(uniq, key=lambda o: o["label"].lower())
+    result = sorted(uniq, key=lambda o: o["label"].lower())
+    logger.debug("getAllStatusOptions: returning %s unique sorted status options", len(result))
+    return result
 
 def getAllAssigneeOptions():
     """Return combined user+location options for assignment autocomplete.
@@ -466,9 +507,11 @@ def getAllAssigneeOptions():
     Returns:
         List of dicts with fields: label, id, type, username, email, meta.
     """
+    logger.debug("getAllAssigneeOptions: fetching users and locations from Snipe-IT")
     headers = get_headers()
     users = _get_paged("/users", headers)
     locs  = _get_paged("/locations", headers)
+    logger.debug("getAllAssigneeOptions: got %s users and %s locations", len(users), len(locs))
 
     out = []
     for u in users:
@@ -481,6 +524,7 @@ def getAllAssigneeOptions():
             "email": (u.get("email") or "").strip(),
             "meta": u,
         })
+    logger.debug("getAllAssigneeOptions: appended %s user options", len(users))
     for l in locs:
         out.append({
             "label": (l.get("name") or "").strip(),
@@ -490,6 +534,7 @@ def getAllAssigneeOptions():
             "email": "",
             "meta": l,
         })
+    logger.debug("getAllAssigneeOptions: appended %s location options", len(locs))
 
     # unique by (type,id) & sorted
     seen, uniq = set(), []
@@ -499,14 +544,19 @@ def getAllAssigneeOptions():
             continue
         seen.add(k)
         uniq.append(o)
-    return sorted(uniq, key=lambda o: o["label"].lower())
+    result = sorted(uniq, key=lambda o: o["label"].lower())
+    logger.debug("getAllAssigneeOptions: returning %s unique sorted assignee options", len(result))
+    return result
 
 def getAllModelOptions():
+    """Return all asset model options for autocomplete.
+
+    Returns:
+        List of dicts: {"label": <model name>, "id": <model id>, "meta": {...}}
     """
-    All asset models as:
-      {"label": <model name>, "id": <model id>, "meta": {...}}
-    """
+    logger.debug("getAllModelOptions: fetching models from Snipe-IT")
     rows = _get_paged("/models", get_headers())
+    logger.debug("getAllModelOptions: received %s raw model rows", len(rows))
     out = []
     for m in rows:
         out.append({
@@ -514,6 +564,7 @@ def getAllModelOptions():
             "id": m.get("id"),
             "meta": m,
         })
+    logger.debug("getAllModelOptions: built %s model option entries", len(out))
     # unique by id & sorted by label
     seen, uniq = set(), []
     for o in out:
@@ -521,4 +572,6 @@ def getAllModelOptions():
             continue
         seen.add(o["id"])
         uniq.append(o)
-    return sorted(uniq, key=lambda o: o["label"].lower())
+    result = sorted(uniq, key=lambda o: o["label"].lower())
+    logger.debug("getAllModelOptions: returning %s unique sorted model options", len(result))
+    return result

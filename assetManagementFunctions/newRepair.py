@@ -28,7 +28,14 @@ def newRepair(asset_tag):
     logger.info("Starting new repair workflow for %s", asset_tag)
     # -------- helper: ask/retry wrappers --------
     def _resp_json(resp):
-        """Safely parse JSON from a requests response."""
+        """Safely parse JSON from a requests response.
+
+        Args:
+            resp: requests.Response object.
+
+        Returns:
+            Parsed JSON dict or fallback dict with raw text.
+        """
         try:
             return resp.json()
         except Exception:
@@ -36,13 +43,22 @@ def newRepair(asset_tag):
             return {"raw": resp.text}
 
     def _is_success(resp):
-        """Return True when the response is HTTP OK and not a Snipe error."""
+        """Return True when the response is HTTP OK and not a Snipe error.
+
+        Args:
+            resp: requests.Response object.
+
+        Returns:
+            True if the response indicates success.
+        """
+        logger.debug("_is_success: status_code=%s", resp.status_code)
         # HTTP OK and either no 'status' key or status != 'error'
         if not (200 <= resp.status_code < 300):
             return False
         try:
             data = resp.json()
             if isinstance(data, dict) and data.get("status") == "error":
+                logger.debug("_is_success: response JSON has status=error")
                 return False
         except Exception:
             # If not JSON but HTTP OK, treat as success
@@ -50,15 +66,21 @@ def newRepair(asset_tag):
         return True
 
     def _do_with_retry(op_name, fn):
+        """Execute an operation with retry/cancel on failure.
+
+        Args:
+            op_name: Human-readable name of the operation for error messages.
+            fn: Callable returning a requests.Response (or raising).
+
+        Returns:
+            Parsed JSON response on success, or None if user cancels.
         """
-        fn() should return a 'requests.Response' (or raise).
-        On failure we show askretrycancel and loop if 'Retry'.
-        Return the successful response JSON (or None if Cancel).
-        """
+        logger.debug("_do_with_retry: starting op=%s", op_name)
         while True:
             try:
                 # Execute the operation callable.
                 resp = fn()
+                logger.debug("_do_with_retry: op=%s returned status=%s", op_name, resp.status_code)
             except Exception as e:
                 logger.exception("%s raised an exception", op_name)
                 retry = messagebox.askretrycancel(
@@ -66,6 +88,7 @@ def newRepair(asset_tag):
                     message=f"{op_name} raised an exception:\n{type(e).__name__}: {e}\n\nRetry?"
                 )
                 if retry:
+                    logger.debug("_do_with_retry: user chose retry for op=%s", op_name)
                     continue
                 return None
 
@@ -85,21 +108,27 @@ def newRepair(asset_tag):
                 )
             )
             if retry:
+                logger.debug("_do_with_retry: user chose retry for op=%s", op_name)
                 continue
             return None
 
 
     def _do_with_retry_or_skip(op_name, fn):
+        """Execute an operation with retry, skip, or cancel on failure.
+
+        Args:
+            op_name: Human-readable name of the operation for error messages.
+            fn: Callable returning a requests.Response (or raising).
+
+        Returns:
+            Parsed JSON on success, {"__skipped__": True} if skipped, or None if aborted.
         """
-        Like _do_with_retry, but on failure uses Yes/No/Cancel:
-          Yes   -> Retry
-          No    -> Skip this step (return {"__skipped__": True})
-          Cancel-> Abort the whole flow (return None)
-        """
+        logger.debug("_do_with_retry_or_skip: starting op=%s", op_name)
         while True:
             try:
                 # Execute the operation callable.
                 resp = fn()
+                logger.debug("_do_with_retry_or_skip: op=%s returned status=%s", op_name, resp.status_code)
             except Exception as e:
                 logger.exception("%s raised an exception", op_name)
                 choice = messagebox.askyesnocancel(
@@ -107,11 +136,13 @@ def newRepair(asset_tag):
                     message=f"{op_name} raised {type(e).__name__}: {e}\n\nYes = Retry, No = Skip, Cancel = Abort"
                 )
                 if choice is True:  # Retry
+                    logger.debug("_do_with_retry_or_skip: user chose retry for op=%s", op_name)
                     continue
                 elif choice is False:  # Skip
                     logger.warning("%s skipped by user", op_name)
                     return {"__skipped__": True}
                 else:  # Cancel
+                    logger.info("_do_with_retry_or_skip: user aborted op=%s", op_name)
                     return None
 
             # success?
@@ -120,11 +151,13 @@ def newRepair(asset_tag):
                 try:
                     data = resp.json()
                     if isinstance(data, dict) and data.get("status") == "error":
+                        logger.debug("_do_with_retry_or_skip: op=%s HTTP OK but status=error", op_name)
                         ok = False
                 except Exception:
                     pass
 
             if ok:
+                logger.info("%s succeeded", op_name)
                 try:
                     return resp.json()
                 except Exception:
@@ -142,36 +175,47 @@ def newRepair(asset_tag):
                 message=f"Response:\n{pretty}\n\nYes = Retry, No = Skip, Cancel = Abort"
             )
             if choice is True:
+                logger.debug("_do_with_retry_or_skip: user chose retry for op=%s", op_name)
                 continue
             elif choice is False:
                 logger.warning("%s skipped by user", op_name)
                 return {"__skipped__": True}
             else:
+                logger.info("_do_with_retry_or_skip: user aborted op=%s", op_name)
                 return None
 
 
     # ------------------ UI setup ------------------
     def submit_response():
         """Collect UI inputs and submit the repair workflow."""
+        logger.debug("submit_response: collecting inputs for asset_tag=%s", asset_tag)
         # Capture current values (so retries always use these).
         _title = title_entry.get().strip()
         _at_fault = 'Yes' if at_fault_var.get() == 1 else 'No'
         _issue = issue_entry.get("1.0", tk.END).strip()
+        logger.debug("submit_response: title=%s at_fault=%s issue_len=%s", _title, _at_fault, len(_issue))
 
         # Run the submission workflow; only close on full success.
+        logger.info("submit_response: submitting repair for %s", asset_tag)
         success = submitMaintenance(asset_tag, _at_fault, _issue, _title)
         if success:
+            logger.info("submit_response: repair workflow complete for %s", asset_tag)
             issue_window.destroy()
+        else:
+            logger.warning("submit_response: repair workflow did not complete for %s", asset_tag)
 
     def on_enter_pressed_in_issue_entry(event):
         """Handle Enter/Shift+Enter in the issue text box."""
         if event.state & 0x0001:  # Shift+Enter for newline
+            logger.debug("on_enter_pressed_in_issue_entry: Shift+Enter, inserting newline")
             issue_entry.insert(tk.INSERT, "\n")
         else:
+            logger.debug("on_enter_pressed_in_issue_entry: Enter pressed, submitting")
             submit_response()
 
     def on_enter_pressed(event):
         """Move focus to the fault radio buttons."""
+        logger.debug("on_enter_pressed: shifting focus to fault radio buttons")
         at_fault_yes.focus_set()
 
     issue_window = tk.Toplevel()
@@ -252,14 +296,28 @@ def newRepair(asset_tag):
 
     # ---------------- core submission flow ----------------
     def submitMaintenance(asset_tag, at_fault, issue_description, title):
-        """Execute the repair workflow in Snipe-IT and messaging services."""
+        """Execute the repair workflow in Snipe-IT and messaging services.
+
+        Args:
+            asset_tag: Asset tag being repaired.
+            at_fault: 'Yes' or 'No' string indicating student fault.
+            issue_description: Freeform description of the issue.
+            title: Title for the maintenance record.
+
+        Returns:
+            True on full success, False if any critical step fails or is aborted.
+        """
+        logger.debug("submitMaintenance: asset_tag=%s at_fault=%s title=%s", asset_tag, at_fault, title)
+        logger.info("submitMaintenance: fetching asset data for %s", asset_tag)
         junk, assetData = getAssetInfo(asset_tag)
+        logger.debug("submitMaintenance: asset id=%s name=%s", assetData.get("id"), assetData.get("name"))
         url = "https://trinityes.snipe-it.io/api/v1"
 
         # Decide effective email behavior up front (handles "no current assignee" case).
         want_email = bool(email_var.get())
         recipient_email = None
         full_name = None
+        logger.debug("submitMaintenance: want_email=%s", want_email)
 
         # Try the current assignee first.
         if want_email:
@@ -267,12 +325,16 @@ def newRepair(asset_tag):
             current_email = assigned.get("email")
             full_name = assigned.get("name")
 
+            logger.debug("submitMaintenance: current_email=%s full_name=%s", current_email, full_name)
             if current_email and is_email(current_email):
+                logger.debug("submitMaintenance: using current assignee email=%s", current_email)
                 recipient_email = current_email
             else:
                 # No current assignee / invalid email → ask to use last user or turn off.
+                logger.info("submitMaintenance: no valid current assignee email; looking up last user for %s", asset_tag)
                 last_email = getLatestCheckinName(assetData["id"], email=True)
                 last_name  = getLatestCheckinName(assetData["id"])  # name for templates
+                logger.debug("submitMaintenance: last_email=%s last_name=%s", last_email, last_name)
 
                 if last_email and is_email(last_email):
                     use_last = messagebox.askyesno(
@@ -312,25 +374,31 @@ def newRepair(asset_tag):
             f"Email Parent: {parent_var.get()}"
         )
 
+        logger.debug("submitMaintenance: issue_notes length=%s want_email=%s", len(issue_notes), want_email)
         # Optional email/text notifications (best-effort; surfaced if fail).
         if want_email:
             # Choose template and handle "remove fine" flag based on the effective recipient
             if recipient_email and remove_fine_warning(recipient_email):
+                logger.debug("submitMaintenance: remove_fine flag set for %s", recipient_email)
                 content = repair_notice_no_fine(full_name or "")
                 issue_notes += " Remove Charge: True"
             else:
+                logger.debug("submitMaintenance: standard repair notice for %s", recipient_email)
                 content = repair_notice(full_name or "")
 
             subject = "Repair Notice"
             recipient = recipient_email if recipient_email and is_email(recipient_email) else support_email
+            logger.info("submitMaintenance: sending repair notice to recipient=%s subject=%s", recipient, subject)
             if recipient is support_email:
                 if not full_name:
                     subject = "Error name not found: " + subject
                 if not (recipient_email and is_email(recipient_email)):
                     subject = "Error email not valid/missing: " + subject
+            logger.debug("submitMaintenance: final subject=%s", subject)
 
             def _send_msg():
                 """Send repair notice through the messaging utility."""
+                logger.debug("_send_msg: sending to recipient=%s subject=%s", recipient, subject)
                 # wrap in callable so failures hit the same retry UI
                 message(content, recipient,
                         subject=subject,
@@ -349,7 +417,7 @@ def newRepair(asset_tag):
             _ = _do_with_retry("Send repair notice", _send_msg)
             if _ is None:
                 # User canceled messaging; continue with Snipe-IT anyway
-                pass
+                logger.info("submitMaintenance: messaging canceled by user; continuing with Snipe-IT")
 
         today = str(date.today())
 
@@ -361,14 +429,17 @@ def newRepair(asset_tag):
             pending_repair_id = 17
         current_status_id = assetData["status_label"]["id"]
 
+        logger.debug("submitMaintenance: current_status_id=%s pending_repair_id=%s", current_status_id, pending_repair_id)
         if current_status_id == pending_repair_id:
             # Already in Pending Repair — skip check-in quietly
+            logger.info("submitMaintenance: asset %s already in pending repair; skipping check-in", asset_tag)
             checkin_result = {"__skipped__": True}
         else:
             payload1 = {"status_id": current_status_id}
 
             def _checkin():
                 """POST a check-in to unassign the asset."""
+                logger.debug("_checkin: posting check-in for asset id=%s", assetData["id"])
                 return requests.post(f"{url}/hardware/{assetData['id']}/checkin",
                                      json=payload1, headers=get_headers())
 
@@ -388,6 +459,7 @@ def newRepair(asset_tag):
         }
         def _update_status():
             """PUT an updated status on the asset."""
+            logger.debug("_update_status: updating asset id=%s to status_id=%s", assetData["id"], pending_repair_id)
             return requests.put(f"{url}/hardware/{assetData['id']}",
                                 json=payload2, headers=get_headers())
         logger.info(
@@ -406,6 +478,7 @@ def newRepair(asset_tag):
             supplier_id = 1
 
         maintenance_type = settings.get("repairMaintenanceType", "Repair")
+        logger.debug("submitMaintenance: maintenance_type=%s supplier_id=%s title=%s", maintenance_type, supplier_id, title)
         payload3 = {
             "asset_maintenance_type": maintenance_type,
             "start_date": today,
@@ -416,6 +489,7 @@ def newRepair(asset_tag):
         }
         def _create_maint():
             """POST a new maintenance record for the repair."""
+            logger.debug("_create_maint: creating maintenance for asset_id=%s", assetData["id"])
             return requests.post(f"{url}/maintenances", json=payload3, headers=get_headers())
         logger.info(
             "Creating maintenance for %s (supplier_id=%s type=%s)",
@@ -431,14 +505,17 @@ def newRepair(asset_tag):
         junk, assetData = getAssetInfo(asset_tag)
 
         # 4) Print label (Retry / Skip / Cancel).
+        logger.debug("submitMaintenance: refreshing asset data for label printing")
         def _print_label():
             """Render and print the repair label."""
+            logger.debug("_print_label: printing label for asset_tag=%s", assetData["asset_tag"])
             printData = [
                 assetData["asset_tag"],
                 assetData["status_label"]["name"],
                 assetData["name"],
                 title or ""
             ]
+            logger.info("_print_label: calling createImage with data=%s", printData)
             createImage(printData)
             class _Fake:
                 """Simple response stub for print flow."""

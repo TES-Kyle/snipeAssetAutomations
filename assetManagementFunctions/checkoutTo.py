@@ -34,6 +34,7 @@ def checkoutTo(asset_tag):
 
     def on_enter_pressed(event):
         """Handle Enter key submission."""
+        logger.debug("on_enter_pressed: Enter key pressed for %s", asset_tag)
         submit()
 
     def submit():
@@ -138,28 +139,39 @@ def checkoutTo(asset_tag):
         # Ensure API user prompt (if needed) happens on the UI thread.
         get_api_key()
         query = checkout_to_var.get()
+        logger.debug("update_user_list: query=%s", query)
 
         # Debounce keystrokes to avoid spamming the API.
         if debounce_timer:
             debounce_timer.cancel()
 
         if len(query) < 1:
+            logger.debug("update_user_list: query too short, skipping")
             return
 
+        logger.debug("update_user_list: scheduling async fetch for query=%s", query)
         debounce_timer = threading.Timer(0.3, lambda: fetch_users_async(query))
         debounce_timer.start()
 
     def fetch_users_async(query):
-        """Fetch user matches asynchronously and update the combobox."""
+        """Fetch user matches asynchronously and update the combobox.
+
+        Args:
+            query: Search query to look up users.
+        """
+        logger.debug("fetch_users_async: query=%s", query)
         # Use cached results when available.
         if query in user_cache:
+            logger.debug("fetch_users_async: cache hit for query=%s", query)
             user_combobox['values'] = list(user_cache[query].keys())
             return
 
         def fetch():
             """Fetch and cache user results for the query."""
+            logger.debug("fetch: fetching users for query=%s in background", query)
             users = fetch_users(query)
             if users:
+                logger.debug("fetch: caching %s users for query=%s", len(users), query)
                 user_cache[query] = users
                 user_combobox['values'] = list(users.keys())
 
@@ -212,21 +224,28 @@ def checkoutTo(asset_tag):
 
     def on_status_tab_complete(event):
         """Autocomplete the first status option on Tab."""
+        logger.debug("on_status_tab_complete: Tab pressed for status combobox")
         values = status_combobox['values']
         if values:
             status_combobox.set(values[0])
+            logger.debug("on_status_tab_complete: set to first status option: %s", values[0])
         return "break"
 
     def on_tab_complete(event):
         """Autocomplete the first user option on Tab."""
+        logger.debug("on_tab_complete: Tab pressed for user combobox")
         values = user_combobox['values']
         if values:
             user_combobox.set(values[0])
+            logger.debug("on_tab_complete: set to first user option: %s", values[0])
         return "break"
 
+    logger.debug("checkoutTo: creating checkout window for %s", asset_tag)
     checkout_window = tk.Toplevel()
 
+    logger.debug("checkoutTo: fetching asset info for %s", asset_tag)
     var_list, assetData = getAssetInfo(asset_tag)
+    logger.debug("checkoutTo: asset fetched id=%s name=%s", assetData.get("id"), assetData.get("name"))
     exists2 = assetData['assigned_to']
     logger.debug("Assigned_to for %s: %s", asset_tag, exists2)
     logger.debug("Assigned_to raw value for %s: %s", asset_tag, assetData['assigned_to'])

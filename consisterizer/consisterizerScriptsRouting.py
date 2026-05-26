@@ -3,7 +3,9 @@
 Defines optional scripts that can run after Consisterizer saves an asset.
 """
 
-# Handler
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Scripts to run on submit.
 from assetManagementFunctions.jamfDeleteAndUnprestage import jamf_remove_prestage_and_delete
@@ -12,6 +14,8 @@ from assetManagementFunctions.jamfDeleteAndUnprestage import jamf_remove_prestag
 submit_func_list = [
     jamf_remove_prestage_and_delete
 ]
+
+logger.info("consisterizerScriptsRouting: %s submit scripts registered", len(submit_func_list))
 
 # Display labels aligned with submit_func_list.
 submit_func_listTXT = [

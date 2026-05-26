@@ -6,7 +6,7 @@
   "labelName": "62",
   "printerType": "QL-720NW",
   "Default Print (BOOL)": "1",
-  "logLevel": "DEBUG",
+  "logLevel": "INFO",
   "logAssetData": "1",
   "logWindowAutocloseSeconds": "120",
   "pytestVerbosity": "0",

@@ -4,6 +4,10 @@ Defines the list of callable asset actions and their display labels
 for the main GUI.
 """
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 from assetManagementFunctions.printSelected import printSelected
 from assetManagementFunctions.newRepair import newRepair
 from assetManagementFunctions.pantsShipping import pantsShipping
@@ -39,6 +43,8 @@ func_list = [printSelected,
              jamf_delete_and_set_prestage,
              redeploy_jamf_framework
              ]
+logger.info("assetFunctionsRouting: %s functions registered", len(func_list))
+
 # Display names aligned with func_list.
 func_listTXT = ["Print Selected",
                 "New Repair",

@@ -16,6 +16,8 @@ import os
 from typing import Optional
 from utilities.settings import get_settings as _load_settings
 
+logger = logging.getLogger(__name__)
+
 _CONFIGURED = False
 _CURRENT_LEVEL = logging.DEBUG
 
@@ -71,11 +73,15 @@ def _safe_read_json(path: str) -> dict:
     Returns:
         Parsed dict or empty dict when read/parse fails.
     """
+    logger.debug("_safe_read_json: reading path=%s", path)
     try:
         # Read JSON from disk; return empty dict on any error.
         with open(path, "r") as fh:
-            return json.load(fh)
-    except Exception:
+            data = json.load(fh)
+        logger.debug("_safe_read_json: loaded %s keys from %s", len(data) if isinstance(data, dict) else "N/A", path)
+        return data
+    except Exception as exc:
+        logger.debug("_safe_read_json: failed to read %s: %s", path, exc)
         return {}
 
 
@@ -97,25 +103,33 @@ def _resolve_log_level(level_name: Optional[str]) -> int:
         "INFO": logging.INFO,
         "DEBUG": logging.DEBUG,
     }
-    return mapping.get(name, logging.DEBUG)
+    resolved = mapping.get(name, logging.DEBUG)
+    logger.debug("_resolve_log_level: level_name=%s resolved=%s", level_name, logging.getLevelName(resolved))
+    return resolved
 
 
-def _handler_exists(logger: logging.Logger, handler_type: type) -> bool:
+def _handler_exists(log: logging.Logger, handler_type: type) -> bool:
     """Return True if the logger already has a handler of the exact given type."""
-    return any(type(handler) is handler_type for handler in logger.handlers)
+    result = any(type(handler) is handler_type for handler in log.handlers)
+    logger.debug("_handler_exists: handler_type=%s exists=%s", handler_type.__name__, result)
+    return result
 
 
-def _update_handler_levels(logger: logging.Logger, level: int) -> None:
+def _update_handler_levels(log: logging.Logger, level: int) -> None:
     """Update levels on existing handlers to reflect current settings.
 
     Args:
-        logger: Logger whose handlers should be updated.
+        log: Logger whose handlers should be updated.
         level: New logging level.
     """
+    logger.debug("_update_handler_levels: updating handlers to level=%s", logging.getLevelName(level))
     # Apply the new level across supported handler types.
-    for handler in logger.handlers:
+    updated = 0
+    for handler in log.handlers:
         if isinstance(handler, (logging.handlers.RotatingFileHandler, StderrStreamHandler, logging.StreamHandler, QueueLogHandler)):
             handler.setLevel(level)
+            updated += 1
+    logger.debug("_update_handler_levels: updated %s handlers", updated)
 
 
 def configure_logging(log_to_console: bool = False, log_queue=None) -> None:
@@ -160,24 +174,32 @@ def configure_logging(log_to_console: bool = False, log_queue=None) -> None:
 
         _CONFIGURED = True
         _CURRENT_LEVEL = level
+        logger.info("configure_logging: logging initialized level=%s log_path=%s", logging.getLevelName(level), log_path)
     elif level != _CURRENT_LEVEL:
+        logger.debug("configure_logging: updating handler levels old=%s new=%s", logging.getLevelName(_CURRENT_LEVEL), logging.getLevelName(level))
         _update_handler_levels(root_logger, level)
         _CURRENT_LEVEL = level
+    else:
+        logger.debug("configure_logging: already configured at level=%s", logging.getLevelName(level))
 
     # Optionally mirror logs to stderr for CLI scripts.
     if log_to_console and not _handler_exists(root_logger, logging.StreamHandler):
+        logger.debug("configure_logging: adding console StreamHandler")
         stream_handler = logging.StreamHandler()
         stream_handler.setLevel(level)
         stream_handler.setFormatter(formatter)
         root_logger.addHandler(stream_handler)
     elif log_to_console:
+        logger.debug("configure_logging: console handler already present, updating level")
         _update_handler_levels(root_logger, level)
 
     # Optionally mirror logs to a UI queue for display.
     if log_queue is not None and not _handler_exists(root_logger, QueueLogHandler):
+        logger.debug("configure_logging: adding QueueLogHandler for UI display")
         queue_handler = QueueLogHandler(log_queue)
         queue_handler.setLevel(level)
         queue_handler.setFormatter(formatter)
         root_logger.addHandler(queue_handler)
     elif log_queue is not None:
+        logger.debug("configure_logging: queue handler already present, updating level")
         _update_handler_levels(root_logger, level)

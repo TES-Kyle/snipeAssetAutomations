@@ -21,8 +21,11 @@ def pantsShipping(asset_tag, *args):
         Status message string for the main UI.
     """
     configure_logging()
+    logger.debug("pantsShipping: asset_tag=%s extra_args=%s", asset_tag, args)
     # Fetch asset info to build check-in/update payloads.
+    logger.debug("pantsShipping: fetching asset info for %s", asset_tag)
     junk, genericValues = getAssetInfo(asset_tag)
+    logger.debug("pantsShipping: asset fetched id=%s name=%s", genericValues.get("id"), genericValues.get("name"))
 
     putURL = Key.API_URL_Base + "hardware/" + str(genericValues["id"])
     logger.info("Pants shipping started for %s", asset_tag)
@@ -66,7 +69,9 @@ def pantsShipping(asset_tag, *args):
         return f"Pants shipping failed for {asset_tag}: update failed."
 
     logger.info("Pants shipping update complete for %s", asset_tag)
+    logger.debug("pantsShipping: refreshing asset data for %s after update", asset_tag)
     junk, genericValues = getAssetInfo(asset_tag)
+    logger.debug("pantsShipping: refreshed asset status=%s", genericValues.get("status_label", {}).get("name"))
     # printData = [genericValues["asset_tag"], genericValues["status_label"]["name"], genericValues["name"]]
 
     # createImage(printData)

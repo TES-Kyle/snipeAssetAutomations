@@ -25,17 +25,27 @@ logger = logging.getLogger(__name__)
 
 
 def jamf_delete_and_set_prestage(asset_tag: str) -> str:
-    """Remove from other PreStages, add to selected PreStage, and delete record."""
+    """Remove from other PreStages, add to selected PreStage, and delete record.
+
+    Args:
+        asset_tag: Snipe-IT asset tag to process.
+
+    Returns:
+        Status message string describing the outcome.
+    """
+    logger.debug("jamf_delete_and_set_prestage: asset_tag=%s", asset_tag)
     if not asset_tag:
         return "[ERROR] No asset tag provided."
 
     configure_logging()
     settings = get_prestage_settings()
+    logger.debug("jamf_delete_and_set_prestage: settings loaded dry_run=%s", settings.get("dry_run"))
 
     if not _confirm_action(
         "Confirm Jamf Delete",
         "This will update PreStage assignments and delete the Jamf record.\n\nContinue?",
     ):
+        logger.info("jamf_delete_and_set_prestage: user cancelled action for %s", asset_tag)
         return "Cancelled."
 
     logger.info("=== Jamf Delete + Set PreStage ===")
@@ -54,18 +64,23 @@ def jamf_delete_and_set_prestage(asset_tag: str) -> str:
     except Exception as e:
         return f"[ERROR] JAMF: Client init failed: {e}"
 
+    logger.debug("jamf_delete_and_set_prestage: fetching prestage list")
     prestages = _get_prestage_list(jamf_client, settings)
     if not prestages:
+        logger.error("jamf_delete_and_set_prestage: no prestages returned for %s", asset_tag)
         return "[ERROR] JAMF: No PreStages returned."
+    logger.debug("jamf_delete_and_set_prestage: %s prestages available", len(prestages))
 
     choice = _prompt_prestage_choice(prestages)
     if not choice:
+        logger.info("jamf_delete_and_set_prestage: prestage selection cancelled for %s", asset_tag)
         return "PreStage selection cancelled."
 
     target_id = int(choice["id"])
     target_name = choice.get("name") or f"PreStage {target_id}"
     logger.info("Target PreStage: %s (ID %s)", target_name, target_id)
 
+    logger.debug("jamf_delete_and_set_prestage: searching for Jamf computer by serial=%s", serial)
     comp = _find_jamf_computer_by_serial(jamf_client, serial, settings)
     cid = comp["id"] if comp else None
     cname = comp["name"] if comp else None
@@ -74,6 +89,7 @@ def jamf_delete_and_set_prestage(asset_tag: str) -> str:
     else:
         logger.warning("No Jamf computer inventory record found for serial %s.", serial)
 
+    logger.info("jamf_delete_and_set_prestage: removing serial=%s from all prestages except target_id=%s", serial, target_id)
     seen, modified, candidates = _remove_from_all_prestages(
         jamf_client,
         serial,
@@ -90,25 +106,33 @@ def jamf_delete_and_set_prestage(asset_tag: str) -> str:
         return (f"[SAFEGUARD] Skipped set/delete; PreStage removal incomplete "
                 f"({modified}/{candidates} updated).")
 
+    logger.info("jamf_delete_and_set_prestage: adding serial=%s to prestage=%s (ID %s)", serial, target_name, target_id)
     if not _add_serial_to_prestage(jamf_client, target_id, serial, settings):
+        logger.error("jamf_delete_and_set_prestage: failed to add serial=%s to prestage ID %s", serial, target_id)
         _warn("PreStage add failed",
               f"Could not add serial to PreStage {target_name} (ID {target_id}).")
         return f"[ERROR] JAMF: Failed to add to PreStage {target_name} (ID {target_id})."
 
     if cid is None:
+        logger.info("jamf_delete_and_set_prestage: no Jamf record to delete for serial=%s", serial)
         return f"Set PreStage to {target_name} (ID {target_id}); no Jamf record to delete."
 
     if not settings["delete_after_remove"]:
+        logger.info("jamf_delete_and_set_prestage: delete_after_remove=False; skipping delete for cid=%s", cid)
         return (f"Set PreStage to {target_name} (ID {target_id}); "
                 f"SKIPPED delete (setting).")
 
     while True:
+        logger.info("jamf_delete_and_set_prestage: attempting to delete Jamf computer ID %s", cid)
         deleted_ok = _delete_computer_pro(jamf_client, cid, settings)
         if deleted_ok:
+            logger.info("jamf_delete_and_set_prestage: successfully deleted Jamf computer ID %s", cid)
             return (f"Set PreStage to {target_name} (ID {target_id}); "
                     f"deleted Jamf computer-inventory ID {cid}.")
+        logger.error("jamf_delete_and_set_prestage: delete failed for Jamf computer ID %s", cid)
         if _ask_retry_cancel("Jamf delete failed",
                              f"Could not delete Jamf computer ID {cid}.\n\nRetry?"):
+            logger.debug("jamf_delete_and_set_prestage: user chose retry for delete of ID %s", cid)
             continue
         _warn("Jamf delete failed",
               f"PreStage set succeeded, but deletion failed for ID {cid}.")

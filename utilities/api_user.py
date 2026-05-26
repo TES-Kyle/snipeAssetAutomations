@@ -37,7 +37,10 @@ def _clean_name(value) -> str:
     Returns:
         Cleaned string representation (always safe to compare).
     """
-    return str(value or "").strip()
+    logger.debug("_clean_name: value=%s", value)
+    result = str(value or "").strip()
+    logger.debug("_clean_name: result=%s", result)
+    return result
 
 
 def _load_key_map() -> dict:
@@ -46,8 +49,10 @@ def _load_key_map() -> dict:
     Returns:
         Dict of {display_name: api_key} with empty values removed.
     """
+    logger.debug("_load_key_map: loading API_KEYS from Key module")
     raw = getattr(Key, "API_KEYS", None)
     if not isinstance(raw, dict):
+        logger.debug("_load_key_map: API_KEYS not a dict (got %s); returning empty map", type(raw).__name__)
         return {}
     key_map = {}
     for name, token in raw.items():
@@ -56,6 +61,7 @@ def _load_key_map() -> dict:
         token_clean = _clean_name(token)
         if name_clean and token_clean:
             key_map[name_clean] = token_clean
+    logger.debug("_load_key_map: loaded %s entries", len(key_map))
     return key_map
 
 
@@ -69,14 +75,20 @@ def _lookup_key_case_insensitive(name: str, key_map: dict) -> tuple[str | None, 
     Returns:
         (canonical_name, token) tuple, or (None, None) when no match exists.
     """
+    logger.debug("_lookup_key_case_insensitive: name=%s, key_map size=%s", name, len(key_map))
     if not name:
+        logger.debug("_lookup_key_case_insensitive: empty name, returning (None, None)")
         return None, None
     if name in key_map:
+        logger.debug("_lookup_key_case_insensitive: exact match found for %s", name)
         return name, key_map.get(name)
     name_lower = name.lower()
+    logger.debug("_lookup_key_case_insensitive: no exact match, trying case-insensitive for %s", name_lower)
     for key, token in key_map.items():
         if key.lower() == name_lower:
+            logger.debug("_lookup_key_case_insensitive: case-insensitive match: %s -> %s", name, key)
             return key, token
+    logger.debug("_lookup_key_case_insensitive: no match found for %s", name)
     return None, None
 
 
@@ -86,7 +98,10 @@ def _get_default_key() -> str:
     Returns:
         API_Key string or empty string if not configured.
     """
-    return _clean_name(getattr(Key, "API_Key", ""))
+    logger.debug("_get_default_key: reading API_Key from Key module")
+    result = _clean_name(getattr(Key, "API_Key", ""))
+    logger.debug("_get_default_key: API_Key present=%s", bool(result))
+    return result
 
 
 def _get_timeout_seconds(settings: dict) -> float:
@@ -98,14 +113,20 @@ def _get_timeout_seconds(settings: dict) -> float:
     Returns:
         Timeout in seconds (float), never negative.
     """
+    logger.debug("_get_timeout_seconds: reading apiUserTimeoutMinutes from settings")
     raw = settings.get("apiUserTimeoutMinutes", "5")
+    logger.debug("_get_timeout_seconds: raw value=%s", raw)
     try:
         minutes = float(raw)
     except Exception:
+        logger.debug("_get_timeout_seconds: could not parse %s, defaulting to 5.0", raw)
         minutes = 5.0
     if minutes < 0:
+        logger.debug("_get_timeout_seconds: negative value clamped to 0")
         minutes = 0.0
-    return minutes * 60.0
+    result = minutes * 60.0
+    logger.debug("_get_timeout_seconds: timeout=%s seconds", result)
+    return result
 
 
 def _is_static_name(name: str) -> bool:
@@ -117,7 +138,10 @@ def _is_static_name(name: str) -> bool:
     Returns:
         True when the name is non-empty and not a fallback sentinel.
     """
-    return bool(name) and name.lower() not in _FALLBACK_NAMES
+    logger.debug("_is_static_name: checking name=%s", name)
+    result = bool(name) and name.lower() not in _FALLBACK_NAMES
+    logger.debug("_is_static_name: result=%s", result)
+    return result
 
 
 def _prompt_for_user_name(key_map: dict, settings: dict) -> str | None:
@@ -130,18 +154,22 @@ def _prompt_for_user_name(key_map: dict, settings: dict) -> str | None:
     Returns:
         User-entered string or None if the dialog is canceled.
     """
+    logger.debug("_prompt_for_user_name: key_map size=%s", len(key_map))
     title = _clean_name(settings.get("apiUserPromptTitle")) or "API User"
     message = _clean_name(settings.get("apiUserPromptMessage")) or "Enter API user name."
+    logger.debug("_prompt_for_user_name: title=%s", title)
 
     if key_map:
         names = sorted(key_map.keys(), key=str.lower)
         preview_limit = 12
         preview = ", ".join(names[:preview_limit])
+        logger.debug("_prompt_for_user_name: showing %s available names", len(names))
         if len(names) > preview_limit:
             preview += "..."
         if preview:
             message = f"{message}\n\nAvailable: {preview}"
 
+    logger.info("_prompt_for_user_name: prompting user for API user selection")
     return simpledialog.askstring(title, message)
 
 
@@ -244,8 +272,10 @@ def get_api_headers(content_type: str | None = "application/json",
     Returns:
         Header dict suitable for requests.
     """
+    logger.debug("get_api_headers: content_type=%s, accept=%s, extra_keys=%s", content_type, accept, list(extra.keys()) if extra else None)
     # Pull the active API key and build base headers.
     token = get_api_key()
+    logger.debug("get_api_headers: token obtained (present=%s)", bool(token))
     headers = {
         "accept": accept,
         "Authorization": f"Bearer {token}",
@@ -253,9 +283,12 @@ def get_api_headers(content_type: str | None = "application/json",
     if content_type:
         # Only include Content-Type when the caller requests it.
         headers["content-type"] = content_type
+        logger.debug("get_api_headers: content-type set to %s", content_type)
     if extra:
         # Allow callers to override or add headers.
         headers.update(extra)
+        logger.debug("get_api_headers: merged %s extra header(s)", len(extra))
+    logger.debug("get_api_headers: returning %s header keys", len(headers))
     return headers
 
 
@@ -304,39 +337,53 @@ def get_api_user_status() -> dict:
           - expires_in: seconds remaining for cached mode, else None
           - detail: optional extra note (e.g., static_missing)
     """
+    logger.debug("get_api_user_status: checking current API user state")
     settings = get_settings()
     key_map = _load_key_map()
     default_key = _get_default_key()
+    logger.debug("get_api_user_status: key_map size=%s, default_key present=%s", len(key_map), bool(default_key))
 
     static_name = _clean_name(settings.get("apiUserStaticName"))
+    logger.debug("get_api_user_status: static_name=%s", static_name)
     if _is_static_name(static_name):
         canon_name, token = _lookup_key_case_insensitive(static_name, key_map)
         if token:
+            logger.debug("get_api_user_status: mode=static, name=%s", canon_name)
             return {"mode": "static", "name": canon_name, "expires_in": None}
         if default_key:
+            logger.debug("get_api_user_status: mode=fallback (static missing)")
             return {"mode": "fallback", "name": "API_Key (fallback)", "expires_in": None, "detail": "static_missing"}
+        logger.debug("get_api_user_status: mode=none (static missing, no fallback)")
         return {"mode": "none", "name": None, "expires_in": None, "detail": "static_missing"}
 
     if not key_map:
         if default_key:
+            logger.debug("get_api_user_status: mode=fallback (no key_map)")
             return {"mode": "fallback", "name": "API_Key (fallback)", "expires_in": None}
+        logger.debug("get_api_user_status: mode=none (no key_map, no fallback)")
         return {"mode": "none", "name": None, "expires_in": None}
 
     now = time.monotonic()
     global _cached_name, _cached_until
+    logger.debug("get_api_user_status: cached_name=%s, cache_valid=%s", _cached_name, _cached_name and now < _cached_until)
     if _cached_name and now < _cached_until:
         canon_name, token = _lookup_key_case_insensitive(_cached_name, key_map)
         if token:
+            expires = max(0.0, _cached_until - now)
+            logger.debug("get_api_user_status: mode=cached, name=%s, expires_in=%s", canon_name, expires)
             return {
                 "mode": "cached",
                 "name": canon_name,
-                "expires_in": max(0.0, _cached_until - now),
+                "expires_in": expires,
             }
+        logger.debug("get_api_user_status: cached name %s no longer in key_map; clearing cache", _cached_name)
         _cached_name = None
         _cached_until = 0.0
 
     if _cached_name and now >= _cached_until:
+        logger.debug("get_api_user_status: cache expired for %s; clearing", _cached_name)
         _cached_name = None
         _cached_until = 0.0
 
+    logger.debug("get_api_user_status: mode=prompt")
     return {"mode": "prompt", "name": None, "expires_in": None}
