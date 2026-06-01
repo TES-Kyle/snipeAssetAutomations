@@ -67,6 +67,7 @@ FIELD_ORDER = [
     "purchase_date",
     "purchase_cost",
     "order_number",
+    "box_number",
     "notes",
 ]
 
@@ -398,6 +399,9 @@ def extract_current_values(assetData: dict) -> dict:
     # Date fields are returned as {"date": "YYYY-MM-DD", ...}; extract just the date string.
     purchase_date = (assetData.get("purchase_date") or {}).get("date") or ""
     expected_checkin = (assetData.get("expected_checkin") or {}).get("date") or ""
+    # Custom field: Box Number lives under custom_fields["Box Number"]["value"].
+    custom_fields = assetData.get("custom_fields") or {}
+    box_number = (custom_fields.get("Box Number") or {}).get("value") or ""
 
     logger.debug("extract_current_values: model=%s status=%s assigned_to=%s", model_name, status_name, assigned_to)
     base = {
@@ -411,6 +415,7 @@ def extract_current_values(assetData: dict) -> dict:
         "purchase_date": purchase_date,
         "purchase_cost": purchase_cost,
         "order_number": order_number,
+        "box_number": box_number,
         "notes": notes,
         "_assigned_username": assigned_username,
     }
@@ -708,7 +713,9 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     opts = ttk.Frame(win)
     opts.pack(fill="x", padx=12, pady=(0, 6))
     maintain_defaults_var = tk.BooleanVar(value=False)
-    ttk.Checkbutton(opts, text="Maintain selected defaults", variable=maintain_defaults_var).pack(anchor="w")
+    bypass_warnings_var = tk.BooleanVar(value=False)
+    ttk.Checkbutton(opts, text="Maintain selected defaults", variable=maintain_defaults_var).pack(side="left", anchor="w")
+    ttk.Checkbutton(opts, text="Bypass default warnings", variable=bypass_warnings_var).pack(side="left", anchor="w", padx=(16, 0))
 
     # -------------------------------------------------------------------------
     # Grid (sticky header + scrollable body)
@@ -873,15 +880,17 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
         _bg.grid(row=i + 1, column=0, columnspan=5, sticky="nsew")
 
         # Col 0: field name label; explicit fg prevents dark-mode bleed.
-        tk.Label(grid_inner, text=key, bg=row_bg, fg=ROW_FG).grid(row=i + 1, column=0, sticky="w", padx=6, pady=3)
+        field_lbl = tk.Label(grid_inner, text=key, bg=row_bg, fg=ROW_FG)
+        field_lbl.grid(row=i + 1, column=0, sticky="w", padx=6, pady=3)
 
         # Col 2: Reset checkbox — toggling triggers a full recompute.
         reset_var = tk.BooleanVar(value=False)
         reset_var.trace_add("write", lambda *_: recompute_all_results())
         # selectcolor matches row_bg so the checkbox indicator blends into the stripe.
-        tk.Checkbutton(grid_inner, variable=reset_var, bg=row_bg, activebackground=row_bg,
+        reset_cb = tk.Checkbutton(grid_inner, variable=reset_var, bg=row_bg, activebackground=row_bg,
                        fg=ROW_FG, selectcolor=row_bg,
-                       highlightthickness=0, bd=0).grid(row=i + 1, column=2, sticky="w", padx=6, pady=3)
+                       highlightthickness=0, bd=0)
+        reset_cb.grid(row=i + 1, column=2, sticky="w", padx=6, pady=3)
 
         # Col 3: Current value (read-only label; updated when asset changes).
         curr_lbl = tk.Label(grid_inner, text=cur, anchor="w", justify="left", bg=row_bg, fg=ROW_FG)
@@ -901,7 +910,9 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
         row_record = {
             "key": key,
             "reset_var": reset_var,
+            "reset_cb": reset_cb,
             "current": cur,
+            "field_lbl": field_lbl,
             "curr_lbl": curr_lbl,
             "result_var": result_var,
             "res_lbl": res_lbl,
@@ -1022,6 +1033,9 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             row_record.update({"text_widget_type": "text", "text": text})
 
         rows_by_key[key] = row_record
+
+    # Fields whose Updates widget is disabled (e.g. custom fields absent on this asset model).
+    _disabled_rows: set = set()
 
     # -------------------------------------------------------------------------
     # Templates (load & normalize)
@@ -1319,6 +1333,8 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                     changed = True
 
             else:
+                if key in _disabled_rows:
+                    continue
                 if not raw_default or raw_default == "{has_value}":
                     continue
                 cur_text = _widget_get_text(r["text"])
@@ -1373,6 +1389,8 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
 
         mismatch_count = 0
         for k in FIELD_ORDER:
+            if k in _disabled_rows:
+                continue  # greyed-out rows don't participate in mismatch highlighting
             row = rows_by_key[k]
             res_lbl = row["res_lbl"]
             default_fg = row["res_lbl_fg_default"]
@@ -1427,6 +1445,8 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                 continue
 
             key = r["key"]
+            if key in _disabled_rows:
+                continue
             raw_default = (active_defaults_templ.get(key, None) or "").strip()
             eval_default = active_defaults_eval.get(key, None)
             logger.debug("reset_selected: resetting key=%s raw_default=%s eval_default=%s", key, raw_default, eval_default)
@@ -1618,6 +1638,14 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                 payload_key = "status_id" if key == "status" else "model_id"
                 payload[payload_key] = sel_id
                 continue
+
+            elif key == "box_number":
+                # Custom field — use the same configured field key as the drop-off workflow.
+                # Snipe-IT API responses don't expose the db column name, so we read it from
+                # settings (dropOffBoxFieldKey) with the same hardcoded fallback dropOff uses.
+                _box_db_col = (get_settings().get("dropOffBoxFieldKey", "") or "").strip() or "_snipeit_box_number_5"
+                logger.debug("_build_patch_payload: box_number db_col=%s value=%s", _box_db_col, new)
+                payload[_box_db_col] = new
 
             else:
                 # Any future fields default to pass-through
@@ -2084,6 +2112,9 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
 
                 # Text fields
                 elif row.get("text_widget_type") == "text":
+                    if fk in _disabled_rows:
+                        logger.debug("_apply_alias: skipping disabled field=%s", fk)
+                        continue
                     txt = "" if v is None else str(v)
                     logger.debug("_apply_alias: setting text field=%s txt=%s", fk, txt)
                     _widget_set_text(row["text"], txt)
@@ -2174,13 +2205,69 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
         logger.debug("_collect_default_warnings: found %s warnings", len(warnings))
         return warnings
 
-    def _run_selected_submit_scripts(asset_tag_for_scripts: str):
+    def _update_box_number_state():
+        """Grey out / re-enable the box_number row based on whether the active asset has that custom field."""
+        logger.debug("_update_box_number_state: checking assetData for Box Number custom field")
+        bn_row = rows_by_key.get("box_number")
+        if not bn_row:
+            return
+        has_field = bool((assetData.get("custom_fields") or {}).get("Box Number"))
+        logger.debug("_update_box_number_state: has_field=%s", has_field)
+
+        t = bn_row.get("text")
+        if t:
+            if has_field:
+                _disabled_rows.discard("box_number")
+                try:
+                    t.configure(state="normal", fg=ENTRY_FG, bg=ENTRY_BG)
+                except Exception:
+                    pass
+            else:
+                _disabled_rows.add("box_number")
+                try:
+                    bn_row["reset_var"].set(False)
+                except Exception:
+                    pass
+                try:
+                    t.configure(state="disabled", fg="grey")
+                except Exception:
+                    pass
+
+        grey = "grey"
+        for lbl_key in ("field_lbl", "curr_lbl"):
+            lbl = bn_row.get(lbl_key)
+            if lbl:
+                try:
+                    lbl.configure(fg=ROW_FG if has_field else grey)
+                except Exception:
+                    pass
+
+        res_lbl = bn_row.get("res_lbl")
+        if res_lbl:
+            try:
+                res_lbl.configure(fg=(bn_row.get("res_lbl_fg_default", ROW_FG) if has_field else grey))
+            except Exception:
+                pass
+
+        cb = bn_row.get("reset_cb")
+        if cb:
+            try:
+                cb.configure(state="normal" if has_field else "disabled")
+            except Exception:
+                pass
+
+    def _run_selected_submit_scripts(asset_tag_for_scripts: str, checked_values: list | None = None):
         """Run checked submit scripts. Silent on success; dialog on any failures.
+
+        Scripts receive (asset_tag, checked_values) where checked_values is a list
+        built from the reset-checked rows (same format the main window passes to
+        printSelected). Scripts that only accept asset_tag fall back via TypeError.
 
         Args:
             asset_tag_for_scripts: Asset tag to pass to each script.
+            checked_values: List of selected field values to pass as the second arg.
         """
-        logger.debug("_run_selected_submit_scripts: asset_tag=%s", asset_tag_for_scripts)
+        logger.debug("_run_selected_submit_scripts: asset_tag=%s checked_values=%s", asset_tag_for_scripts, checked_values)
         had_error = False
         lines = []
         for i, var in enumerate(script_vars):
@@ -2188,14 +2275,25 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                 continue
             logger.info("_run_selected_submit_scripts: running script=%s for asset_tag=%s", submit_func_listTXT[i], asset_tag_for_scripts)
             try:
-                ret = submit_func_list[i](asset_tag_for_scripts)
-                logger.debug("_run_selected_submit_scripts: script=%s returned=%s", submit_func_listTXT[i], ret)
-                if ret not in (None, ""):
-                    lines.append(f"✓ {submit_func_listTXT[i]}: {ret}")
+                ret = submit_func_list[i](asset_tag_for_scripts, checked_values)
+            except TypeError:
+                # Script doesn't accept a second argument — fall back to tag-only call.
+                logger.debug("_run_selected_submit_scripts: script=%s does not accept checked_values, retrying tag-only", submit_func_listTXT[i])
+                try:
+                    ret = submit_func_list[i](asset_tag_for_scripts)
+                except Exception as e:
+                    logger.exception("_run_selected_submit_scripts: script=%s failed", submit_func_listTXT[i])
+                    had_error = True
+                    lines.append(f"✗ {submit_func_listTXT[i]}: {e}")
+                    continue
             except Exception as e:
                 logger.exception("_run_selected_submit_scripts: script=%s failed", submit_func_listTXT[i])
                 had_error = True
                 lines.append(f"✗ {submit_func_listTXT[i]}: {e}")
+                continue
+            logger.debug("_run_selected_submit_scripts: script=%s returned=%s", submit_func_listTXT[i], ret)
+            if ret not in (None, ""):
+                lines.append(f"✓ {submit_func_listTXT[i]}: {ret}")
         if had_error:
             logger.error("_run_selected_submit_scripts: one or more scripts failed")
             messagebox.showerror("Script Errors", "\n".join(lines))
@@ -2215,20 +2313,20 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
         logger.info("_refresh_current_after_save: reloading asset tag=%s", new_tag)
         _switch_asset_in_place(new_tag)
 
-    def _submit_current_asset(prompt_on_warnings: bool = True) -> tuple[bool, str]:
+    def _submit_current_asset(prompt_on_warnings: bool = True) -> tuple[bool, str, dict]:
         """Validate, warn on default mismatches, push to Snipe-IT (PATCH), optionally CHECKIN to unassign, refresh, and update the status line.
 
         Args:
             prompt_on_warnings: Whether to show a dialog for default mismatches.
 
         Returns:
-            Tuple of (ok, tag_for_scripts) where ok is True on success.
+            Tuple of (ok, tag_for_scripts, snapshot) where ok is True on success.
         """
         logger.debug("_submit_current_asset: prompt_on_warnings=%s has_current_asset=%s", prompt_on_warnings, has_current_asset.get())
         if not has_current_asset.get():
             logger.debug("_submit_current_asset: no current asset, showing info dialog")
             messagebox.showinfo("Consisterizer", "Enter or scan an asset tag first.")
-            return False, ""
+            return False, "", {}
 
         status_var.set("")  # clear previous message
         logger.debug("_submit_current_asset: collecting snapshot")
@@ -2239,7 +2337,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
         if errors:
             logger.debug("_submit_current_asset: validation errors=%s", errors)
             messagebox.showerror("Validation Errors", "Please fix the following:\n\n" + "\n".join(errors))
-            return False, (current_map.get("asset_tag") or "")
+            return False, (current_map.get("asset_tag") or ""), {}
 
         warnings = _collect_default_warnings(snapshot) if prompt_on_warnings else []
         if warnings:
@@ -2254,7 +2352,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             )
             if not proceed:
                 logger.debug("_submit_current_asset: user declined to proceed past warnings")
-                return False, (current_map.get("asset_tag") or "")
+                return False, (current_map.get("asset_tag") or ""), {}
 
         # Build PATCH payload
         logger.debug("_submit_current_asset: building patch payload")
@@ -2264,27 +2362,27 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
         except ValueError as ve:
             logger.error("_submit_current_asset: validation error building payload: %s", ve)
             messagebox.showerror("Validation", str(ve))
-            return False, (current_map.get("asset_tag") or "")
+            return False, (current_map.get("asset_tag") or ""), {}
 
         asset_id = assetData.get("id")
         logger.debug("_submit_current_asset: asset_id=%s any_changes=%s need_checkin=%s", asset_id, any_changes, need_checkin)
         if any_changes and payload:
             logger.info("_submit_current_asset: PATCHing asset_id=%s", asset_id)
             if not _api_patch_with_retry(asset_id, payload):
-                return False, (current_map.get("asset_tag") or "")
+                return False, (current_map.get("asset_tag") or ""), {}
 
         # Assignment transitions
         if need_checkin:
             # explicit unassign
             logger.info("_submit_current_asset: checking in asset_id=%s to unassign", asset_id)
             if not _api_checkin_with_retry(asset_id, note="Consisterizer: unassign"):
-                return False, (current_map.get("asset_tag") or "")
+                return False, (current_map.get("asset_tag") or ""), {}
 
         # type change needs a checkin before the checkout
         if must_checkin_first and not need_checkin:
             logger.info("_submit_current_asset: must_checkin_first, checking in asset_id=%s", asset_id)
             if not _api_checkin_with_retry(asset_id, note="Consisterizer: switch assignee type"):
-                return False, (current_map.get("asset_tag") or "")
+                return False, (current_map.get("asset_tag") or ""), {}
 
         if to_user_id is not None or to_loc_id is not None:
             # optionally pass a desired expected_checkin date from snapshot
@@ -2293,7 +2391,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                                             user_id=to_user_id,
                                             location_id=to_loc_id,
                                             note="Consisterizer: assign"):
-                return False, (current_map.get("asset_tag") or "")
+                return False, (current_map.get("asset_tag") or ""), {}
 
         if any_changes or need_checkin or to_user_id is not None or to_loc_id is not None:
             logger.debug("_submit_current_asset: refreshing UI after save")
@@ -2309,7 +2407,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             status_var.set("No changes.")
 
         # IMPORTANT: do NOT run scripts here anymore.
-        return True, tag_for_scripts
+        return True, tag_for_scripts, snapshot
 
     def _switch_asset_in_place(new_tag: str) -> bool:
         """Reload asset data and refresh the UI for a new tag.
@@ -2396,6 +2494,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
 
         logger.debug("_switch_asset_in_place: recomputing results after switch")
         recompute_all_results()
+        _update_box_number_state()
         return True
 
     def _clear_to_wait_for_next(saved_tag: str | None = None):
@@ -2452,6 +2551,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             recompute_all_results()
         except Exception:
             pass
+        _update_box_number_state()
 
         # Title + status + focus + submit gating
         try:
@@ -2538,14 +2638,22 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
 
         # --- 2) Save/update current asset in Snipe-IT ---
         logger.info("_submit_and_maybe_switch: submitting current asset")
-        ok, tag_for_scripts = _submit_current_asset(prompt_on_warnings=True)
+        ok, tag_for_scripts, snapshot = _submit_current_asset(prompt_on_warnings=not bypass_warnings_var.get())
         if not ok:
             logger.debug("_submit_and_maybe_switch: submit failed, aborting")
             return False
 
         # --- 3) Run scripts for the asset we just saved ---
-        logger.debug("_submit_and_maybe_switch: running submit scripts for tag=%s", tag_for_scripts)
-        _run_selected_submit_scripts(tag_for_scripts)
+        # Build checked_values from reset-checked rows (mirrors the main window's printSelected format).
+        checked_values = [tag_for_scripts]
+        for k in FIELD_ORDER:
+            if k == "asset_tag":
+                continue  # printSelected always prepends the tag; skip to avoid printing it twice
+            row = rows_by_key.get(k)
+            if row and row["reset_var"].get() and snapshot.get(k):
+                checked_values.append(snapshot[k])
+        logger.debug("_submit_and_maybe_switch: running submit scripts tag=%s checked_values=%s", tag_for_scripts, checked_values)
+        _run_selected_submit_scripts(tag_for_scripts, checked_values)
 
         # --- 4) Switch UI to next asset (batch) or close (non-batch) ---
         if batch_mode_var.get():
@@ -2601,6 +2709,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     # Run the first full template evaluation to populate all Result labels.
     win.update_idletasks()
     recompute_all_results()
+    _update_box_number_state()
 
     # Re-apply geometry to ensure the window stays at the intended size/position.
     win.geometry(f"{W}x{H}+{x}+{y}")
