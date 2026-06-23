@@ -280,7 +280,7 @@
         {
           "key": "repairMaintenanceType",
           "label": "Repair Maintenance Type",
-          "description": "Maintenance type label or ID used when creating repairs."
+          "description": "Maintenance type ID used when creating repairs. Mainteneace = 1, Repair = 2 etc."
         },
         {
           "key": "loanerCheckinWindowDays",

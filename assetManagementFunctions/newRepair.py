@@ -477,10 +477,10 @@ def newRepair(asset_tag):
         except Exception:
             supplier_id = 1
 
-        maintenance_type = settings.get("repairMaintenanceType", "Repair")
+        maintenance_type = settings.get("repairMaintenanceType")
         logger.debug("submitMaintenance: maintenance_type=%s supplier_id=%s title=%s", maintenance_type, supplier_id, title)
         payload3 = {
-            "asset_maintenance_type": maintenance_type,
+            "maintenance_type_id": maintenance_type,
             "start_date": today,
             "name": title or f"Repair: {asset_tag} ({today})",
             "asset_id": assetData["id"],

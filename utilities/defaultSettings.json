@@ -46,7 +46,7 @@
   "repairPendingStatusId": "17",
   "repairCompletedStatusId": "2",
   "repairMaintenanceSupplierId": "1",
-  "repairMaintenanceType": "Repair",
+  "repairMaintenanceType": "2",
   "loanerCheckinWindowDays": "2",
   "pantsShippingStatusId": "9",
   "chargerCategoryId": "35",
