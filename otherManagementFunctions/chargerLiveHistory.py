@@ -189,7 +189,10 @@ def show_connected_charger_history():
                 computers = get_computer_inventory_results()
             except Exception as exc:
                 logger.exception("worker: failed to load Jamf inventory")
-                charger_window.after(0, lambda: _set_history(f"Failed to load Jamf inventory:\n{exc}"))
+                # Capture the message now: Python deletes `exc` when the except
+                # block exits, but this lambda runs later via charger_window.after().
+                error_msg = str(exc)
+                charger_window.after(0, lambda m=error_msg: _set_history(f"Failed to load Jamf inventory:\n{m}"))
                 status_var.set("")
                 return
 
