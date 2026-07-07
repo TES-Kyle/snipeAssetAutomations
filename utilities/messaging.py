@@ -19,9 +19,7 @@ Design notes:
 """
 
 import csv
-import json
 import logging
-import os
 import re
 import smtplib
 from email.message import EmailMessage
@@ -34,6 +32,7 @@ from ringcentral.http.api_exception import ApiException
 
 from utilities.Key import *  # noqa: F401,F403 - provides credentials/constants used below
 from utilities.logging_utils import configure_logging
+from utilities.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -615,18 +614,9 @@ def remove_fine_warning(student_email):
         when no pattern matches.
     """
     logger.debug("remove_fine_warning: student_email=%s", student_email)
-    try:
-        # Load warning patterns from settings.json.
-        settings_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "settings.json")
-        logger.debug("remove_fine_warning: reading settings from %s", settings_path)
-        with open(settings_path, "r") as fh:
-            settings = json.load(fh)
-        warn_patterns = settings.get("emailWarnPattern", "").split(";")
-        logger.debug("remove_fine_warning: loaded %s warn patterns", len(warn_patterns))
-    except Exception as e:
-        logger.exception("remove_fine_warning: failed to read settings.json")
-        messagebox.showerror("Settings error", f"Failed to read settings.json:\n{e}")
-        return False
+    settings = get_settings()
+    warn_patterns = settings.get("emailWarnPattern", "").split(";")
+    logger.debug("remove_fine_warning: loaded %s warn patterns", len(warn_patterns))
 
     # Check student + parent emails for warning pattern matches.
     emails = [student_email] + get_parents(student_email)

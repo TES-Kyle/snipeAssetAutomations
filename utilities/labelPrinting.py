@@ -4,7 +4,6 @@ Generates a barcode label image (text + Code128) and sends it to
 the configured Brother label printer using settings.json.
 """
 
-import json
 import logging
 import os
 import brother_ql
@@ -16,6 +15,7 @@ from barcode.writer import ImageWriter
 from tkinter import messagebox
 
 from utilities.logging_utils import configure_logging
+from utilities.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ def sendToPrinter(path):
     configure_logging()
     logger.debug("sendToPrinter called: path=%s", path)
     # Load printer settings and render data for the target model.
-    settings = json.loads(open(str(os.path.dirname(os.path.realpath(__file__)))+"/settings.json").read())
+    settings = get_settings()
     logger.debug("sendToPrinter: printerType=%s, labelName=%s, labelsPerPrint=%s, printerIP=%s",
                  settings.get("printerType"), settings.get("labelName"),
                  settings.get("labelsPerPrint"), settings.get("printerIP"))
@@ -60,7 +60,7 @@ def createImage(values):
     configure_logging()
     logger.debug("createImage called: %s values, values=%s", len(values), values)
     # Load label sizing settings from the config file.
-    settings = json.loads(open(str(os.path.dirname(os.path.realpath(__file__)))+"/settings.json").read())
+    settings = get_settings()
     image_width = int(settings["labelWidth"])
     image_height = int(settings["labelHeight"])
     logger.debug("createImage: image dimensions width=%s, height=%s", image_width, image_height)
