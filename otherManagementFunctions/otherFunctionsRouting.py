@@ -8,7 +8,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Handler for background script windows.
-# from otherManagementFunctions.scriptSplitOutHandler import handler ## Not currently used
+# from utilities.scriptRunner import handler ## Not currently used
 
 ## example for handler since not currently used: lambda: handler(run_snipe_to_jamf_sync)
 

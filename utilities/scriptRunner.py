@@ -1,4 +1,11 @@
-"""Run long tasks in a separate process and stream logs to a Tk window."""
+"""Run long tasks in a separate process and stream logs to a Tk window.
+
+Not currently wired into any menu — the scripts this used to run were
+migrated to Windmill (see utilities/windmill.py). Kept here for the next
+manual long-running script that needs a local log window instead of a
+Windmill job; wire it up via otherManagementFunctions/otherFunctionsRouting.py
+when that need comes up again.
+"""
 
 import logging
 import multiprocessing as mp
