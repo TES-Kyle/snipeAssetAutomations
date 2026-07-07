@@ -10,15 +10,13 @@ It supports:
 
 from __future__ import annotations
 
-import json
 import logging
-import os
 import time
 from tkinter import messagebox, simpledialog
 
 from utilities import Key
 from utilities.logging_utils import configure_logging
-from utilities.settings import get_settings
+from utilities.settings import get_settings, update_settings
 
 logger = logging.getLogger(__name__)
 
@@ -310,21 +308,13 @@ def set_api_user_static_name(name: str) -> bool:
         True when the settings file is updated, False on failure.
     """
     configure_logging()
-    settings_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "settings.json")
-    try:
-        if os.path.isfile(settings_path):
-            with open(settings_path, "r") as fh:
-                data = json.load(fh) or {}
-        else:
-            data = {}
-        data["apiUserStaticName"] = str(name or "none")
-        with open(settings_path, "w") as fh:
-            json.dump(data, fh)
-        logger.info("Updated apiUserStaticName to %s", data["apiUserStaticName"])
-        return True
-    except Exception:
-        logger.exception("Failed to update apiUserStaticName in settings.json")
-        return False
+    value = str(name or "none")
+    ok = update_settings({"apiUserStaticName": value})
+    if ok:
+        logger.info("Updated apiUserStaticName to %s", value)
+    else:
+        logger.error("Failed to update apiUserStaticName in settings.json")
+    return ok
 
 
 def get_api_user_status() -> dict:

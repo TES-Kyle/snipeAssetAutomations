@@ -14,9 +14,7 @@ settings.json must include:
   dropOffLostStatusId, dropOffChargerStatusId, macBookCategoryID, and field key overrides.
 """
 
-import json
 import logging
-import os
 import re
 from datetime import datetime
 
@@ -25,7 +23,7 @@ from tkinter import messagebox
 
 from utilities.labelPrinting import createImage
 from utilities.logging_utils import configure_logging
-from utilities.settings import  get_settings
+from utilities.settings import get_settings, set_setting
 from utilities.otherApiBits import *
 from utilities.tk_geometry import center_window
 from utilities.validation import valid_asset_tag
@@ -80,72 +78,6 @@ HELP_TEXT = (
 # ----------------------------
 # Settings helpers
 # ----------------------------
-def _settings_path():
-    """Return the path to utilities/settings.json.
-
-    Returns:
-        Absolute path string to the settings file.
-    """
-    # settings.json is one directory up, then in 'utilities'
-    # <this_file_dir>/../utilities/settings.json
-    base = os.path.dirname(os.path.realpath(__file__))
-    path = os.path.join(os.path.dirname(base), "utilities", "settings.json")
-    logger.debug("_settings_path: resolved path=%s", path)
-    return path
-
-def _load_settings():
-    """Load settings.json for the drop-off workflow.
-
-    Returns:
-        Dict of settings values or {} on failure.
-    """
-    configure_logging()
-    logger.debug("_load_settings: loading settings for drop-off workflow")
-    try:
-        # Read settings from disk with a fallback on any failure.
-        path = _settings_path()
-        logger.debug("_load_settings: reading file=%s", path)
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        logger.debug("_load_settings: loaded %s keys", len(data))
-        return data
-    except Exception:
-        logger.exception("Failed to read settings.json for drop-off workflow")
-        messagebox.showerror(
-            "Settings Error",
-            "Could not read settings.json at ../utilities/settings.json relative to this module."
-        )
-        return {}
-
-def _save_settings_key(key: str, value):
-    """Best-effort write-back to settings.json to keep defaults in sync.
-
-    Args:
-        key: Settings key to update.
-        value: New value to write (will be stored as string).
-
-    Returns:
-        True on success, False on failure.
-    """
-    configure_logging()
-    logger.debug("_save_settings_key: key=%s value=%s", key, value)
-    try:
-        p = _settings_path()
-        logger.debug("_save_settings_key: reading %s", p)
-        # Load existing settings, update one key, and write back.
-        with open(p, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        data[key] = str(value)
-        logger.info("_save_settings_key: writing key=%s to %s", key, p)
-        with open(p, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-        logger.debug("_save_settings_key: write complete for key=%s", key)
-        return True
-    except Exception as e:
-        logger.exception("Failed to update settings.json key %s", key)
-        messagebox.showwarning("Settings Write Warning", f"Couldn't update settings.json ({key}):\n{e}")
-        return False
-
 def _get_box_state_asset_tag_and_capacity():
     """Return tracker asset tag and box capacity from settings.
 
@@ -154,7 +86,7 @@ def _get_box_state_asset_tag_and_capacity():
     """
     configure_logging()
     logger.debug("_get_box_state_asset_tag_and_capacity: loading settings")
-    s = _load_settings()
+    s = get_settings()
     tag = s.get("boxStateAssetTag", "").strip()
     cap = s.get("defaultBoxCapacity", "12")
     logger.debug("_get_box_state_asset_tag_and_capacity: raw tag=%s raw cap=%s", tag, cap)
@@ -714,7 +646,7 @@ def _open_help_dialog(parent):
         parent: Parent Tkinter widget for the dialog.
     """
     logger.debug("_open_help_dialog: opening help dialog")
-    settings = _load_settings()
+    settings = get_settings()
     tracker_tag = settings.get("boxStateAssetTag", "").strip()
     try:
         default_cap = int(settings.get("defaultBoxCapacity", 12))
@@ -812,7 +744,7 @@ def _open_help_dialog(parent):
             logger.error("save_capacity: failed to push updated notes")
             return
 
-        _save_settings_key("defaultBoxCapacity", new_cap)
+        set_setting("defaultBoxCapacity", str(new_cap))
         logger.debug("save_capacity: settings key updated")
 
         state_var.set(_format_state_line(state))
@@ -950,7 +882,7 @@ def dropOff(asset_tag):
                 stream = "WD"
 
         # Pull state → assign → push (tight window)
-        settings_data = _load_settings()
+        settings_data = get_settings()
         try:
             default_cap = int(settings_data.get("defaultBoxCapacity", 12))
         except Exception:
