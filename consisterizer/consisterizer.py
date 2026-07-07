@@ -45,6 +45,7 @@ from utilities.Key import API_URL_Base  # API creds
 from utilities.api_user import get_api_headers, get_api_key
 from utilities.theme import get_ui_colors
 from utilities.tk_geometry import center_window
+from utilities.validation import valid_asset_tag
 
 from consisterizer.consisterizerScriptsRouting import (
     submit_func_list,
@@ -181,8 +182,6 @@ KNOWN_FIELDS = set(FIELD_ORDER)
 
 # Regex that matches any {token} placeholder in template strings.
 TOKEN_RE = re.compile(r"\{([^{}]+)\}")
-# Fallback asset-tag regex used when the settings value is invalid.
-ASSET_TAG_RE_DEFAULT = re.compile(r"^\d{4,5}$")
 
 # Internal sentinel that marks a "{has_value}" default constraint.
 HAS_VALUE_SENTINEL = "<<HAS_VALUE>>"
@@ -210,29 +209,6 @@ def _norm_field_key(k: str) -> str:
         logger.debug("_norm_field_key: non-string input, returning empty")
         return ""
     return k.strip().lower().replace(" ", "_")
-
-
-def valid_asset_tag(value: str) -> bool:
-    """Validate an asset tag string against the configured regex.
-
-    Args:
-        value: Asset tag string to validate.
-
-    Returns:
-        True if the tag matches the configured regex, False otherwise.
-    """
-    logger.debug("valid_asset_tag: value=%s", value)
-    settings = get_settings()
-    pattern = settings.get("assetTagRegex", r"^\d{4,5}$")
-    logger.debug("valid_asset_tag: pattern=%s", pattern)
-    try:
-        regex = re.compile(pattern)
-    except re.error:
-        logger.error("Invalid assetTagRegex setting: %s", pattern)
-        regex = ASSET_TAG_RE_DEFAULT
-    result = bool(regex.match(value or ""))
-    logger.debug("valid_asset_tag: value=%s result=%s", value, result)
-    return result
 
 
 def valid_date(value: str) -> bool:

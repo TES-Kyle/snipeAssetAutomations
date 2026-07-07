@@ -28,6 +28,7 @@ from utilities.logging_utils import configure_logging
 from utilities.settings import  get_settings
 from utilities.otherApiBits import *
 from utilities.tk_geometry import center_window
+from utilities.validation import valid_asset_tag
 
 logger = logging.getLogger(__name__)
 
@@ -905,8 +906,8 @@ def dropOff(asset_tag):
             return
 
         charger_asset_tag = charger_tag_var.get().strip()
-        if charger_asset_tag and not re.fullmatch(r"\d{4,5}", charger_asset_tag):
-            messagebox.showerror("Invalid Charger Tag", "Charger asset tag must be 4 or 5 digits with no other characters.")
+        if charger_asset_tag and not valid_asset_tag(charger_asset_tag):
+            messagebox.showerror("Invalid Charger Tag", "Charger asset tag must match the configured asset tag pattern.")
             return
 
         seniorStatus = drop.get()         # 1=Senior, 0=Withdrawal

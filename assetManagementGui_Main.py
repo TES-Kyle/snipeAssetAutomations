@@ -7,7 +7,6 @@ asset tag input/validation.
 
 import logging
 import os
-import re
 import tkinter as tk
 from tkinter import messagebox
 
@@ -23,6 +22,7 @@ from utilities.settingsMenu import settingsMenu
 from utilities.settings import get_settings
 from utilities.theme import get_ui_colors
 from utilities.tk_geometry import center_window
+from utilities.validation import valid_asset_tag
 from assetManagementFunctions.assetFunctionsRouting import func_list, func_listTXT
 from otherManagementFunctions.otherFunctionsRouting import other_func_list, other_func_listTXT
 
@@ -223,15 +223,7 @@ def create_main_window(root):
         app_state['asset_entry'].delete(0, tk.END)
 
         # Validate the tag using the configured regex.
-        settings = get_settings()
-        pattern = settings.get("assetTagRegex", r"^\d{4,5}$")
-        logger.debug("process_asset: validating against pattern=%s", pattern)
-        try:
-            is_valid = re.match(pattern, asset_tag)
-        except re.error:
-            logger.error("Invalid assetTagRegex setting: %s", pattern)
-            pattern = r"^\d{4,5}$"
-            is_valid = re.match(pattern, asset_tag)
+        is_valid = valid_asset_tag(asset_tag)
 
         if is_valid:
             # Route to the selected function or open the detail picker.
