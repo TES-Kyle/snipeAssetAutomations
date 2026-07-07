@@ -13,6 +13,7 @@ from tkinter import messagebox
 
 from utilities.logging_utils import configure_logging
 from utilities.theme import get_ui_colors
+from utilities.tk_geometry import center_window
 
 logger = logging.getLogger(__name__)
 
@@ -587,33 +588,10 @@ def settingsMenu():
     end_button.pack(side="right", fill="x", expand=True)
 
     logger.debug("settingsMenu: waiting for window dimensions to settle")
-    # Wait for the window to update its dimensions.
-    settings_window.update_idletasks()
-
-    # Get the window width and height.
-    window_width = settings_window.winfo_width()
-    window_height = settings_window.winfo_height()
-    logger.debug("settingsMenu: initial window size width=%s height=%s", window_width, window_height)
-
-    # Keep the window fully visible, reserving space for docks/taskbars.
-    margin_x = 40
-    margin_y = 120
-    usable_width = max(300, screen_width - margin_x)
-    usable_height = max(300, screen_height - margin_y)
-    logger.debug("settingsMenu: usable_width=%s usable_height=%s", usable_width, usable_height)
-
-    if window_width > usable_width or window_height > usable_height:
-        window_width = min(window_width, usable_width)
-        window_height = min(window_height, usable_height)
-        logger.debug("settingsMenu: clamping window size to width=%s height=%s", window_width, window_height)
-        settings_window.geometry(f"{window_width}x{window_height}")
-        settings_window.update_idletasks()
-
-    center_x = max(0, int((screen_width - window_width) / 2))
-    center_y = max(0, int((usable_height - window_height) / 2))
-    logger.debug("settingsMenu: centering window at x=%s y=%s", center_x, center_y)
-
-    settings_window.geometry(f"+{center_x}+{center_y}")
+    # Keep the window fully visible and clear of the macOS Dock: reserve
+    # space at the bottom, plus a little breathing room on the sides.
+    # Shrinks the window first if it doesn't fit that usable area.
+    center_window(settings_window, margin_left=20, margin_right=20, margin_top=0, margin_bottom=120)
     logger.info("settingsMenu: settings window displayed")
 
 
