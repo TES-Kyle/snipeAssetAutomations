@@ -73,7 +73,7 @@ def settingsMenu():
         then queries the GitHub API for the latest commit.
         """
         logger.debug("checkUpdate: initiating update check")
-        import subprocess, sys, datetime
+        import subprocess, datetime
         try:
             app_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))  # …/Resources/app
             meta_path = os.path.join(app_root, ".build", "meta.json")

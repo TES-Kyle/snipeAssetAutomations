@@ -1567,10 +1567,6 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             checkout_user_id, checkout_location_id).
         """
         logger.debug("_build_patch_payload: building patch payload from snapshot")
-        NULL_STR = "null"
-        TEXT_CLEAR_EMPTY = {"name", "serial", "order_number", "notes"}
-        DATE_CLEAR_NULLSTR = {"purchase_date", "expected_checkin"}
-
         payload = {}
         changed = False
         need_checkin = False

@@ -27,7 +27,6 @@ def checkIn(asset_tag, checkOutOrigin=None):
     configure_logging()
     logger.info("checkIn: starting check-in for asset_tag=%s checkOutOrigin=%s", asset_tag, checkOutOrigin)
     url = "https://trinityes.snipe-it.io/api/v1"
-    ignore_name = False
 
 
     def on_enter_pressed(event):

@@ -1,14 +1,12 @@
 """Charger history lookup via Jamf Pro EA values."""
 
-import json
 import logging
-import os
 from datetime import datetime
 import tkinter as tk
 from tkinter import messagebox, ttk
 from jamf_pro_sdk import JamfProClient, SessionConfig
 from jamf_pro_sdk.clients.auth import ApiClientCredentialsProvider
-from jamf_pro_sdk.clients.pro_api.pagination import FilterField, SortField
+from jamf_pro_sdk.clients.pro_api.pagination import SortField
 from utilities.otherApiBits import getAssetInfoSerialAssignedTo, getAssetInfo
 from utilities import Key
 from utilities.logging_utils import configure_logging

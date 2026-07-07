@@ -29,7 +29,6 @@ def checkoutTo(asset_tag):
     """
     configure_logging()
     url = "https://trinityes.snipe-it.io/api/v1"
-    ignore_name = False
 
 
     def on_enter_pressed(event):
