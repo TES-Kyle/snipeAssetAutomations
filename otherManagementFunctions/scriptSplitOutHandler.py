@@ -11,6 +11,7 @@ from tkinter.scrolledtext import ScrolledText
 
 from utilities.logging_utils import configure_logging
 from utilities.settings import  get_settings
+from utilities.tk_geometry import center_window
 
 logger = logging.getLogger(__name__)
 
@@ -87,11 +88,7 @@ def handler(func, autoclose_delay=120):
     win.title(f"Script Log #{_window_counter}")
 
     # Center on screen.
-    win.update_idletasks()
-    w, h = 600, 400
-    x = (win.winfo_screenwidth() // 2) - (w // 2)
-    y = (win.winfo_screenheight() // 2) - (h // 2)
-    win.geometry(f"{w}x{h}+{x}+{y}")
+    center_window(win, width=600, height=400)
 
     log_box = ScrolledText(win, height=20, width=80, state="normal")
     log_box.pack(padx=10, pady=10, fill="both", expand=True)

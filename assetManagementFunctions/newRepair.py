@@ -12,6 +12,7 @@ from utilities.logging_utils import configure_logging
 from utilities.settings import  get_settings
 from utilities.messaging import *
 from utilities.otherApiBits import *
+from utilities.tk_geometry import center_window
 
 logger = logging.getLogger(__name__)
 
@@ -285,14 +286,7 @@ def newRepair(asset_tag):
     submit_button.pack(pady=10)
 
     # Center window on screen.
-    issue_window.update_idletasks()
-    screen_width = issue_window.winfo_screenwidth()
-    screen_height = issue_window.winfo_screenheight()
-    window_width = issue_window.winfo_width()
-    window_height = issue_window.winfo_height()
-    center_x = int((screen_width / 2) - (window_width / 2))
-    center_y = int((screen_height / 2) - (window_height / 2))
-    issue_window.geometry(f"+{center_x}+{center_y}")
+    center_window(issue_window)
 
     # ---------------- core submission flow ----------------
     def submitMaintenance(asset_tag, at_fault, issue_description, title):

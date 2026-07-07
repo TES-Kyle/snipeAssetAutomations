@@ -22,6 +22,7 @@ from utilities.otherApiBits import getAssetInfo, build_asset_info_frame
 from utilities.settingsMenu import settingsMenu
 from utilities.settings import get_settings
 from utilities.theme import get_ui_colors
+from utilities.tk_geometry import center_window
 from assetManagementFunctions.assetFunctionsRouting import func_list, func_listTXT
 from otherManagementFunctions.otherFunctionsRouting import other_func_list, other_func_listTXT
 
@@ -141,13 +142,7 @@ def open_second_window(parent, asset_tag, main_app_state):
     tk.Button(top, text="Close", command=top.destroy, width=15).pack(side="top", pady=10)
 
     # --- Center Window on Screen ---
-    top.update_idletasks()
-    screen_width = top.winfo_screenwidth()
-    screen_height = top.winfo_screenheight()
-    x = (screen_width / 2) - (top.winfo_width() / 2)
-    y = (screen_height / 2) - (top.winfo_height() / 2)
-    logger.debug("open_second_window: centering at x=%s y=%s", int(x), int(y))
-    top.geometry(f"+{int(x)}+{int(y)}")
+    center_window(top)
 
 
 def create_main_window(root):

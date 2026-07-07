@@ -12,6 +12,7 @@ from utilities.settings import  get_settings
 from utilities.otherApiBits import *
 from utilities.Key import *
 from utilities.messaging import *
+from utilities.tk_geometry import center_window
 
 logger = logging.getLogger(__name__)
 
@@ -453,14 +454,7 @@ def backFromApple(asset_tag):
     error_label.pack(pady=10)
 
     # Centering.
-    repair_window.update_idletasks()
-    screen_width = repair_window.winfo_screenwidth()
-    screen_height = repair_window.winfo_screenheight()
-    window_width = repair_window.winfo_width()
-    window_height = repair_window.winfo_height()
-    center_x = int((screen_width / 2) - (window_width / 2))
-    center_y = int((screen_height / 2) - (window_height / 2))
-    repair_window.geometry(f"+{center_x}+{center_y}")
+    center_window(repair_window)
 
     def updateMaintenance(asset_tag, d_number, repair_notes, atFault):
         """Patch the latest maintenance record and close out the repair.

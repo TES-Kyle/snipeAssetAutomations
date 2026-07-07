@@ -19,6 +19,7 @@ from utilities import Key
 from utilities.logging_utils import configure_logging
 from utilities.settings import  get_settings
 from utilities.otherApiBits import getAssetInfo
+from utilities.tk_geometry import center_window
 
 from jamf_pro_sdk import JamfProClient, SessionConfig
 from jamf_pro_sdk.clients.auth import ApiClientCredentialsProvider
@@ -954,10 +955,7 @@ def _prompt_prestage_choice(prestages: List[Dict[str, Any]]) -> Optional[Dict[st
         win.wait_visibility()
     except Exception:
         pass
-    sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
-    x = int((sw / 2) - (win.winfo_width() / 2))
-    y = int((sh / 2) - (win.winfo_height() / 2))
-    win.geometry(f"+{x}+{y}")
+    center_window(win)
     win.wait_window()
     return result["choice"]
 

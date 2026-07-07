@@ -6,6 +6,7 @@ from utilities.logging_utils import configure_logging
 from utilities.settings import  get_settings
 from utilities.otherApiBits import *
 from utilities.api_user import get_api_key
+from utilities.tk_geometry import center_window
 import tkinter as tk
 from tkinter import ttk
 from tkcalendar import DateEntry
@@ -323,23 +324,8 @@ def checkoutTo(asset_tag):
     soft_message_label = tk.Label(soft_message_frame, textvariable=soft_message)
     soft_message_label.pack()
 
-    # Wait for the window to update its dimensions
-    checkout_window.update_idletasks()
-
-    # Get the screen width and height
-    screen_width = checkout_window.winfo_screenwidth()
-    screen_height = checkout_window.winfo_screenheight()
-
-    # Get the window width and height
-    window_width = checkout_window.winfo_width()
-    window_height = checkout_window.winfo_height()
-
-    # Calculate the center position
-    center_x = int((screen_width / 2) - (window_width / 2))
-    center_y = int((screen_height / 2) - (window_height / 2))
-
-    # Set the position of the window to the center of the screen
-    checkout_window.geometry(f"+{center_x}+{center_y}")
+    # Center the window on screen.
+    center_window(checkout_window)
 
     # Ensure API user prompt (if needed) happens on the UI thread.
     get_api_key()

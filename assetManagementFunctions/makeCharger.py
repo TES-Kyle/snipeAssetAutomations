@@ -13,6 +13,7 @@ from utilities.Key import API_URL_Base
 from utilities.api_user import get_api_headers, get_api_key
 from utilities.logging_utils import configure_logging
 from utilities.settings import  get_settings
+from utilities.tk_geometry import center_window
 
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -776,12 +777,7 @@ def makeCharger(asset_tag):
     ttk.Label(soft_message_frame, textvariable=soft_message).pack(anchor="w")
 
     # Center the window
-    charger_window.update_idletasks()
-    sw, sh = charger_window.winfo_screenwidth(), charger_window.winfo_screenheight()
-    ww, wh = charger_window.winfo_width(), charger_window.winfo_height()
-    cx = int((sw - ww) / 2)
-    cy = int((sh - wh) / 2)
-    charger_window.geometry(f"+{cx}+{cy}")
+    center_window(charger_window)
 
     # Ensure API user prompt (if needed) happens on the main thread.
     get_api_key()

@@ -27,6 +27,7 @@ from utilities.labelPrinting import createImage
 from utilities.logging_utils import configure_logging
 from utilities.settings import  get_settings
 from utilities.otherApiBits import *
+from utilities.tk_geometry import center_window
 
 logger = logging.getLogger(__name__)
 
@@ -875,14 +876,7 @@ def _open_help_dialog(parent):
     refresh_state()
 
     # Center dialog
-    dlg.update_idletasks()
-    sw = dlg.winfo_screenwidth()
-    sh = dlg.winfo_screenheight()
-    ww = dlg.winfo_width()
-    wh = dlg.winfo_height()
-    cx = int((sw / 2) - (ww / 2))
-    cy = int((sh / 2) - (wh / 2))
-    dlg.geometry(f"+{cx}+{cy}")
+    center_window(dlg)
 
 # ----------------------------
 # UI + main flow
@@ -1165,13 +1159,6 @@ def dropOff(asset_tag):
         )
 
         # Center window
-        dropoff_window.update_idletasks()
-        sw = dropoff_window.winfo_screenwidth()
-        sh = dropoff_window.winfo_screenheight()
-        ww = dropoff_window.winfo_width()
-        wh = dropoff_window.winfo_height()
-        cx = int((sw / 2) - (ww / 2))
-        cy = int((sh / 2) - (wh / 2))
-        dropoff_window.geometry(f"+{cx}+{cy}")
+        center_window(dropoff_window)
 
     return f"Drop-off window opened for {asset_tag}. Submit to complete."

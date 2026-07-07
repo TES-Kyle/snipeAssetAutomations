@@ -44,6 +44,7 @@ from utilities.settings import  get_settings
 from utilities.Key import API_URL_Base  # API creds
 from utilities.api_user import get_api_headers, get_api_key
 from utilities.theme import get_ui_colors
+from utilities.tk_geometry import center_window
 
 from consisterizer.consisterizerScriptsRouting import (
     submit_func_list,
@@ -512,15 +513,12 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     # -------------------------------------------------------------------------
     win = tk.Toplevel()
     win.title(f"Consisterizer — {asset_tag}")
-    win.update_idletasks()
     # Size the window to fill the screen (but never smaller than MIN_W x MIN_H),
     # then center it.
     sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
     W = max(MIN_W, sw)
     H = max(MIN_H, sh)
-    x = (sw - W) // 2
-    y = (sh - H) // 2
-    win.geometry(f"{W}x{H}+{x}+{y}")
+    center_window(win, width=W, height=H)
     win.minsize(MIN_W, MIN_H)
     win.lift()
     # F1 opens the in-app help dialog from anywhere in the window.
@@ -2708,6 +2706,6 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     _update_box_number_state()
 
     # Re-apply geometry to ensure the window stays at the intended size/position.
-    win.geometry(f"{W}x{H}+{x}+{y}")
+    center_window(win, width=W, height=H)
     win.minsize(MIN_W, MIN_H)
     return f"Consisterizer opened for {asset_tag}."

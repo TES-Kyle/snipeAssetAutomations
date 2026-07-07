@@ -5,6 +5,7 @@ import logging
 from utilities.logging_utils import configure_logging
 from utilities.settings import  get_settings
 from utilities.otherApiBits import *
+from utilities.tk_geometry import center_window
 import tkinter as tk
 from tkinter import ttk
 from tkinter import messagebox
@@ -228,23 +229,8 @@ def checkIn(asset_tag, checkOutOrigin=None):
     soft_message_label = tk.Label(soft_message_frame, textvariable=soft_message)
     soft_message_label.pack()
 
-    # Wait for the window to update its dimensions
-    checkin_window.update_idletasks()
-
-    # Get the screen width and height
-    screen_width = checkin_window.winfo_screenwidth()
-    screen_height = checkin_window.winfo_screenheight()
-
-    # Get the window width and height
-    window_width = checkin_window.winfo_width()
-    window_height = checkin_window.winfo_height()
-
-    # Calculate the center position
-    center_x = int((screen_width / 2) - (window_width / 2))
-    center_y = int((screen_height / 2) - (window_height / 2))
-
-    # Set the position of the window to the center of the screen
-    checkin_window.geometry(f"+{center_x}+{center_y}")
+    # Center the window on screen.
+    center_window(checkin_window)
     
     if checkOutOrigin is not None:
         flash_window(checkin_window, duration=3000, interval=500)
