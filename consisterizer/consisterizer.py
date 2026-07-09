@@ -46,6 +46,7 @@ from utilities.api_user import get_api_headers, get_api_key
 from utilities.theme import get_ui_colors
 from utilities.tk_geometry import center_window
 from utilities.validation import valid_asset_tag
+from utilities.api_retry import call_with_retry
 
 from consisterizer.consisterizerScriptsRouting import (
     submit_func_list,
@@ -1646,58 +1647,12 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
         headers = get_api_headers()
         logger.info("_api_patch_with_retry: PATCH url=%s", url)
 
-        def _cursor_busy(on=True):
-            """Toggle a busy cursor while API calls are in flight."""
-            logger.debug("_cursor_busy: on=%s", on)
-            try:
-                win.config(cursor="watch" if on else "")
-                win.update_idletasks()
-            except Exception:
-                pass
-
-        while True:
-            try:
-                _cursor_busy(True)
-                logger.debug("_api_patch_with_retry: sending PATCH request")
-                r = requests.patch(url, json=payload, headers=headers, timeout=25)
-                logger.debug("_api_patch_with_retry: PATCH response status=%s", r.status_code)
-            except requests.RequestException as e:
-                _cursor_busy(False)
-                logger.error("_api_patch_with_retry: network error=%s", e)
-                if not messagebox.askretrycancel("Network Error", f"{e}\n\nRetry?"):
-                    return False
-                continue
-            finally:
-                _cursor_busy(False)
-
-            if 200 <= r.status_code < 300:
-                logger.debug("_api_patch_with_retry: HTTP success, checking response body")
-                try:
-                    data = r.json()
-                    if str(data.get("status")).lower() == "error":
-                        msgs = data.get("messages")
-                        if isinstance(msgs, list):
-                            msg = "; ".join(msgs)
-                        elif isinstance(msgs, dict):
-                            msg = "; ".join(str(v) for v in msgs.values())
-                        else:
-                            msg = str(msgs or data)
-                        logger.error("_api_patch_with_retry: Snipe-IT reported error: %s", msg)
-                        if not messagebox.askretrycancel("Update failed", f"Snipe-IT error:\n{msg}\n\nRetry?"):
-                            return False
-                        continue
-                except Exception:
-                    pass
-                logger.info("_api_patch_with_retry: PATCH succeeded for asset_id=%s", asset_id)
-                return True
-
-            try:
-                detail = r.json()
-            except Exception:
-                detail = r.text
-            logger.error("_api_patch_with_retry: HTTP error status=%s detail=%s", r.status_code, detail)
-            if not messagebox.askretrycancel("HTTP Error", f"PATCH {r.status_code}\n{detail}\n\nRetry?"):
-                return False
+        result = call_with_retry(
+            f"Update asset {asset_id}",
+            lambda: requests.patch(url, json=payload, headers=headers, timeout=25),
+            busy_widget=win,
+        )
+        return result is not None
 
     def _api_checkin_with_retry(asset_id: int, note: str = "Consisterizer unassign", location_id: int | None = None) -> bool:
         """POST /hardware/{id}/checkin to unassign the asset.
@@ -1723,52 +1678,12 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             body["location_id"] = location_id
         logger.info("_api_checkin_with_retry: POST checkin url=%s", url)
 
-        def _cursor_busy(on=True):
-            """Toggle a busy cursor while API calls are in flight."""
-            logger.debug("_cursor_busy: on=%s", on)
-            try:
-                win.config(cursor="watch" if on else "")
-                win.update_idletasks()
-            except Exception:
-                pass
-
-        while True:
-            try:
-                _cursor_busy(True)
-                logger.debug("_api_checkin_with_retry: sending POST checkin request")
-                r = requests.post(url, json=body, headers=headers, timeout=25)
-                logger.debug("_api_checkin_with_retry: checkin response status=%s", r.status_code)
-            except requests.RequestException as e:
-                _cursor_busy(False)
-                logger.error("_api_checkin_with_retry: network error=%s", e)
-                if not messagebox.askretrycancel("Network Error", f"{e}\n\nRetry?"):
-                    return False
-                continue
-            finally:
-                _cursor_busy(False)
-
-            if 200 <= r.status_code < 300:
-                logger.debug("_api_checkin_with_retry: HTTP success, checking response body")
-                try:
-                    data = r.json()
-                    if str(data.get("status")).lower() == "error":
-                        msg = "; ".join(data.get("messages") or []) or str(data)
-                        logger.error("_api_checkin_with_retry: Snipe-IT error: %s", msg)
-                        if not messagebox.askretrycancel("Check-in failed", f"Snipe-IT error:\n{msg}\n\nRetry?"):
-                            return False
-                        continue
-                except Exception:
-                    pass
-                logger.info("_api_checkin_with_retry: checkin succeeded for asset_id=%s", asset_id)
-                return True
-
-            try:
-                detail = r.json()
-            except Exception:
-                detail = r.text
-            logger.error("_api_checkin_with_retry: HTTP error status=%s detail=%s", r.status_code, detail)
-            if not messagebox.askretrycancel("HTTP Error", f"CHECKIN {r.status_code}\n{detail}\n\nRetry?"):
-                return False
+        result = call_with_retry(
+            f"Check in asset {asset_id}",
+            lambda: requests.post(url, json=body, headers=headers, timeout=25),
+            busy_widget=win,
+        )
+        return result is not None
 
     def _api_checkout_with_retry(asset_id: int, *, user_id: int | None = None,
                                  location_id: int | None = None,
@@ -1813,52 +1728,12 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
 
         logger.info("_api_checkout_with_retry: POST checkout url=%s", url)
 
-        def _cursor_busy(on=True):
-            """Toggle a busy cursor while API calls are in flight."""
-            logger.debug("_cursor_busy: on=%s", on)
-            try:
-                win.config(cursor="watch" if on else "")
-                win.update_idletasks()
-            except Exception:
-                pass
-
-        while True:
-            try:
-                _cursor_busy(True)
-                logger.debug("_api_checkout_with_retry: sending POST checkout request")
-                r = requests.post(url, json=body, headers=headers, timeout=25)
-                logger.debug("_api_checkout_with_retry: checkout response status=%s", r.status_code)
-            except requests.RequestException as e:
-                _cursor_busy(False)
-                logger.error("_api_checkout_with_retry: network error=%s", e)
-                if not messagebox.askretrycancel("Network Error", f"{e}\n\nRetry?"):
-                    return False
-                continue
-            finally:
-                _cursor_busy(False)
-
-            if 200 <= r.status_code < 300:
-                logger.debug("_api_checkout_with_retry: HTTP success, checking response body")
-                try:
-                    data = r.json()
-                    if str(data.get("status")).lower() == "error":
-                        msg = "; ".join(data.get("messages") or []) or str(data)
-                        logger.error("_api_checkout_with_retry: Snipe-IT error: %s", msg)
-                        if not messagebox.askretrycancel("Checkout failed", f"Snipe-IT error:\n{msg}\n\nRetry?"):
-                            return False
-                        continue
-                except Exception:
-                    pass
-                logger.info("_api_checkout_with_retry: checkout succeeded for asset_id=%s", asset_id)
-                return True
-
-            try:
-                detail = r.json()
-            except Exception:
-                detail = r.text
-            logger.error("_api_checkout_with_retry: HTTP error status=%s detail=%s", r.status_code, detail)
-            if not messagebox.askretrycancel("HTTP Error", f"CHECKOUT {r.status_code}\n{detail}\n\nRetry?"):
-                return False
+        result = call_with_retry(
+            f"Check out asset {asset_id}",
+            lambda: requests.post(url, json=body, headers=headers, timeout=25),
+            busy_widget=win,
+        )
+        return result is not None
 
     # -------------------------------------------------------------------------
     # Footer (scripts + status line)
