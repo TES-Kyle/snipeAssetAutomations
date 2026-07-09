@@ -8,7 +8,6 @@ import logging
 from utilities.logging_utils import configure_logging
 from utilities.jamfPrestageCommon import (
     _confirm_action,
-    _ask_retry_cancel,
     _delete_computer_pro,
     _find_jamf_computer_by_serial,
     _get_serial_from_snipe,
@@ -17,6 +16,7 @@ from utilities.jamfPrestageCommon import (
     create_jamf_client,
     get_prestage_settings,
 )
+from utilities.api_retry import ask_retry_cancel
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +103,7 @@ def jamf_remove_prestage_and_delete(asset_tag: str) -> str:
             logger.info("jamf_remove_prestage_and_delete: successfully deleted Jamf computer ID %s", cid)
             return f"Deleted Jamf computer-inventory ID {cid}."
         logger.error("jamf_remove_prestage_and_delete: delete failed for Jamf computer ID %s", cid)
-        if _ask_retry_cancel("Jamf delete failed",
+        if ask_retry_cancel("Jamf delete failed",
                              f"Could not delete Jamf computer ID {cid}.\n\nRetry?"):
             logger.debug("jamf_remove_prestage_and_delete: user chose retry for delete of ID %s", cid)
             continue

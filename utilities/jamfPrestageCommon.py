@@ -20,6 +20,7 @@ from utilities.logging_utils import configure_logging
 from utilities.settings import  get_settings
 from utilities.otherApiBits import getAssetInfo
 from utilities.tk_geometry import center_window
+from utilities.api_retry import ensure_tk_root, ask_retry_cancel
 
 from jamf_pro_sdk import JamfProClient, SessionConfig
 from jamf_pro_sdk.clients.auth import ApiClientCredentialsProvider
@@ -131,58 +132,6 @@ except Exception:
     _TK_OK = False
 
 
-def _ensure_tk_root():
-    """Return the current Tk root (or a hidden root if none exists).
-
-    Returns:
-        Tk root window, or None when Tk is unavailable.
-    """
-    logger.debug("_ensure_tk_root: _TK_OK=%s", _TK_OK)
-    if not _TK_OK:
-        logger.debug("_ensure_tk_root: Tk not available, returning None")
-        return None
-    root = getattr(_ensure_tk_root, "_root", None)
-    try:
-        if root is None or not root.winfo_exists():
-            logger.debug("_ensure_tk_root: no existing root; checking for default root")
-            existing = getattr(_tk, "_default_root", None)
-            if existing is not None and existing.winfo_exists():
-                root = existing
-                logger.debug("_ensure_tk_root: reusing existing _default_root")
-            else:
-                root = _tk.Tk()
-                root.withdraw()
-                logger.debug("_ensure_tk_root: created new hidden Tk root")
-            _ensure_tk_root._root = root
-        return root
-    except Exception:
-        logger.debug("_ensure_tk_root: exception while obtaining root; returning None")
-        return None
-
-
-def _ask_retry_cancel(title: str, message: str) -> bool:
-    """Show a retry/cancel dialog and return the user's choice.
-
-    Falls back to False (cancel) when Tk is unavailable or headless.
-
-    Args:
-        title: Dialog window title.
-        message: Question or error text to display.
-
-    Returns:
-        True when the user chooses Retry; False on Cancel or in headless mode.
-    """
-    try:
-        root = _ensure_tk_root()
-        if root:
-            return bool(_mb.askretrycancel(title, message, parent=root))
-    except Exception:
-        pass
-    configure_logging()
-    logger.warning("Prompt (no GUI): %s: %s -> cancel", title, message)
-    return False
-
-
 def _warn(title: str, message: str) -> None:
     """Show a warning dialog, or log the message when Tk is unavailable.
 
@@ -191,7 +140,7 @@ def _warn(title: str, message: str) -> None:
         message: Warning text to display.
     """
     try:
-        root = _ensure_tk_root()
+        root = ensure_tk_root()
         if root:
             _mb.showwarning(title, message, parent=root)
             return
@@ -214,7 +163,7 @@ def _confirm_action(title: str, message: str) -> bool:
         True when the user chooses Yes; False on No, cancel, or in headless mode.
     """
     try:
-        root = _ensure_tk_root()
+        root = ensure_tk_root()
         if root:
             return bool(_mb.askyesno(title, message, parent=root))
     except Exception:
@@ -634,7 +583,7 @@ def _remove_from_all_prestages(
                 logger.debug("GET v2/computer-prestages/scope -> %s", r.status_code)
             break
         except Exception as e:
-            if not _ask_retry_cancel("Jamf PreStage scopes",
+            if not ask_retry_cancel("Jamf PreStage scopes",
                                      f"Failed to fetch aggregate scopes.\n\n{e}\n\nRetry?"):
                 logger.error("JAMF: Could not fetch aggregate PreStage scopes: %s", e)
                 agg = {}
@@ -682,7 +631,7 @@ def _remove_from_all_prestages(
             scope = _get_prestage_scope_v2(jamf_client, pid, settings)
             if scope is not None:
                 break
-            if not _ask_retry_cancel("Jamf PreStage scope",
+            if not ask_retry_cancel("Jamf PreStage scope",
                                      f"Failed to load scope for PreStage {pid}.\n\n"
                                      f"Retry to refetch, or Cancel to skip this PreStage?"):
                 logger.warning("Skipping PreStage %s (scope not available).", pid)
@@ -726,7 +675,7 @@ def _remove_from_all_prestages(
                             elif isinstance(a2, list) and any((row or {}).get("serialNumber") == serial for row in a2):
                                 verify_ok = False
                     except Exception as ve:
-                        if _ask_retry_cancel("Verify removal",
+                        if ask_retry_cancel("Verify removal",
                                              f"Could not verify PreStage {pid} removal.\n\n{ve}\n\nRetry verify?"):
                             continue
                         verify_ok = False
@@ -738,7 +687,7 @@ def _remove_from_all_prestages(
                         break
                     else:
                         # Serial still present — offer to retry the update.
-                        if _ask_retry_cancel("Removal not verified",
+                        if ask_retry_cancel("Removal not verified",
                                              f"Serial still appears in PreStage {pid} after update.\n\nRetry update?"):
                             continue
                         logger.warning(
@@ -748,7 +697,7 @@ def _remove_from_all_prestages(
                         break
                 else:
                     # PUT failed — offer to retry or skip this PreStage.
-                    if _ask_retry_cancel("Update PreStage scope failed",
+                    if ask_retry_cancel("Update PreStage scope failed",
                                          f"Could not update PreStage {pid} scope.\n\nRetry?"):
                         continue
                     logger.warning("Skipped updating PreStage %s.", pid)
@@ -848,7 +797,7 @@ def _get_prestage_list(
             page += 1
         except Exception as e:
             # Only offer retry on the first page; subsequent failures abort silently.
-            if page == 0 and _ask_retry_cancel(
+            if page == 0 and ask_retry_cancel(
                 "Jamf PreStage list",
                 f"Failed to load PreStage list.\n\n{e}\n\nRetry?"
             ):
@@ -895,7 +844,7 @@ def _prompt_prestage_choice(prestages: List[Dict[str, Any]]) -> Optional[Dict[st
     if not _TK_OK:
         logger.error("Tk not available; cannot prompt for PreStage selection.")
         return None
-    root = _ensure_tk_root()
+    root = ensure_tk_root()
     if not root:
         logger.error("Tk root unavailable; cannot prompt for PreStage selection.")
         return None
@@ -979,7 +928,7 @@ def _add_serial_to_prestage(
         # Fetch the current scope to base our add payload on.
         scope = _get_prestage_scope_v2(jamf_client, prestage_id, settings)
         if scope is None:
-            if not _ask_retry_cancel("Jamf PreStage scope",
+            if not ask_retry_cancel("Jamf PreStage scope",
                                      f"Failed to load scope for PreStage {prestage_id}.\n\nRetry?"):
                 return False
             continue
@@ -1005,7 +954,7 @@ def _add_serial_to_prestage(
         # Attempt the PUT and offer retry if it fails.
         ok = _put_prestage_scope_v2(jamf_client, prestage_id, payload, settings)
         if not ok:
-            if _ask_retry_cancel("Update PreStage scope failed",
+            if ask_retry_cancel("Update PreStage scope failed",
                                  f"Could not update PreStage {prestage_id} scope.\n\nRetry?"):
                 continue
             return False
@@ -1021,10 +970,10 @@ def _add_serial_to_prestage(
                 if isinstance(a2, list) and any((row or {}).get("serialNumber") == serial for row in a2):
                     return True
         except Exception as ve:
-            if _ask_retry_cancel("Verify PreStage add",
+            if ask_retry_cancel("Verify PreStage add",
                                  f"Could not verify PreStage {prestage_id} add.\n\n{ve}\n\nRetry?"):
                 continue
-        if _ask_retry_cancel("Add not verified",
+        if ask_retry_cancel("Add not verified",
                              f"Serial not present in PreStage {prestage_id} after update.\n\nRetry?"):
             continue
         return False
