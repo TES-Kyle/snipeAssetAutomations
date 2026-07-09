@@ -34,6 +34,19 @@ def get_headers() -> dict:
     return result
 
 
+def _fetch_asset_by_tag(assetTag):
+    """Issue the raw GET for a Snipe-IT asset lookup by tag.
+
+    Args:
+        assetTag: Asset tag to look up via the Snipe-IT API.
+
+    Returns:
+        The raw requests.Response (may be a non-2xx status; not raised here).
+    """
+    url = Key.API_URL_Base + "hardware/bytag/" + str(assetTag)
+    return requests.get(url, headers=get_headers(), timeout=20)
+
+
 def getAssetInfo(assetTag, allow_missing: bool = False):
     """Retrieve asset information from Snipe-IT by asset tag.
 
@@ -50,13 +63,9 @@ def getAssetInfo(assetTag, allow_missing: bool = False):
         Any API error prompts the user via messagebox and returns empty results.
     """
     configure_logging()
-    # Build the by-tag endpoint and perform the lookup.
-    url = Key.API_URL_Base + "hardware/bytag/"
-
     # Issue the request and parse JSON.
     try:
-        headers = get_headers()
-        response = requests.get(url + assetTag, headers=headers, timeout=20)
+        response = _fetch_asset_by_tag(assetTag)
         response.raise_for_status()
         assetData = response.json()
     except Exception as e:
