@@ -525,35 +525,52 @@ def _put_prestage_scope_v2(
             override_headers={"Accept": "application/json", "Content-Type": "application/json"},
         )
 
+    def _retry_after_lock_conflict(*, via_exception: bool = False) -> bool:
+        """Refresh versionLock and retry the PUT once after a 409 conflict.
+
+        Args:
+            via_exception: True when called from the except-clause path
+                (matches the prior "(exception)" log text for that path).
+
+        Returns:
+            True if the retried PUT succeeded (200/204), False otherwise.
+
+        Raises:
+            Exception: Propagates whatever _do_put(alt) raises, same as the
+                original inline code in the 409-status-code branch.
+        """
+        logger.warning(
+            "PreStage %s versionLock conflict%s. Refreshing and retrying...",
+            prestage_id,
+            " (exception)" if via_exception else "",
+        )
+        scope_now = _get_prestage_scope_v2(jamf_client, prestage_id, settings) or {}
+        new_lock = scope_now.get("versionLock")
+        alt = {
+            "serialNumbers": scope_obj.get("serialNumbers", []),
+            "versionLock": new_lock,
+        }
+        r2 = _do_put(alt)
+        if r2.status_code in (200, 204):
+            return True
+        try:
+            detail2 = r2.json()
+        except Exception:
+            detail2 = r2.text
+        logger.error(
+            "JAMF: PUT scope %s failed after lock refresh (%s): %s",
+            prestage_id,
+            r2.status_code,
+            detail2,
+        )
+        return False
+
     try:
         r = _do_put(scope_obj)
         if r.status_code in (200, 204):
             return True
         if r.status_code == 409:
-            logger.warning(
-                "PreStage %s versionLock conflict. Refreshing and retrying...",
-                prestage_id,
-            )
-            scope_now = _get_prestage_scope_v2(jamf_client, prestage_id, settings) or {}
-            new_lock = scope_now.get("versionLock")
-            alt = {
-                "serialNumbers": scope_obj.get("serialNumbers", []),
-                "versionLock": new_lock,
-            }
-            r2 = _do_put(alt)
-            if r2.status_code in (200, 204):
-                return True
-            try:
-                detail2 = r2.json()
-            except Exception:
-                detail2 = r2.text
-            logger.error(
-                "JAMF: PUT scope %s failed after lock refresh (%s): %s",
-                prestage_id,
-                r2.status_code,
-                detail2,
-            )
-            return False
+            return _retry_after_lock_conflict()
         try:
             detail = r.json()
         except Exception:
@@ -568,31 +585,8 @@ def _put_prestage_scope_v2(
     except Exception as e:
         status = getattr(getattr(e, "response", None), "status_code", None)
         if status == 409:
-            logger.warning(
-                "PreStage %s versionLock conflict (exception). Refreshing and retrying...",
-                prestage_id,
-            )
-            scope_now = _get_prestage_scope_v2(jamf_client, prestage_id, settings) or {}
-            new_lock = scope_now.get("versionLock")
-            alt = {
-                "serialNumbers": scope_obj.get("serialNumbers", []),
-                "versionLock": new_lock,
-            }
             try:
-                r2 = _do_put(alt)
-                if r2.status_code in (200, 204):
-                    return True
-                try:
-                    detail2 = r2.json()
-                except Exception:
-                    detail2 = r2.text
-                logger.error(
-                    "JAMF: PUT scope %s failed after lock refresh (%s): %s",
-                    prestage_id,
-                    r2.status_code,
-                    detail2,
-                )
-                return False
+                return _retry_after_lock_conflict(via_exception=True)
             except Exception as e2:
                 logger.error("JAMF: PUT scope %s retry failed: %s", prestage_id, e2)
                 return False
