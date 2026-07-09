@@ -27,6 +27,7 @@ from utilities.settings import get_settings, set_setting
 from utilities.otherApiBits import *
 from utilities.tk_geometry import center_window
 from utilities.validation import valid_asset_tag
+from utilities.api_retry import call_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -172,31 +173,12 @@ def _get_asset_by_tag_with_retry(asset_tag: str):
         or (False, None) if the user cancels after repeated failures.
     """
     configure_logging()
-    url = Key.API_URL_Base + "hardware/bytag/" + str(asset_tag)
-    while True:
-        try:
-            r = requests.get(url, headers=get_headers(), timeout=20)
-            if 200 <= r.status_code < 300:
-                logger.info("Loaded asset by tag for tracker: %s", asset_tag)
-                return True, r.json()
-            else:
-                try:
-                    msg = r.json()
-                except Exception:
-                    msg = r.text
-                logger.error("Tracker load failed for %s (HTTP %s): %s", asset_tag, r.status_code, msg)
-                retry = messagebox.askretrycancel(
-                    "Load Failed",
-                    f"Failed to load asset by tag '{asset_tag}' (HTTP {r.status_code}).\n"
-                    f"{str(msg)[:500]}\n\nRetry?"
-                )
-                if not retry:
-                    return False, None
-        except Exception as e:
-            logger.exception("Network error loading asset tag %s", asset_tag)
-            retry = messagebox.askretrycancel("Network Error", f"Error loading asset tag '{asset_tag}':\n{e}\n\nRetry?")
-            if not retry:
-                return False, None
+    data = call_with_retry(
+        f"Load asset '{asset_tag}'",
+        lambda: fetch_asset_by_tag(asset_tag),
+        is_success=lambda r: 200 <= r.status_code < 300,
+    )
+    return data is not None, data
 
 def _put_asset_notes_with_retry(asset_id: str, new_notes: str):
     """Update only the notes field of a Snipe-IT asset with Retry/Cancel.
@@ -211,30 +193,12 @@ def _put_asset_notes_with_retry(asset_id: str, new_notes: str):
     configure_logging()
     url = Key.API_URL_Base + "hardware/" + str(asset_id)
     payload = {"notes": new_notes}
-    while True:
-        try:
-            r = requests.put(url, json=payload, headers=get_headers(), timeout=20)
-            if 200 <= r.status_code < 300:
-                logger.info("Updated tracker notes for asset %s", asset_id)
-                return True
-            else:
-                try:
-                    msg = r.json()
-                except Exception:
-                    msg = r.text
-                logger.error("Tracker notes update failed for %s (HTTP %s): %s", asset_id, r.status_code, msg)
-                retry = messagebox.askretrycancel(
-                    "Update Failed",
-                    f"Failed to update tracker notes (HTTP {r.status_code}).\n"
-                    f"{str(msg)[:500]}\n\nRetry?"
-                )
-                if not retry:
-                    return False
-        except Exception as e:
-            logger.exception("Network error updating tracker notes for %s", asset_id)
-            retry = messagebox.askretrycancel("Network Error", f"Error updating tracker notes:\n{e}\n\nRetry?")
-            if not retry:
-                return False
+    result = call_with_retry(
+        f"Update tracker notes for asset {asset_id}",
+        lambda: requests.put(url, json=payload, headers=get_headers(), timeout=20),
+        is_success=lambda r: 200 <= r.status_code < 300,
+    )
+    return result is not None
 
 # ----------------------------
 # State (parse/format/validate) in tracker asset Notes
@@ -490,39 +454,56 @@ def _checkin_asset_with_retry(id, note="Checked in via Drop-Off automation"):
     configure_logging()
     url = Key.API_URL_Base + "hardware/" + str(id) + "/checkin"
     payload = {"note": note}
-    while True:
+
+    def _already_checked_in(resp):
         try:
-            r = requests.post(url, json=payload, headers=get_headers(), timeout=20)
-            if 200 <= r.status_code < 300:
-                logger.info("Checked in asset %s (drop-off)", id)
-                return True
-            else:
-                # If it's a known "not checked out" case, continue without blocking
-                try:
-                    msg = r.json()
-                except Exception:
-                    msg = r.text
-                text = str(msg).lower()
-                if "not checked out" in text or "already checked in" in text:
-                    # Non-fatal; proceed
-                    logger.info("Asset %s already checked in; continuing.", id)
-                    return True
-                logger.error("Check-in failed for %s (HTTP %s): %s", id, r.status_code, msg)
-                retry = messagebox.askretrycancel(
-                    "Check-In Failed",
-                    f"Failed to check in asset (HTTP {r.status_code}).\n"
-                    f"{str(msg)[:500]}\n\nRetry?"
-                )
-                if not retry:
-                    return False
-        except Exception as e:
-            logger.exception("Network error during check-in for %s", id)
-            retry = messagebox.askretrycancel(
-                "Network Error",
-                f"Error checking in asset:\n{e}\n\nRetry?"
-            )
-            if not retry:
-                return False
+            msg = resp.json()
+        except Exception:
+            msg = resp.text
+        text = str(msg).lower()
+        return "not checked out" in text or "already checked in" in text
+
+    result = call_with_retry(
+        f"Check in asset {id}",
+        lambda: requests.post(url, json=payload, headers=get_headers(), timeout=20),
+        is_success=lambda r: 200 <= r.status_code < 300,
+        is_nonfatal=_already_checked_in,
+    )
+    return result is not None
+
+def _update_asset_fields_with_retry(asset_id, asset_tag, status_id, model_id, notes, extra_fields=None):
+    """PUT updated status/notes (and optional extra fields) with Retry/Cancel.
+
+    Shared by _update_asset_with_retry (adds charger/cord/box custom fields)
+    and _update_asset_status_and_notes_with_retry (status/notes only).
+
+    Args:
+        asset_id: Numeric Snipe-IT asset ID (string or int).
+        asset_tag: Asset tag string (used in payload and error messages).
+        status_id: Status ID integer to assign.
+        model_id: Model ID integer (required by Snipe-IT PUT).
+        notes: Full replacement notes text to write.
+        extra_fields: Optional dict of additional payload fields to merge in.
+
+    Returns:
+        True on success, False if the user cancels after repeated failures.
+    """
+    configure_logging()
+    url = Key.API_URL_Base + "hardware/" + str(asset_id)
+    payload = {
+        "asset_tag": asset_tag,
+        "status_id": status_id,
+        "model_id": model_id,
+        "notes": notes,
+    }
+    if extra_fields:
+        payload.update(extra_fields)
+    result = call_with_retry(
+        f"Update asset {asset_tag}",
+        lambda: requests.put(url, json=payload, headers=get_headers(), timeout=20),
+        is_success=lambda r: 200 <= r.status_code < 300,
+    )
+    return result is not None
 
 def _update_asset_with_retry(id, assetTag, statusID, modelID, chargerCond, cordCond, boxLabel, existingNotes):
     """Update a drop-off device's status and custom fields with Retry/Cancel.
@@ -540,52 +521,21 @@ def _update_asset_with_retry(id, assetTag, statusID, modelID, chargerCond, cordC
     Returns:
         True on success, False if the user cancels after repeated failures.
     """
-    configure_logging()
-    putURL = Key.API_URL_Base + "hardware/" + str(id)
     charger_key, cord_key, box_key = _get_dropoff_field_keys()
-    payload = {
-        "asset_tag": assetTag,
-        "status_id": statusID,
-        "model_id": modelID,
-        "notes": existingNotes,
-        charger_key: "y" if chargerCond == "y" else "n",
-        cord_key: "y" if cordCond == "y" else "n",
-        box_key: boxLabel
-    }
     logger.debug(
         "Drop-off payload keys: charger=%s cord=%s box=%s",
         charger_key,
         cord_key,
         box_key,
     )
-
-    while True:
-        try:
-            response = requests.put(putURL, json=payload, headers=get_headers(), timeout=20)
-            if 200 <= response.status_code < 300:
-                logger.info("Updated drop-off asset %s (box=%s)", id, boxLabel)
-                return True
-            else:
-                try:
-                    msg = response.json()
-                except Exception:
-                    msg = response.text
-                logger.error("Drop-off update failed for %s (HTTP %s): %s", assetTag, response.status_code, msg)
-                retry = messagebox.askretrycancel(
-                    "Update Failed",
-                    f"Failed to update asset {assetTag} (HTTP {response.status_code}).\n"
-                    f"{str(msg)[:500]}\n\nRetry?"
-                )
-                if not retry:
-                    return False
-        except Exception as e:
-            logger.exception("Network error updating asset %s", assetTag)
-            retry = messagebox.askretrycancel(
-                "Network Error",
-                f"Error updating asset {assetTag}:\n{e}\n\nRetry?"
-            )
-            if not retry:
-                return False
+    return _update_asset_fields_with_retry(
+        id, assetTag, statusID, modelID, existingNotes,
+        extra_fields={
+            charger_key: "y" if chargerCond == "y" else "n",
+            cord_key: "y" if cordCond == "y" else "n",
+            box_key: boxLabel,
+        },
+    )
 
 def _update_asset_status_and_notes_with_retry(asset_id, asset_tag, status_id, model_id, new_notes):
     """Update only the status and notes of a Snipe-IT asset with Retry/Cancel.
@@ -600,41 +550,7 @@ def _update_asset_status_and_notes_with_retry(asset_id, asset_tag, status_id, mo
     Returns:
         True on success, False if the user cancels after repeated failures.
     """
-    configure_logging()
-    url = Key.API_URL_Base + "hardware/" + str(asset_id)
-    payload = {
-        "asset_tag": asset_tag,
-        "status_id": status_id,
-        "model_id": model_id,
-        "notes": new_notes,
-    }
-    while True:
-        try:
-            r = requests.put(url, json=payload, headers=get_headers(), timeout=20)
-            if 200 <= r.status_code < 300:
-                logger.info("Updated status/notes for asset %s (status=%s)", asset_tag, status_id)
-                return True
-            else:
-                try:
-                    msg = r.json()
-                except Exception:
-                    msg = r.text
-                logger.error("Status/notes update failed for %s (HTTP %s): %s", asset_tag, r.status_code, msg)
-                retry = messagebox.askretrycancel(
-                    "Update Failed",
-                    f"Failed to update asset {asset_tag} (HTTP {r.status_code}).\n"
-                    f"{str(msg)[:500]}\n\nRetry?"
-                )
-                if not retry:
-                    return False
-        except Exception as e:
-            logger.exception("Network error updating status/notes for %s", asset_tag)
-            retry = messagebox.askretrycancel(
-                "Network Error",
-                f"Error updating asset {asset_tag}:\n{e}\n\nRetry?"
-            )
-            if not retry:
-                return False
+    return _update_asset_fields_with_retry(asset_id, asset_tag, status_id, model_id, new_notes)
 
 # ----------------------------
 # Help / Box State UI

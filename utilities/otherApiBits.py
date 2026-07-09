@@ -34,7 +34,7 @@ def get_headers() -> dict:
     return result
 
 
-def _fetch_asset_by_tag(assetTag):
+def fetch_asset_by_tag(assetTag):
     """Issue the raw GET for a Snipe-IT asset lookup by tag.
 
     Args:
@@ -65,7 +65,7 @@ def getAssetInfo(assetTag, allow_missing: bool = False):
     configure_logging()
     # Issue the request and parse JSON.
     try:
-        response = _fetch_asset_by_tag(assetTag)
+        response = fetch_asset_by_tag(assetTag)
         response.raise_for_status()
         assetData = response.json()
     except Exception as e:
