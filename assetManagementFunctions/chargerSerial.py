@@ -103,6 +103,71 @@ def parse_charger_info(values_str):
     logger.debug("parse_charger_info: parsed %s entries", len(entries))
     return entries
 
+def build_charger_history(target_charger_serial, computers):
+    """Scan Jamf computer inventory EA history for a charger serial match.
+
+    Shared by chargerSerial() (resolves the target via a Snipe-IT asset tag
+    lookup) and otherManagementFunctions.chargerLiveHistory (uses the
+    locally-detected connected charger serial directly).
+
+    Args:
+        target_charger_serial: Charger serial number to search for.
+        computers: Iterable of Jamf computer inventory objects.
+
+    Returns:
+        Multi-line string listing recent charger uses, or a not-found message.
+    """
+    if not target_charger_serial:
+        return "No charger serial detected."
+
+    settings = get_settings()
+    # Use the configured EA name, with a safe default fallback.
+    charger_ea_name = settings.get("chargerEaName", CHARGER_EA_NAME_DEFAULT).strip()
+    if not charger_ea_name:
+        charger_ea_name = CHARGER_EA_NAME_DEFAULT
+    logger.debug("build_charger_history: using charger EA name: %s", charger_ea_name)
+
+    charger_matches = []
+    logger.debug("build_charger_history: scanning %s computers for charger matches", len(computers))
+    for comp in computers:
+        # Only consider records with a hardware section.
+        hardware = getattr(comp, "hardware", None)
+        if not hardware:
+            continue
+        comp_serial = hardware.serialNumber or "UNKNOWN"
+
+        if hardware.extensionAttributes:
+            for ea in hardware.extensionAttributes:
+                # Match the EA that contains charger usage history.
+                if ea.name == charger_ea_name:
+                    values = ea.values or []
+                    if not values:
+                        continue
+                    logger.debug("build_charger_history: found EA '%s' on comp_serial=%s with %s values", charger_ea_name, comp_serial, len(values))
+                    # Parse all history entries and capture matches for this charger.
+                    all_values_str = "\n".join(values)
+                    entries = parse_charger_info(all_values_str)
+                    for (dt, cserial) in entries:
+                        if cserial == target_charger_serial:
+                            logger.debug("build_charger_history: match found on comp_serial=%s at %s", comp_serial, dt)
+                            assignedTo = getAssetInfoSerialAssignedTo(comp_serial)
+                            charger_matches.append((dt, comp_serial, assignedTo))
+    logger.info("build_charger_history: found %s charger matches for %s", len(charger_matches), target_charger_serial)
+
+    # Sort by datetime descending to show most recent activity first.
+    charger_matches.sort(key=lambda x: x[0], reverse=True)
+
+    # Build a result string capped to the five most recent uses.
+    result_str = f"5 Most Recent Uses of Charger {target_charger_serial}:\n\n"
+    for dt, dev_serial, assigned in charger_matches[:5]:
+        result_str += f"{dt} - Device Serial: {dev_serial} - Last Used By: {assigned}\n"
+
+    if not charger_matches:
+        result_str += "No recent uses found."
+
+    return result_str
+
+
 def chargerSerial(assetTag):
     """Retrieve and format the most recent uses of a charger.
 
@@ -122,53 +187,7 @@ def chargerSerial(assetTag):
     _, assetInfo = getAssetInfo(assetTag)
     TARGET_CHARGER_SERIAL = assetInfo["serial"]
     logger.info("Checking charger history for asset %s (serial=%s)", assetTag, TARGET_CHARGER_SERIAL)
-
-    settings = get_settings()
-    # Use the configured EA name, with a safe default fallback.
-    charger_ea_name = settings.get("chargerEaName", CHARGER_EA_NAME_DEFAULT).strip()
-    if not charger_ea_name:
-        charger_ea_name = CHARGER_EA_NAME_DEFAULT
-    logger.debug("Using charger EA name: %s", charger_ea_name)
-
-    charger_matches = []
-    logger.debug("chargerSerial: scanning %s computers for charger matches", len(computers))
-    for comp in computers:
-        # Only consider records with a hardware section.
-        hardware = comp.hardware
-        if not hardware:
-            continue
-        comp_serial = hardware.serialNumber or "UNKNOWN"
-
-        if hardware.extensionAttributes:
-            for ea in hardware.extensionAttributes:
-                # Match the EA that contains charger usage history.
-                if ea.name == charger_ea_name:
-                    values = ea.values or []
-                    if not values:
-                        continue
-                    logger.debug("chargerSerial: found EA '%s' on comp_serial=%s with %s values", charger_ea_name, comp_serial, len(values))
-                    # Parse all history entries and capture matches for this charger.
-                    all_values_str = "\n".join(values)
-                    entries = parse_charger_info(all_values_str)
-                    for (dt, cserial) in entries:
-                        if cserial == TARGET_CHARGER_SERIAL:
-                            logger.debug("chargerSerial: match found on comp_serial=%s at %s", comp_serial, dt)
-                            assignedTo = getAssetInfoSerialAssignedTo(comp_serial)
-                            charger_matches.append((dt, comp_serial, assignedTo))
-    logger.info("Found %s charger matches for %s", len(charger_matches), TARGET_CHARGER_SERIAL)
-
-    # Sort by datetime descending to show most recent activity first.
-    charger_matches.sort(key=lambda x: x[0], reverse=True)
-
-    # Build a result string capped to the five most recent uses.
-    result_str = f"5 Most Recent Uses of Charger {TARGET_CHARGER_SERIAL}:\n\n"
-    for dt, dev_serial, assigned in charger_matches[:5]:
-        result_str += f"{dt} - Device Serial: {dev_serial} - Last Used By: {assigned}\n"
-
-    if not charger_matches:
-        result_str += "No recent uses found."
-
-    return result_str
+    return build_charger_history(TARGET_CHARGER_SERIAL, computers)
 
 def show_charger_results_tk(assetTag):
     """Display charger usage results in a new Tkinter window.

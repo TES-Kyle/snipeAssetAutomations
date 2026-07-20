@@ -15,15 +15,11 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from assetManagementFunctions.chargerSerial import get_computer_inventory_results, parse_charger_info
+from assetManagementFunctions.chargerSerial import get_computer_inventory_results, build_charger_history
 from utilities.logging_utils import configure_logging
-from utilities.settings import  get_settings
-from utilities.otherApiBits import getAssetInfoSerialAssignedTo
 from utilities.api_user import get_api_key
 
 logger = logging.getLogger(__name__)
-
-CHARGER_EA_NAME_DEFAULT = "chargerSerial"
 
 
 def _get_charger_serial_number():
@@ -48,66 +44,6 @@ def _get_charger_serial_number():
     except Exception:
         logger.debug("_get_charger_serial_number: subprocess failed, returning empty string")
         return ""
-
-
-def _build_history(charger_serial: str, computers) -> str:
-    """Build a history string for the connected charger serial.
-
-    Args:
-        charger_serial: The serial number of the connected charger.
-        computers: Iterable of computer inventory objects from Jamf.
-
-    Returns:
-        A formatted multi-line string listing recent charger uses.
-    """
-    logger.debug("_build_history: serial=%s, computer_count=%s", charger_serial, len(computers) if computers else 0)
-    if not charger_serial:
-        logger.debug("_build_history: no charger serial, returning default message")
-        return "No charger serial detected."
-
-    settings = get_settings()
-    charger_ea_name = settings.get("chargerEaName", CHARGER_EA_NAME_DEFAULT).strip()
-    logger.debug("_build_history: using ea_name=%s", charger_ea_name)
-    if not charger_ea_name:
-        charger_ea_name = CHARGER_EA_NAME_DEFAULT
-        logger.debug("_build_history: ea_name was empty, falling back to default=%s", charger_ea_name)
-
-    matches = []
-    for comp in computers:
-        hardware = getattr(comp, "hardware", None)
-        if not hardware:
-            logger.debug("_build_history: skipping computer with no hardware attribute")
-            continue
-        comp_serial = hardware.serialNumber or "UNKNOWN"
-        logger.debug("_build_history: scanning computer serial=%s", comp_serial)
-        if hardware.extensionAttributes:
-            for ea in hardware.extensionAttributes:
-                if ea.name == charger_ea_name:
-                    logger.debug("_build_history: found matching EA on computer=%s", comp_serial)
-                    values = ea.values or []
-                    if not values:
-                        logger.debug("_build_history: EA has no values for computer=%s", comp_serial)
-                        continue
-                    all_values_str = "\n".join(values)
-                    entries = parse_charger_info(all_values_str)
-                    logger.debug("_build_history: parsed %s charger entries for computer=%s", len(entries), comp_serial)
-                    for dt, cserial in entries:
-                        if cserial == charger_serial:
-                            logger.info("_build_history: charger match found on computer=%s at %s", comp_serial, dt)
-                            assigned_to = getAssetInfoSerialAssignedTo(comp_serial)
-                            logger.debug("_build_history: assigned_to=%s for computer=%s", assigned_to, comp_serial)
-                            matches.append((dt, comp_serial, assigned_to))
-
-    matches.sort(key=lambda x: x[0], reverse=True)
-    logger.debug("_build_history: total matches=%s, showing top 5", len(matches))
-
-    result = f"5 Most Recent Uses of Charger {charger_serial}:\n\n"
-    for dt, dev_serial, assigned in matches[:5]:
-        result += f"{dt} - Device Serial: {dev_serial} - Last Used By: {assigned}\n"
-    if not matches:
-        logger.debug("_build_history: no matches found for serial=%s", charger_serial)
-        result += "No recent uses found."
-    return result
 
 
 def show_connected_charger_history():
@@ -197,7 +133,7 @@ def show_connected_charger_history():
                 return
 
             logger.debug("worker: building history for serial=%s", target_serial)
-            history = _build_history(target_serial, computers)
+            history = build_charger_history(target_serial, computers)
 
             def apply():
                 """Apply fetched history to the UI if serial is still current."""
