@@ -7,6 +7,12 @@ from utilities.settings import  get_settings
 from utilities.otherApiBits import *
 from utilities.api_user import get_api_key
 from utilities.tk_geometry import center_window
+from utilities.checkInOutCommon import (
+    resolve_status_id,
+    build_asset_tag_frame,
+    build_status_picker_frame,
+    build_soft_message_frame,
+)
 import tkinter as tk
 from tkinter import ttk
 from tkcalendar import DateEntry
@@ -29,7 +35,7 @@ def checkoutTo(asset_tag):
         Status string for the main UI on success, otherwise None.
     """
     configure_logging()
-    url = "https://trinityes.snipe-it.io/api/v1"
+    url = Key.API_URL_Base.rstrip("/")
 
 
     def on_enter_pressed(event):
@@ -52,11 +58,8 @@ def checkoutTo(asset_tag):
         logger.debug("Proceeding with checkout for %s", asset_tag)
 
         # Resolve status/user selections and build the payload.
-        statusID = fetch_statuses(status_var.get())
+        statusID = resolve_status_id(url, status_var.get())
         expectedCheckIn = date_var.get()
-
-        # Extract the single status ID from the lookup mapping.
-        statusID = statusID[list(statusID.keys())[0]]
 
         # Look up the user selection by search text.
         userID = fetch_users(checkout_to_var.get())
@@ -177,60 +180,6 @@ def checkoutTo(asset_tag):
 
         threading.Thread(target=fetch).start()
 
-    def fetch_statuses(filter_str=None):
-        """Fetch status options with optional filtering.
-
-        Args:
-            filter_str: Optional filter string for server-side search.
-
-        Returns:
-            Dict mapping status label -> status ID.
-        """
-        settings = get_settings()
-        try:
-            limit_full = int(settings.get("statusSearchLimit", 30))
-        except Exception:
-            limit_full = 30
-        try:
-            limit_filtered = int(settings.get("statusSearchLimitFiltered", 5))
-        except Exception:
-            limit_filtered = 5
-
-        # Use a filtered endpoint when text is provided.
-        if filter_str:
-            response = requests.get(
-                url + f"/statuslabels?search={filter_str}&limit={limit_filtered}",
-                headers=get_headers(),
-            )
-        else:
-            response = requests.get(url + f"/statuslabels?limit={limit_full}", headers=get_headers())
-
-        # Return empty results on error.
-        if response.status_code != 200:
-            logger.error("Status lookup failed for %s: %s", filter_str, response.text)
-            return []
-
-        data = response.json()
-        statuses = {status['name']: status['id'] for status in data['rows']}
-        return statuses
-
-    def update_status_list():
-        """Populate the status combobox with API results."""
-        logger.debug("Updating status list for %s", asset_tag)
-        statuses = fetch_statuses()
-        logger.debug("Status options: %s", statuses)
-        if statuses:
-            status_combobox['values'] = list(statuses.keys())
-
-    def on_status_tab_complete(event):
-        """Autocomplete the first status option on Tab."""
-        logger.debug("on_status_tab_complete: Tab pressed for status combobox")
-        values = status_combobox['values']
-        if values:
-            status_combobox.set(values[0])
-            logger.debug("on_status_tab_complete: set to first status option: %s", values[0])
-        return "break"
-
     def on_tab_complete(event):
         """Autocomplete the first user option on Tab."""
         logger.debug("on_tab_complete: Tab pressed for user combobox")
@@ -252,38 +201,11 @@ def checkoutTo(asset_tag):
         
 
     # Frame for the "Asset Tag" question
-    asset_frame = tk.Frame(checkout_window)
-    asset_frame.pack(fill='x', padx=10, pady=5)
-    asset_label = tk.Label(asset_frame, text="Asset Tag:")
-    asset_label.pack(side='left')
-
-    asset_number = tk.StringVar(value=asset_tag)
-    asset_entry = tk.Entry(asset_frame, textvariable=asset_number, width=7)
-    asset_entry.pack(side='left', expand=True, fill='x')
-    asset_entry.bind('<Return>', on_enter_pressed)
+    asset_frame, asset_number, asset_entry = build_asset_tag_frame(checkout_window, asset_tag, on_enter_pressed)
 
     # Status Frame
-    status_frame = tk.Frame(checkout_window)
-    status_frame.pack(fill='x', padx=10, pady=5)
-
-    status_label = tk.Label(status_frame, text="Status:")
-    status_label.pack(side='left')
-    # Set the initial value of the combobox
-    #currentStatus = assetData["status_label"]["name"] 
-    currentStatus = {assetData["status_label"]["name"]: assetData["status_label"]["id"]}
-    # Replace with the actual current status
-
-    status_var = tk.StringVar()
-    status_var.set(list(currentStatus.keys())[0])
-    logger.debug("Current Status 2: %s", status_var)
-
-    #status_combobox = ttk.Combobox(status_frame, textvariable=status_var)
-    status_combobox = ttk.Combobox(status_frame, textvariable=status_var, postcommand=update_status_list)
-    status_combobox.pack(side='left', expand=True, fill='x')
-    logger.debug("Current Status 3: %s", status_var)
-
-    #status_combobox.bind('<KeyRelease>', update_status_list)
-    status_combobox.bind('<Tab>', on_status_tab_complete)
+    current_status_name = assetData["status_label"]["name"]
+    status_frame, status_var, status_combobox = build_status_picker_frame(checkout_window, url, current_status_name)
 
     # Checkout To Frame
     checkout_to_frame = tk.Frame(checkout_window)
@@ -318,11 +240,7 @@ def checkoutTo(asset_tag):
     submit_button.pack(pady=10)
 
     # Soft Message Frame
-    soft_message_frame = tk.Frame(checkout_window)
-    soft_message_frame.pack(fill='x', padx=10, pady=5)
-    soft_message = tk.StringVar()
-    soft_message_label = tk.Label(soft_message_frame, textvariable=soft_message)
-    soft_message_label.pack()
+    soft_message_frame, soft_message = build_soft_message_frame(checkout_window)
 
     # Center the window on screen.
     center_window(checkout_window)

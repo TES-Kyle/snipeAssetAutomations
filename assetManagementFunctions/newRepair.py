@@ -147,7 +147,7 @@ def newRepair(asset_tag):
         logger.info("submitMaintenance: fetching asset data for %s", asset_tag)
         junk, assetData = getAssetInfo(asset_tag)
         logger.debug("submitMaintenance: asset id=%s name=%s", assetData.get("id"), assetData.get("name"))
-        url = "https://trinityes.snipe-it.io/api/v1"
+        url = Key.API_URL_Base.rstrip("/")
 
         # Decide effective email behavior up front (handles "no current assignee" case).
         want_email = bool(email_var.get())
