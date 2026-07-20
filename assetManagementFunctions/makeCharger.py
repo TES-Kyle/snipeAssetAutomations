@@ -14,6 +14,7 @@ from utilities.api_user import get_api_headers, get_api_key
 from utilities.logging_utils import configure_logging
 from utilities.settings import  get_settings
 from utilities.tk_geometry import center_window
+from utilities.api_retry import call_with_retry
 
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -122,19 +123,6 @@ def makeCharger(asset_tag):
         """Return Snipe-IT headers using the active API user."""
         logger.debug("_api_headers: returning API headers")
         return get_api_headers()
-
-    def _busy_cursor(on=True):
-        """Toggle the busy cursor for the charger window.
-
-        Args:
-            on: If True, show busy cursor; if False, restore default.
-        """
-        logger.debug("_busy_cursor: on=%s", on)
-        try:
-            charger_window.config(cursor="watch" if on else "")
-            charger_window.update_idletasks()
-        except Exception:
-            pass
 
     def _require_api_creds():
         """Validate that API URL and key are available.
@@ -497,50 +485,22 @@ def makeCharger(asset_tag):
         if order_number:
             payload["order_number"] = order_number
 
-        # POST /hardware with retry loop.
+        # POST /hardware with retry.
         create_url = f"{SNIPE_BASE}/hardware"
-        while True:
-            try:
-                _busy_cursor(True)
-                r = requests.post(create_url, json=payload, headers=_api_headers(), timeout=25)
-            except requests.RequestException as e:
-                _busy_cursor(False)
-                logger.exception("Network error creating charger asset")
-                if not messagebox.askretrycancel("Network Error", f"{e}\n\nRetry?"):
-                    return
-                continue
-            finally:
-                _busy_cursor(False)
-
-            if 200 <= r.status_code < 300:
-                try:
-                    data = r.json()
-                except Exception:
-                    data = {}
-                # HTTP 2xx but Snipe-IT returned a logical error in the body.
-                if str(data.get("status", "")).lower() == "error":
-                    msgs = data.get("messages")
-                    msg = "; ".join(msgs) if isinstance(msgs, list) else str(msgs or data)
-                    logger.error("Create charger asset failed: %s", msg)
-                    if not messagebox.askretrycancel("Create failed", f"Snipe-IT error:\n{msg}\n\nRetry?"):
-                        return
-                    continue
-                # Extract the new asset ID from the response payload.
-                asset_id = (data.get("payload") or {}).get("id")
-                if not asset_id:
-                    logger.error("Charger asset created but ID missing in response")
-                    messagebox.showerror("Create", "Asset created but ID missing in response.")
-                    return
-                logger.info("Charger asset created: %s", asset_id)
-                break
-            # Non-2xx response; parse detail for the user prompt.
-            try:
-                detail = r.json()
-            except Exception:
-                detail = r.text
-            logger.error("Create charger asset HTTP %s: %s", r.status_code, detail)
-            if not messagebox.askretrycancel("HTTP Error", f"POST {r.status_code}\n{detail}\n\nRetry?"):
-                return
+        data = call_with_retry(
+            "Create charger asset",
+            lambda: requests.post(create_url, json=payload, headers=_api_headers(), timeout=25),
+            busy_widget=charger_window,
+        )
+        if data is None:
+            return
+        # Extract the new asset ID from the response payload.
+        asset_id = (data.get("payload") or {}).get("id")
+        if not asset_id:
+            logger.error("Charger asset created but ID missing in response")
+            messagebox.showerror("Create", "Asset created but ID missing in response.")
+            return
+        logger.info("Charger asset created: %s", asset_id)
 
         # Optional checkout when a user or location was selected.
         if user_id is not None or location_id is not None:
@@ -552,40 +512,14 @@ def makeCharger(asset_tag):
                 body.update({"checkout_to_type": "location", "assigned_location": location_id})
             logger.debug("Charger checkout payload: %s", body)
 
-            while True:
-                try:
-                    _busy_cursor(True)
-                    r = requests.post(co_url, json=body, headers=_api_headers(), timeout=25)
-                except requests.RequestException as e:
-                    _busy_cursor(False)
-                    logger.exception("Network error during charger checkout")
-                    if not messagebox.askretrycancel("Network Error", f"{e}\n\nRetry?"):
-                        break
-                    continue
-                finally:
-                    _busy_cursor(False)
-
-                if 200 <= r.status_code < 300:
-                    try:
-                        data = r.json()
-                        # HTTP 2xx but Snipe-IT returned a logical error in the body.
-                        if str(data.get("status")).lower() == "error":
-                            msg = "; ".join(data.get("messages") or []) or str(data)
-                            logger.error("Charger checkout failed: %s", msg)
-                            if not messagebox.askretrycancel("Checkout failed", f"Snipe-IT error:\n{msg}\n\nRetry?"):
-                                break
-                            continue
-                    except Exception:
-                        pass
-                    break
-                # Non-2xx checkout response; parse detail for the user prompt.
-                try:
-                    detail = r.json()
-                except Exception:
-                    detail = r.text
-                logger.error("Charger checkout HTTP %s: %s", r.status_code, detail)
-                if not messagebox.askretrycancel("HTTP Error", f"CHECKOUT {r.status_code}\n{detail}\n\nRetry?"):
-                    break
+            # Result intentionally not checked further -- a cancelled/failed
+            # checkout still falls through to batch handling/close below,
+            # matching the original loop's break-not-return on cancel.
+            call_with_retry(
+                "Charger checkout",
+                lambda: requests.post(co_url, json=body, headers=_api_headers(), timeout=25),
+                busy_widget=charger_window,
+            )
 
         # Done → batch handling or close
         if batch_var.get():
