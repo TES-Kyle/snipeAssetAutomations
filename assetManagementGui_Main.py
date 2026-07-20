@@ -29,6 +29,14 @@ from otherManagementFunctions.otherFunctionsRouting import other_func_list, othe
 logger = logging.getLogger(__name__)
 
 
+def _int_setting(settings, key, default):
+    """Return settings[key] coerced to int, or default if missing/invalid."""
+    try:
+        return int(settings.get(key, default))
+    except Exception:
+        return default
+
+
 def print_label():
     """Send the barcode label image to the printer if it exists.
 
@@ -66,10 +74,7 @@ def open_second_window(parent, asset_tag, main_app_state):
     logger.debug("open_second_window: asset_tag=%s", asset_tag)
     # Load settings and derive layout settings.
     settings = get_settings()
-    try:
-        button_cols = int(settings.get("guiButtonColumns", 4))
-    except Exception:
-        button_cols = 4
+    button_cols = _int_setting(settings, "guiButtonColumns", 4)
     logger.debug("open_second_window: button_cols=%s", button_cols)
 
     # Create the detail window and set its title.
@@ -174,18 +179,9 @@ def create_main_window(root):
     INACTIVE_TAB_COLOR = _theme["tab_inactive_bg"]
     TAB_FG_COLOR       = _theme["tab_fg"]
     font_family = settings.get("guiFontFamily", "Arial")
-    try:
-        base_font_size = int(settings.get("guiFontSize", 20))
-    except Exception:
-        base_font_size = 20
-    try:
-        tab_font_size = int(settings.get("guiTabFontSize", base_font_size))
-    except Exception:
-        tab_font_size = base_font_size
-    try:
-        button_cols = int(settings.get("guiButtonColumns", 4))
-    except Exception:
-        button_cols = 4
+    base_font_size = _int_setting(settings, "guiFontSize", 20)
+    tab_font_size = _int_setting(settings, "guiTabFontSize", base_font_size)
+    button_cols = _int_setting(settings, "guiButtonColumns", 4)
     small_font_size = max(10, base_font_size - 8)
     logger.debug("create_main_window: font_family=%s base_font_size=%s button_cols=%s", font_family, base_font_size, button_cols)
 

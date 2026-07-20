@@ -72,8 +72,5 @@ def pantsShipping(asset_tag, *args):
     logger.debug("pantsShipping: refreshing asset data for %s after update", asset_tag)
     junk, genericValues = getAssetInfo(asset_tag)
     logger.debug("pantsShipping: refreshed asset status=%s", genericValues.get("status_label", {}).get("name"))
-    # printData = [genericValues["asset_tag"], genericValues["status_label"]["name"], genericValues["name"]]
-
-    # createImage(printData)
 
     return f"Pants shipping complete for {asset_tag}."
