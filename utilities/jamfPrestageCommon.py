@@ -1108,3 +1108,38 @@ def _delete_computer_pro(
         logger.error("JAMF: v1 delete request failed: %s", e)
 
     return False
+
+
+def delete_computer_with_retry(jamf_client, cid, cname, settings, success_message, failure_warn_message):
+    """Delete a Jamf computer with a retry/cancel dialog on failure.
+
+    Shared by jamf_remove_prestage_and_delete and jamf_delete_and_set_prestage,
+    which differ only in their success/failure message wording.
+
+    Args:
+        jamf_client: Authenticated JamfProClient instance.
+        cid: Numeric Jamf computer ID to delete.
+        cname: Display name for the computer, used in the failure return message.
+        settings: Prestage settings dict (dry_run flag respected by _delete_computer_pro).
+        success_message: Message to return when deletion succeeds.
+        failure_warn_message: Message shown via _warn() when the user gives up retrying.
+
+    Returns:
+        success_message on success, or "[ERROR] JAMF: Delete failed for {cname}
+        (ID {cid})." if the user cancels after repeated failures.
+    """
+    while True:
+        logger.info("delete_computer_with_retry: attempting to delete Jamf computer ID %s", cid)
+        deleted_ok = _delete_computer_pro(jamf_client, cid, settings)
+        if deleted_ok:
+            logger.info("delete_computer_with_retry: successfully deleted Jamf computer ID %s", cid)
+            return success_message
+        logger.error("delete_computer_with_retry: delete failed for Jamf computer ID %s", cid)
+        if ask_retry_cancel("Jamf delete failed",
+                             f"Could not delete Jamf computer ID {cid}.\n\nRetry?"):
+            logger.debug("delete_computer_with_retry: user chose retry for delete of ID %s", cid)
+            continue
+        _warn("Jamf delete failed", failure_warn_message)
+        return f"[ERROR] JAMF: Delete failed for {cname} (ID {cid})."
+
+    return False
