@@ -106,6 +106,56 @@ def _read_remote_csv(sftp, filename):
 
 
 # ---------------------------------------------------------------------
+# Helper: fetch CSVs over SFTP with retry/cancel on failure
+# ---------------------------------------------------------------------
+def _fetch_csvs_with_retry(filenames, op_name):
+    """Open an SFTP connection (retrying on failure) and read the given CSVs.
+
+    Shared by get_parents/get_phone_number, which both connect, read one or
+    more CSVs from the same session, and offer an identical retry/cancel
+    dialog on failure -- only the files fetched and the field extraction
+    that follows differ between them.
+
+    Args:
+        filenames: Ordered list of CSV filenames to read from the session.
+        op_name: Short description used in log/dialog text (e.g.
+            "fetching parents").
+
+    Returns:
+        List of parsed CSV row-lists in the same order as filenames, or
+        None if the user cancelled after a connection/read failure.
+    """
+    while True:
+        try:
+            logger.debug("_fetch_csvs_with_retry: opening SFTP connection for %s", op_name)
+            transport, sftp = _open_sftp()
+            try:
+                results = [_read_remote_csv(sftp, name) for name in filenames]
+                logger.debug("_fetch_csvs_with_retry: loaded %s file(s) for %s", len(results), op_name)
+            finally:
+                # Always close SFTP resources
+                try:
+                    sftp.close()
+                except Exception:
+                    pass
+                try:
+                    transport.close()
+                except Exception:
+                    pass
+            return results
+
+        except SSHException as e:
+            logger.exception("SFTP connection failed while %s", op_name)
+            if not messagebox.askretrycancel("Error", f"Failed to connect to server\nError: {e}"):
+                return None
+        except Exception as e:
+            # Unexpected error - allow retry as well
+            logger.exception("Unexpected error while %s", op_name)
+            if not messagebox.askretrycancel("Error", f"Unexpected error while {op_name}:\n{e}"):
+                return None
+
+
+# ---------------------------------------------------------------------
 # get_parents
 # ---------------------------------------------------------------------
 def get_parents(email):
@@ -127,60 +177,32 @@ def get_parents(email):
     """
     configure_logging()
     logger.debug("get_parents: looking up parents for email=%s", email)
-    # Retry loop for transient SFTP failures.
-    trying = True
-    while trying:
-        try:
-            logger.debug("get_parents: opening SFTP connection")
-            # Pull both student and family CSVs from the server.
-            transport, sftp = _open_sftp()
-            try:
-                students = _read_remote_csv(sftp, 'students.csv')
-                families = _read_remote_csv(sftp, 'families.csv')
-                logger.debug("get_parents: loaded %s student rows and %s family rows", len(students), len(families))
-            finally:
-                # Always close SFTP resources
-                try:
-                    sftp.close()
-                except Exception:
-                    pass
-                try:
-                    transport.close()
-                except Exception:
-                    pass
+    csvs = _fetch_csvs_with_retry(["students.csv", "families.csv"], "fetching parents")
+    if csvs is None:
+        return []
+    students, families = csvs
+    logger.debug("get_parents: loaded %s student rows and %s family rows", len(students), len(families))
 
-            # Find the student row by email, then map to family rows.
-            search_value = str(email).lower()
-            result = []
-            logger.debug("get_parents: searching for student email=%s", search_value)
+    # Find the student row by email, then map to family rows.
+    search_value = str(email).lower()
+    result = []
+    logger.debug("get_parents: searching for student email=%s", search_value)
 
-            for row in students:
-                if len(row) > 6 and row[6].lower() == search_value:
-                    logger.debug("get_parents: found student row for %s; searching family rows", email)
-                    # found student row; find corresponding family row(s)
-                    for jrow in families:
-                        if len(jrow) > 2 and jrow[0] == row[0]:
-                            # collect parent emails from columns 6, 12, 18...
-                            for item in jrow[6::6]:
-                                if item:
-                                    result.append(item)
-                            logger.debug("get_parents: found %s parent email(s) for %s", len(result), email)
-                            return result
-            # if not found return empty list
-            logger.debug("get_parents: student %s not found; returning []", email)
-            return result
-
-        except SSHException as e:
-            logger.exception("SFTP connection failed while fetching parents")
-            trying = messagebox.askretrycancel("Error", f"Failed to connect to server\nError: {e}")
-            if not trying:
-                return []
-        except Exception as e:
-            # Unexpected error - allow retry as well
-            logger.exception("Unexpected error while fetching parents")
-            trying = messagebox.askretrycancel("Error", f"Unexpected error while fetching parents:\n{e}")
-            if not trying:
-                return []
+    for row in students:
+        if len(row) > 6 and row[6].lower() == search_value:
+            logger.debug("get_parents: found student row for %s; searching family rows", email)
+            # found student row; find corresponding family row(s)
+            for jrow in families:
+                if len(jrow) > 2 and jrow[0] == row[0]:
+                    # collect parent emails from columns 6, 12, 18...
+                    for item in jrow[6::6]:
+                        if item:
+                            result.append(item)
+                    logger.debug("get_parents: found %s parent email(s) for %s", len(result), email)
+                    return result
+    # if not found return empty list
+    logger.debug("get_parents: student %s not found; returning []", email)
+    return result
 
 
 # ---------------------------------------------------------------------
@@ -203,47 +225,22 @@ def get_phone_number(email):
     """
     configure_logging()
     logger.debug("get_phone_number: looking up phone for email=%s", email)
-    # Retry loop for transient SFTP failures.
-    trying = True
-    while trying:
-        try:
-            logger.debug("get_phone_number: opening SFTP connection")
-            # Pull the students CSV from the server.
-            transport, sftp = _open_sftp()
-            try:
-                students = _read_remote_csv(sftp, 'students.csv')
-                logger.debug("get_phone_number: loaded %s student rows", len(students))
-            finally:
-                try:
-                    sftp.close()
-                except Exception:
-                    pass
-                try:
-                    transport.close()
-                except Exception:
-                    pass
+    csvs = _fetch_csvs_with_retry(["students.csv"], "fetching phone")
+    if csvs is None:
+        return None
+    students, = csvs
+    logger.debug("get_phone_number: loaded %s student rows", len(students))
 
-            # Find the matching student row by email.
-            search_value = str(email).lower()
-            logger.debug("get_phone_number: searching for email=%s", search_value)
-            for row in students:
-                if len(row) > 6 and row[6].lower() == search_value:
-                    phone = row[5]
-                    logger.debug("get_phone_number: found phone=%s for email=%s", phone, email)
-                    return phone  # keep same column index as your original file
-            logger.debug("get_phone_number: email=%s not found in students.csv; returning None", email)
-            return None
-
-        except SSHException as e:
-            logger.exception("SFTP connection failed while fetching phone number")
-            trying = messagebox.askretrycancel("Error", f"Failed to connect to server\nError: {e}")
-            if not trying:
-                return None
-        except Exception as e:
-            logger.exception("Unexpected error while fetching phone number")
-            trying = messagebox.askretrycancel("Error", f"Unexpected error while fetching phone:\n{e}")
-            if not trying:
-                return None
+    # Find the matching student row by email.
+    search_value = str(email).lower()
+    logger.debug("get_phone_number: searching for email=%s", search_value)
+    for row in students:
+        if len(row) > 6 and row[6].lower() == search_value:
+            phone = row[5]
+            logger.debug("get_phone_number: found phone=%s for email=%s", phone, email)
+            return phone  # keep same column index as your original file
+    logger.debug("get_phone_number: email=%s not found in students.csv; returning None", email)
+    return None
 
 
 # ---------------------------------------------------------------------
@@ -654,6 +651,4 @@ def is_email(email):
     logger.debug("is_email checking: %s", email)
     # Normalize input to a string for regex validation.
     email = str(email)
-    if re.match(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", email):
-        return True
-    return False
+    return bool(re.match(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", email))

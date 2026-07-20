@@ -323,6 +323,55 @@ def _get_prestage_scope_v2(
     return scope
 
 
+def _flatten_scope_serials(scope: Dict) -> Optional[List[str]]:
+    """Extract the flat list of serial numbers from either scope shape Jamf returns.
+
+    Shared by _build_scope_put_payload and _build_scope_add_payload, which
+    both need to normalize the same two API response shapes before doing
+    their own add/remove logic on the flat list:
+      A) assignments is a dict with a "serialNumbers" list.
+      B) assignments is a list of {"serialNumber": ...} objects.
+
+    Args:
+        scope: Scope dict returned by _get_prestage_scope_v2.
+
+    Returns:
+        List of serial number strings (non-string entries dropped), or None
+        when scope isn't a dict or has no recognizable "assignments" shape.
+    """
+    if not isinstance(scope, dict):
+        return None
+    assignments = scope.get("assignments")
+    if isinstance(assignments, dict):
+        cur = assignments.get("serialNumbers") or []
+        if not isinstance(cur, list):
+            cur = []
+        return [s for s in cur if isinstance(s, str)]
+    if isinstance(assignments, list):
+        out = []
+        for row in assignments:
+            s = (row or {}).get("serialNumber")
+            if isinstance(s, str) and s:
+                out.append(s)
+        return out
+    return None
+
+
+def _bad_scope_debug_message(scope: Dict) -> str:
+    """Return the appropriate debug message for a scope that yielded no serials.
+
+    Args:
+        scope: Scope dict that failed to normalize via _flatten_scope_serials.
+
+    Returns:
+        Debug string distinguishing a non-dict scope from a dict with no
+        recognizable "assignments" shape.
+    """
+    if not isinstance(scope, dict):
+        return "[DEBUG] Bad scope object."
+    return "[DEBUG] No 'assignments' in scope."
+
+
 def _build_scope_put_payload(scope: Dict, serial: str) -> Tuple[Optional[Dict], str]:
     """Build the doc-style PUT body Jamf expects for a serial removal.
 
@@ -338,42 +387,19 @@ def _build_scope_put_payload(scope: Dict, serial: str) -> Tuple[Optional[Dict], 
         present or the scope object is invalid; debug_message describes the
         result.
     """
-    if not isinstance(scope, dict):
-        return None, "[DEBUG] Bad scope object."
+    serials_now = _flatten_scope_serials(scope)
+    if serials_now is None:
+        return None, _bad_scope_debug_message(scope)
 
-    # Capture the version lock and assignments from the scope document.
-    version_lock = scope.get("versionLock")
-    assignments = scope.get("assignments")
-
-    before = 0
-    serials_now: List[str] = []
-
-    if isinstance(assignments, dict):
-        # Shape A: assignments is a dict with a "serialNumbers" list.
-        cur = assignments.get("serialNumbers") or []
-        if not isinstance(cur, list):
-            cur = []
-        before = len(cur)
-        # Build new list excluding only the target serial.
-        serials_now = [s for s in cur if s != serial]
-    elif isinstance(assignments, list):
-        # Shape B: assignments is a list of {"serialNumber": ...} objects.
-        cur = []
-        for row in assignments:
-            s = (row or {}).get("serialNumber")
-            if isinstance(s, str) and s:
-                cur.append(s)
-        before = len(cur)
-        serials_now = [s for s in cur if s != serial]
-    else:
-        return None, "[DEBUG] No 'assignments' in scope."
-
+    before = len(serials_now)
+    # Build new list excluding only the target serial.
+    serials_now = [s for s in serials_now if s != serial]
     after = len(serials_now)
     # If count is unchanged the serial was never in this scope.
     if after == before:
         return None, "[DEBUG] Serial not present; nothing to PUT."
 
-    payload = {"serialNumbers": serials_now, "versionLock": version_lock}
+    payload = {"serialNumbers": serials_now, "versionLock": scope.get("versionLock")}
     return payload, f"[DEBUG] Doc-style prune: serialNumbers {before}->{after}"
 
 
@@ -392,29 +418,9 @@ def _build_scope_add_payload(scope: Dict, serial: str) -> Tuple[Optional[Dict], 
         present or the scope object is invalid; debug_message describes the
         result.
     """
-    if not isinstance(scope, dict):
-        return None, "[DEBUG] Bad scope object."
-
-    # Capture the version lock and assignments from the scope document.
-    version_lock = scope.get("versionLock")
-    assignments = scope.get("assignments")
-
-    serials_now: List[str] = []
-
-    if isinstance(assignments, dict):
-        # Shape A: assignments is a dict with a "serialNumbers" list.
-        cur = assignments.get("serialNumbers") or []
-        if not isinstance(cur, list):
-            cur = []
-        serials_now = [s for s in cur if isinstance(s, str)]
-    elif isinstance(assignments, list):
-        # Shape B: assignments is a list of {"serialNumber": ...} objects.
-        for row in assignments:
-            s = (row or {}).get("serialNumber")
-            if isinstance(s, str) and s:
-                serials_now.append(s)
-    else:
-        return None, "[DEBUG] No 'assignments' in scope."
+    serials_now = _flatten_scope_serials(scope)
+    if serials_now is None:
+        return None, _bad_scope_debug_message(scope)
 
     if serial in serials_now:
         return None, "[DEBUG] Serial already present; nothing to PUT."
@@ -423,7 +429,7 @@ def _build_scope_add_payload(scope: Dict, serial: str) -> Tuple[Optional[Dict], 
     serials_now.append(serial)
     after = len(serials_now)
 
-    payload = {"serialNumbers": serials_now, "versionLock": version_lock}
+    payload = {"serialNumbers": serials_now, "versionLock": scope.get("versionLock")}
     return payload, f"[DEBUG] Doc-style add: serialNumbers {before}->{after}"
 
 

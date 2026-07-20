@@ -15,8 +15,11 @@ SETTINGS_PATH = os.path.join(UTILITIES_DIR, "settings.json")
 DEFAULTS_PATH = os.path.join(UTILITIES_DIR, "defaultSettings.json")
 
 
-def _safe_read_json(path: str) -> dict:
+def safe_read_json(path: str) -> dict:
     """Read a JSON file and return a dict, or {} on failure.
+
+    Shared by other utilities modules that need a best-effort JSON read
+    without duplicating this try/except.
 
     Args:
         path: JSON file path to read.
@@ -43,8 +46,8 @@ def _load_settings() -> dict:
     """
     # Start with defaults, then override with settings.json values.
     settings = {}
-    settings.update(_safe_read_json(DEFAULTS_PATH))
-    settings.update(_safe_read_json(SETTINGS_PATH))
+    settings.update(safe_read_json(DEFAULTS_PATH))
+    settings.update(safe_read_json(SETTINGS_PATH))
     logger.debug("Settings merged: %s keys total", len(settings))
     return settings
 
@@ -78,7 +81,7 @@ def update_settings(updates: dict) -> bool:
         True on success, False if the write failed (logged, not raised).
     """
     logger.debug("update_settings: merging %s keys into settings.json", len(updates))
-    current = _safe_read_json(SETTINGS_PATH)
+    current = safe_read_json(SETTINGS_PATH)
     current.update(updates)
     tmp_path = SETTINGS_PATH + ".tmp"
     try:

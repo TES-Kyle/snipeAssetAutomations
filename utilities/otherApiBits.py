@@ -421,20 +421,13 @@ def getLatestCheckinName(asset_id, email=False, username=False):
         messagebox.showerror("Asset Lookup Failed", f"Could not fetch activity for asset {asset_id}.\n\n{e}")
         return None
     try:
-        if email:
+        if email or username:
             user_url = Key.API_URL_Base + f"users/{activity_data['rows'][0]['target']['id']}"
             headers = get_headers()
             user_response = requests.get(user_url, headers=headers)
             user_data = user_response.json()
-            return user_data['email']
-        elif username:
-            user_url = Key.API_URL_Base + f"users/{activity_data['rows'][0]['target']['id']}"
-            headers = get_headers()
-            user_response = requests.get(user_url, headers=headers)
-            user_data = user_response.json()
-            return user_data['username']
-        else:
-            return activity_data['rows'][0]['target']['name']
+            return user_data['email'] if email else user_data['username']
+        return activity_data['rows'][0]['target']['name']
     except (KeyError, IndexError):
         return None
 
@@ -481,6 +474,31 @@ def _get_paged(url: str, headers: dict | None = None, limit: int = 500, extra_pa
     logger.debug("_get_paged: total rows fetched from %s: %s", url, len(rows_all))
     return rows_all
 
+def _dedup_and_sort_options(options, key_fn=lambda o: o["id"]):
+    """Remove duplicate option dicts by key_fn and sort the rest by label.
+
+    Shared by getAllStatusOptions/getAllAssigneeOptions/getAllModelOptions,
+    which only differ in how they build each option dict and what makes an
+    option a duplicate (plain id, vs. (type, id) for mixed user/location lists).
+
+    Args:
+        options: List of option dicts, each with at least a "label" key.
+        key_fn: Callable(option) -> hashable key used to detect duplicates.
+            Defaults to the option's "id".
+
+    Returns:
+        Deduplicated list sorted by label (case-insensitive).
+    """
+    seen, uniq = set(), []
+    for o in options:
+        k = key_fn(o)
+        if k in seen:
+            continue
+        seen.add(k)
+        uniq.append(o)
+    return sorted(uniq, key=lambda o: o["label"].lower())
+
+
 def getAllStatusOptions():
     """Return all asset status options for autocomplete.
 
@@ -499,14 +517,7 @@ def getAllStatusOptions():
             "meta": st,
         })
     logger.debug("getAllStatusOptions: built %s status option entries", len(out))
-    # Unique & sorted.
-    seen, uniq = set(), []
-    for o in out:
-        if o["id"] in seen:
-            continue
-        seen.add(o["id"])
-        uniq.append(o)
-    result = sorted(uniq, key=lambda o: o["label"].lower())
+    result = _dedup_and_sort_options(out)
     logger.debug("getAllStatusOptions: returning %s unique sorted status options", len(result))
     return result
 
@@ -545,15 +556,7 @@ def getAllAssigneeOptions():
         })
     logger.debug("getAllAssigneeOptions: appended %s location options", len(locs))
 
-    # unique by (type,id) & sorted
-    seen, uniq = set(), []
-    for o in out:
-        k = (o["type"], o["id"])
-        if k in seen:
-            continue
-        seen.add(k)
-        uniq.append(o)
-    result = sorted(uniq, key=lambda o: o["label"].lower())
+    result = _dedup_and_sort_options(out, key_fn=lambda o: (o["type"], o["id"]))
     logger.debug("getAllAssigneeOptions: returning %s unique sorted assignee options", len(result))
     return result
 
@@ -574,13 +577,6 @@ def getAllModelOptions():
             "meta": m,
         })
     logger.debug("getAllModelOptions: built %s model option entries", len(out))
-    # unique by id & sorted by label
-    seen, uniq = set(), []
-    for o in out:
-        if o["id"] in seen:
-            continue
-        seen.add(o["id"])
-        uniq.append(o)
-    result = sorted(uniq, key=lambda o: o["label"].lower())
+    result = _dedup_and_sort_options(out)
     logger.debug("getAllModelOptions: returning %s unique sorted model options", len(result))
     return result

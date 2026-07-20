@@ -1,6 +1,5 @@
 """Autocomplete Tk widget used across GUI forms."""
 
-# utilities/auto_complete.py
 import logging
 import tkinter as tk
 from tkinter import ttk
@@ -407,8 +406,11 @@ class AutoCompleteEntry(ttk.Frame):
                 return (100 + subseq_pos, len(label))
             return (10_000, len(label))
 
-        ranked = sorted(self._all_options, key=score)
-        result = [o for o in ranked if score(o)[0] < 10_000][:limit]
+        # Score each option once, then sort/filter on the cached scores
+        # instead of recomputing score() a second time per option.
+        scored = [(score(o), o) for o in self._all_options]
+        scored.sort(key=lambda pair: pair[0])
+        result = [o for s, o in scored if s[0] < 10_000][:limit]
         logger.debug("AutoCompleteEntry._top_matches: q=%s returned %s matches", q, len(result))
         return result
 

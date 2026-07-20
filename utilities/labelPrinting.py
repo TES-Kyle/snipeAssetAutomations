@@ -33,11 +33,10 @@ def sendToPrinter(path):
     logger.debug("sendToPrinter: printerType=%s, labelName=%s, labelsPerPrint=%s, printerIP=%s",
                  settings.get("printerType"), settings.get("labelName"),
                  settings.get("labelsPerPrint"), settings.get("printerIP"))
-    filename = path
     # Prepare the rasterized print payload for the configured printer.
     printer = BrotherQLRaster(settings["printerType"])
     logger.debug("sendToPrinter: BrotherQLRaster created for %s", settings["printerType"])
-    print_data = brother_ql.brother_ql_create.convert(printer, [filename], settings["labelName"])
+    print_data = brother_ql.brother_ql_create.convert(printer, [path], settings["labelName"])
     logger.debug("sendToPrinter: print_data converted, sending %s copies", settings.get("labelsPerPrint"))
     try:
         # Print multiple copies as configured.
@@ -132,7 +131,7 @@ def createImage(values):
     logger.debug("createImage: label saved to %s", save_path)
     if settings["Default Print (BOOL)"] == "1":
         logger.info("createImage: auto-print enabled; sending to printer")
-        sendToPrinter(os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "utilities/barcode-label.jpg"))
+        sendToPrinter(save_path)
 
 
 
