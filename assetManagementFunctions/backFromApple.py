@@ -145,7 +145,7 @@ def set_loan_checkin(username, maintenance_start_date: date | None = None):
             return False
         logger.info("set_loan_checkin: looking up user=%s", username)
         user_data = requests.get(
-            Key.API_URL_Base + f"users?username= {username}",
+            Key.API_URL_Base + f"users?username={username}",
             headers=get_headers(),
         ).json()
         logger.debug("set_loan_checkin: user lookup total=%s", user_data.get("total"))

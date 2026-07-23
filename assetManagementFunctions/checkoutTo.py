@@ -3,7 +3,7 @@
 import logging
 
 from utilities.logging_utils import configure_logging
-from utilities.settings import  get_settings
+from utilities.settings import get_settings
 from utilities.otherApiBits import *
 from utilities.api_user import get_api_key
 from utilities.tk_geometry import center_window
@@ -63,7 +63,10 @@ def checkoutTo(asset_tag):
 
         # Look up the user selection by search text.
         userID = fetch_users(checkout_to_var.get())
-        if len(userID) < 1:
+        if len(userID) == 0:
+            messagebox.showerror("Error", "No matching users found")
+            return
+        if len(userID) > 1:
             messagebox.showerror("Error", "Multiple matching users")
             return
 
