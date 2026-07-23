@@ -15,8 +15,11 @@ SETTINGS_PATH = os.path.join(UTILITIES_DIR, "settings.json")
 DEFAULTS_PATH = os.path.join(UTILITIES_DIR, "defaultSettings.json")
 
 
-def _safe_read_json(path: str) -> dict:
+def safe_read_json(path: str) -> dict:
     """Read a JSON file and return a dict, or {} on failure.
+
+    Shared by other utilities modules that need a best-effort JSON read
+    without duplicating this try/except.
 
     Args:
         path: JSON file path to read.
@@ -43,8 +46,8 @@ def _load_settings() -> dict:
     """
     # Start with defaults, then override with settings.json values.
     settings = {}
-    settings.update(_safe_read_json(DEFAULTS_PATH))
-    settings.update(_safe_read_json(SETTINGS_PATH))
+    settings.update(safe_read_json(DEFAULTS_PATH))
+    settings.update(safe_read_json(SETTINGS_PATH))
     logger.debug("Settings merged: %s keys total", len(settings))
     return settings
 
@@ -59,3 +62,52 @@ def get_settings() -> dict:
     settings = _load_settings()
     logger.debug("get_settings: returning %s keys", len(settings))
     return settings
+
+
+def update_settings(updates: dict) -> bool:
+    """Merge `updates` into settings.json and write it back atomically.
+
+    Reads the current settings.json only (not the merged defaults+overrides
+    view from get_settings()), applies `updates` on top, and writes the
+    result to a temp file followed by os.replace() so a crash mid-write
+    can't corrupt the settings.json the app reads on every launch. Writing
+    only settings.json (not the merged view) keeps default values out of
+    the user's override file.
+
+    Args:
+        updates: Dict of key/value pairs to merge into settings.json.
+
+    Returns:
+        True on success, False if the write failed (logged, not raised).
+    """
+    logger.debug("update_settings: merging %s keys into settings.json", len(updates))
+    current = safe_read_json(SETTINGS_PATH)
+    current.update(updates)
+    tmp_path = SETTINGS_PATH + ".tmp"
+    try:
+        with open(tmp_path, "w") as fh:
+            json.dump(current, fh)
+        os.replace(tmp_path, SETTINGS_PATH)
+        logger.info("update_settings: wrote %s keys to %s", len(current), SETTINGS_PATH)
+        return True
+    except Exception as exc:
+        logger.exception("update_settings: failed to write %s: %s", SETTINGS_PATH, exc)
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except Exception:
+            pass
+        return False
+
+
+def set_setting(key, value) -> bool:
+    """Set a single settings.json key, leaving all others untouched.
+
+    Args:
+        key: Settings key to set.
+        value: Value to store for that key.
+
+    Returns:
+        True on success, False if the write failed.
+    """
+    return update_settings({key: value})

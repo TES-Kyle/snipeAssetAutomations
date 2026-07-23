@@ -7,7 +7,6 @@ asset tag input/validation.
 
 import logging
 import os
-import re
 import tkinter as tk
 from tkinter import messagebox
 
@@ -22,10 +21,20 @@ from utilities.otherApiBits import getAssetInfo, build_asset_info_frame
 from utilities.settingsMenu import settingsMenu
 from utilities.settings import get_settings
 from utilities.theme import get_ui_colors
+from utilities.tk_geometry import center_window
+from utilities.validation import valid_asset_tag
 from assetManagementFunctions.assetFunctionsRouting import func_list, func_listTXT
 from otherManagementFunctions.otherFunctionsRouting import other_func_list, other_func_listTXT
 
 logger = logging.getLogger(__name__)
+
+
+def _int_setting(settings, key, default):
+    """Return settings[key] coerced to int, or default if missing/invalid."""
+    try:
+        return int(settings.get(key, default))
+    except Exception:
+        return default
 
 
 def print_label():
@@ -65,10 +74,7 @@ def open_second_window(parent, asset_tag, main_app_state):
     logger.debug("open_second_window: asset_tag=%s", asset_tag)
     # Load settings and derive layout settings.
     settings = get_settings()
-    try:
-        button_cols = int(settings.get("guiButtonColumns", 4))
-    except Exception:
-        button_cols = 4
+    button_cols = _int_setting(settings, "guiButtonColumns", 4)
     logger.debug("open_second_window: button_cols=%s", button_cols)
 
     # Create the detail window and set its title.
@@ -141,13 +147,7 @@ def open_second_window(parent, asset_tag, main_app_state):
     tk.Button(top, text="Close", command=top.destroy, width=15).pack(side="top", pady=10)
 
     # --- Center Window on Screen ---
-    top.update_idletasks()
-    screen_width = top.winfo_screenwidth()
-    screen_height = top.winfo_screenheight()
-    x = (screen_width / 2) - (top.winfo_width() / 2)
-    y = (screen_height / 2) - (top.winfo_height() / 2)
-    logger.debug("open_second_window: centering at x=%s y=%s", int(x), int(y))
-    top.geometry(f"+{int(x)}+{int(y)}")
+    center_window(top)
 
 
 def create_main_window(root):
@@ -179,18 +179,9 @@ def create_main_window(root):
     INACTIVE_TAB_COLOR = _theme["tab_inactive_bg"]
     TAB_FG_COLOR       = _theme["tab_fg"]
     font_family = settings.get("guiFontFamily", "Arial")
-    try:
-        base_font_size = int(settings.get("guiFontSize", 20))
-    except Exception:
-        base_font_size = 20
-    try:
-        tab_font_size = int(settings.get("guiTabFontSize", base_font_size))
-    except Exception:
-        tab_font_size = base_font_size
-    try:
-        button_cols = int(settings.get("guiButtonColumns", 4))
-    except Exception:
-        button_cols = 4
+    base_font_size = _int_setting(settings, "guiFontSize", 20)
+    tab_font_size = _int_setting(settings, "guiTabFontSize", base_font_size)
+    button_cols = _int_setting(settings, "guiButtonColumns", 4)
     small_font_size = max(10, base_font_size - 8)
     logger.debug("create_main_window: font_family=%s base_font_size=%s button_cols=%s", font_family, base_font_size, button_cols)
 
@@ -228,15 +219,7 @@ def create_main_window(root):
         app_state['asset_entry'].delete(0, tk.END)
 
         # Validate the tag using the configured regex.
-        settings = get_settings()
-        pattern = settings.get("assetTagRegex", r"^\d{4,5}$")
-        logger.debug("process_asset: validating against pattern=%s", pattern)
-        try:
-            is_valid = re.match(pattern, asset_tag)
-        except re.error:
-            logger.error("Invalid assetTagRegex setting: %s", pattern)
-            pattern = r"^\d{4,5}$"
-            is_valid = re.match(pattern, asset_tag)
+        is_valid = valid_asset_tag(asset_tag)
 
         if is_valid:
             # Route to the selected function or open the detail picker.
@@ -270,19 +253,17 @@ def create_main_window(root):
     # == Main Window UI Construction
     # =========================================================================
 
-    # --- NEW: Top bar to hold tabs and settings button ---
+    # Top bar to hold tabs and settings button
     top_bar_frame = tk.Frame(root)
     top_bar_frame.pack(side="top", fill="x", padx=10, pady=5)
 
-    # MODIFIED: Frame for tabs is now packed inside the top_bar_frame
     tab_button_frame = tk.Frame(top_bar_frame)
     tab_button_frame.pack(side="left")
 
-    # MODIFIED: Settings frame is now packed inside the top_bar_frame
     settings_frame = tk.Frame(top_bar_frame)
     settings_frame.pack(side="right")
 
-    # MODIFIED: Main content container is now packed to fill the remaining space
+    # Main content container fills the remaining space
     main_container = tk.Frame(root)
     main_container.pack(side="top", fill="both", expand=True)
 

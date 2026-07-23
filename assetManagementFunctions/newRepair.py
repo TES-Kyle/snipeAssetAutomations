@@ -1,6 +1,5 @@
 """Create a new repair workflow in Snipe-IT and notify users."""
 
-import json
 import logging
 from datetime import date
 
@@ -12,6 +11,8 @@ from utilities.logging_utils import configure_logging
 from utilities.settings import  get_settings
 from utilities.messaging import *
 from utilities.otherApiBits import *
+from utilities.tk_geometry import center_window
+from utilities.api_retry import call_with_retry, SKIPPED
 
 logger = logging.getLogger(__name__)
 
@@ -26,164 +27,6 @@ def newRepair(asset_tag):
     """
     configure_logging()
     logger.info("Starting new repair workflow for %s", asset_tag)
-    # -------- helper: ask/retry wrappers --------
-    def _resp_json(resp):
-        """Safely parse JSON from a requests response.
-
-        Args:
-            resp: requests.Response object.
-
-        Returns:
-            Parsed JSON dict or fallback dict with raw text.
-        """
-        try:
-            return resp.json()
-        except Exception:
-            # Fall back to raw for display
-            return {"raw": resp.text}
-
-    def _is_success(resp):
-        """Return True when the response is HTTP OK and not a Snipe error.
-
-        Args:
-            resp: requests.Response object.
-
-        Returns:
-            True if the response indicates success.
-        """
-        logger.debug("_is_success: status_code=%s", resp.status_code)
-        # HTTP OK and either no 'status' key or status != 'error'
-        if not (200 <= resp.status_code < 300):
-            return False
-        try:
-            data = resp.json()
-            if isinstance(data, dict) and data.get("status") == "error":
-                logger.debug("_is_success: response JSON has status=error")
-                return False
-        except Exception:
-            # If not JSON but HTTP OK, treat as success
-            pass
-        return True
-
-    def _do_with_retry(op_name, fn):
-        """Execute an operation with retry/cancel on failure.
-
-        Args:
-            op_name: Human-readable name of the operation for error messages.
-            fn: Callable returning a requests.Response (or raising).
-
-        Returns:
-            Parsed JSON response on success, or None if user cancels.
-        """
-        logger.debug("_do_with_retry: starting op=%s", op_name)
-        while True:
-            try:
-                # Execute the operation callable.
-                resp = fn()
-                logger.debug("_do_with_retry: op=%s returned status=%s", op_name, resp.status_code)
-            except Exception as e:
-                logger.exception("%s raised an exception", op_name)
-                retry = messagebox.askretrycancel(
-                    title=f"{op_name} failed",
-                    message=f"{op_name} raised an exception:\n{type(e).__name__}: {e}\n\nRetry?"
-                )
-                if retry:
-                    logger.debug("_do_with_retry: user chose retry for op=%s", op_name)
-                    continue
-                return None
-
-            # Return on success; otherwise prompt for retry/cancel.
-            if _is_success(resp):
-                logger.info("%s succeeded", op_name)
-                return _resp_json(resp)
-
-            detail = _resp_json(resp)
-            pretty = json.dumps(detail, indent=2, ensure_ascii=False)
-            logger.error("%s failed (HTTP %s): %s", op_name, resp.status_code, detail)
-            retry = messagebox.askretrycancel(
-                title=f"{op_name} failed",
-                message=(
-                    f"HTTP {resp.status_code}\n"
-                    f"Response:\n{pretty}\n\nRetry?"
-                )
-            )
-            if retry:
-                logger.debug("_do_with_retry: user chose retry for op=%s", op_name)
-                continue
-            return None
-
-
-    def _do_with_retry_or_skip(op_name, fn):
-        """Execute an operation with retry, skip, or cancel on failure.
-
-        Args:
-            op_name: Human-readable name of the operation for error messages.
-            fn: Callable returning a requests.Response (or raising).
-
-        Returns:
-            Parsed JSON on success, {"__skipped__": True} if skipped, or None if aborted.
-        """
-        logger.debug("_do_with_retry_or_skip: starting op=%s", op_name)
-        while True:
-            try:
-                # Execute the operation callable.
-                resp = fn()
-                logger.debug("_do_with_retry_or_skip: op=%s returned status=%s", op_name, resp.status_code)
-            except Exception as e:
-                logger.exception("%s raised an exception", op_name)
-                choice = messagebox.askyesnocancel(
-                    title=f"{op_name} failed",
-                    message=f"{op_name} raised {type(e).__name__}: {e}\n\nYes = Retry, No = Skip, Cancel = Abort"
-                )
-                if choice is True:  # Retry
-                    logger.debug("_do_with_retry_or_skip: user chose retry for op=%s", op_name)
-                    continue
-                elif choice is False:  # Skip
-                    logger.warning("%s skipped by user", op_name)
-                    return {"__skipped__": True}
-                else:  # Cancel
-                    logger.info("_do_with_retry_or_skip: user aborted op=%s", op_name)
-                    return None
-
-            # success?
-            ok = (200 <= resp.status_code < 300)
-            if ok:
-                try:
-                    data = resp.json()
-                    if isinstance(data, dict) and data.get("status") == "error":
-                        logger.debug("_do_with_retry_or_skip: op=%s HTTP OK but status=error", op_name)
-                        ok = False
-                except Exception:
-                    pass
-
-            if ok:
-                logger.info("%s succeeded", op_name)
-                try:
-                    return resp.json()
-                except Exception:
-                    return {"raw": resp.text}
-
-            # not ok -> let user choose
-            try:
-                detail = resp.json()
-            except Exception:
-                detail = {"raw": resp.text}
-            pretty = json.dumps(detail, indent=2, ensure_ascii=False)
-            logger.error("%s failed (HTTP %s): %s", op_name, resp.status_code, detail)
-            choice = messagebox.askyesnocancel(
-                title=f"{op_name} failed (HTTP {resp.status_code})",
-                message=f"Response:\n{pretty}\n\nYes = Retry, No = Skip, Cancel = Abort"
-            )
-            if choice is True:
-                logger.debug("_do_with_retry_or_skip: user chose retry for op=%s", op_name)
-                continue
-            elif choice is False:
-                logger.warning("%s skipped by user", op_name)
-                return {"__skipped__": True}
-            else:
-                logger.info("_do_with_retry_or_skip: user aborted op=%s", op_name)
-                return None
-
 
     # ------------------ UI setup ------------------
     def submit_response():
@@ -285,14 +128,7 @@ def newRepair(asset_tag):
     submit_button.pack(pady=10)
 
     # Center window on screen.
-    issue_window.update_idletasks()
-    screen_width = issue_window.winfo_screenwidth()
-    screen_height = issue_window.winfo_screenheight()
-    window_width = issue_window.winfo_width()
-    window_height = issue_window.winfo_height()
-    center_x = int((screen_width / 2) - (window_width / 2))
-    center_y = int((screen_height / 2) - (window_height / 2))
-    issue_window.geometry(f"+{center_x}+{center_y}")
+    center_window(issue_window)
 
     # ---------------- core submission flow ----------------
     def submitMaintenance(asset_tag, at_fault, issue_description, title):
@@ -309,9 +145,9 @@ def newRepair(asset_tag):
         """
         logger.debug("submitMaintenance: asset_tag=%s at_fault=%s title=%s", asset_tag, at_fault, title)
         logger.info("submitMaintenance: fetching asset data for %s", asset_tag)
-        junk, assetData = getAssetInfo(asset_tag)
+        _, assetData = getAssetInfo(asset_tag)
         logger.debug("submitMaintenance: asset id=%s name=%s", assetData.get("id"), assetData.get("name"))
-        url = "https://trinityes.snipe-it.io/api/v1"
+        url = Key.API_URL_Base.rstrip("/")
 
         # Decide effective email behavior up front (handles "no current assignee" case).
         want_email = bool(email_var.get())
@@ -387,12 +223,13 @@ def newRepair(asset_tag):
                 content = repair_notice(full_name or "")
 
             subject = "Repair Notice"
-            recipient = recipient_email if recipient_email and is_email(recipient_email) else support_email
+            recipient_valid = bool(recipient_email and is_email(recipient_email))
+            recipient = recipient_email if recipient_valid else support_email
             logger.info("submitMaintenance: sending repair notice to recipient=%s subject=%s", recipient, subject)
             if recipient is support_email:
                 if not full_name:
                     subject = "Error name not found: " + subject
-                if not (recipient_email and is_email(recipient_email)):
+                if not recipient_valid:
                     subject = "Error email not valid/missing: " + subject
             logger.debug("submitMaintenance: final subject=%s", subject)
 
@@ -414,7 +251,7 @@ def newRepair(asset_tag):
                 return _Fake()
 
             # Let user retry if messaging pipeline throws
-            _ = _do_with_retry("Send repair notice", _send_msg)
+            _ = call_with_retry("Send repair notice", _send_msg)
             if _ is None:
                 # User canceled messaging; continue with Snipe-IT anyway
                 logger.info("submitMaintenance: messaging canceled by user; continuing with Snipe-IT")
@@ -433,7 +270,7 @@ def newRepair(asset_tag):
         if current_status_id == pending_repair_id:
             # Already in Pending Repair — skip check-in quietly
             logger.info("submitMaintenance: asset %s already in pending repair; skipping check-in", asset_tag)
-            checkin_result = {"__skipped__": True}
+            checkin_result = SKIPPED
         else:
             payload1 = {"status_id": current_status_id}
 
@@ -443,7 +280,7 @@ def newRepair(asset_tag):
                 return requests.post(f"{url}/hardware/{assetData['id']}/checkin",
                                      json=payload1, headers=get_headers())
 
-            checkin_result = _do_with_retry_or_skip("Check-in asset", _checkin)
+            checkin_result = call_with_retry("Check-in asset", _checkin, allow_skip=True)
 
         if checkin_result is None:
             # User chose Cancel
@@ -467,7 +304,7 @@ def newRepair(asset_tag):
             asset_tag,
             pending_repair_id,
         )
-        if _do_with_retry("Update asset status", _update_status) is None:
+        if call_with_retry("Update asset status", _update_status) is None:
             logger.error("Update asset status canceled or failed for %s", asset_tag)
             return False
 
@@ -497,12 +334,12 @@ def newRepair(asset_tag):
             supplier_id,
             maintenance_type,
         )
-        if _do_with_retry("Create maintenance", _create_maint) is None:
+        if call_with_retry("Create maintenance", _create_maint) is None:
             logger.error("Create maintenance canceled or failed for %s", asset_tag)
             return False
 
         # Refresh asset data for label fields.
-        junk, assetData = getAssetInfo(asset_tag)
+        _, assetData = getAssetInfo(asset_tag)
 
         # 4) Print label (Retry / Skip / Cancel).
         logger.debug("submitMaintenance: refreshing asset data for label printing")
@@ -525,24 +362,9 @@ def newRepair(asset_tag):
                     return {"status": "success"}
             return _Fake()
 
-        while True:
-            try:
-                _print_label()
-                logger.info("Repair label printed for %s", asset_tag)
-                break
-            except Exception as e:
-                logger.exception("Label print failed for %s", asset_tag)
-                choice = messagebox.askyesnocancel(
-                    title="Label print failed",
-                    message=f"{type(e).__name__}: {e}\n\nYes = Retry, No = Skip, Cancel = Abort"
-                )
-                if choice is True:   # Retry
-                    continue
-                elif choice is False: # Skip
-                    break
-                else:                 # Cancel
-                    logger.warning("Label print canceled by user for %s", asset_tag)
-                    return False
+        if call_with_retry("Print label", _print_label, allow_skip=True) is None:
+            logger.warning("Label print canceled by user for %s", asset_tag)
+            return False
 
         return True
 

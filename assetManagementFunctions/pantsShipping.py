@@ -4,10 +4,12 @@ import logging
 from tkinter import messagebox
 
 from utilities.logging_utils import configure_logging
-from utilities.settings import  get_settings
+from utilities.settings import get_settings
 from utilities.otherApiBits import *
 
 logger = logging.getLogger(__name__)
+
+PANTS_SHIPPING_STATUS_ID_DEFAULT = 9
 
 
 def pantsShipping(asset_tag, *args):
@@ -37,9 +39,9 @@ def pantsShipping(asset_tag, *args):
     settings = get_settings()
     try:
         # Allow the target status to be configured in settings.
-        target_status_id = int(settings.get("pantsShippingStatusId", 9))
+        target_status_id = int(settings.get("pantsShippingStatusId", PANTS_SHIPPING_STATUS_ID_DEFAULT))
     except Exception:
-        target_status_id = 9
+        target_status_id = PANTS_SHIPPING_STATUS_ID_DEFAULT
 
     # Second payload: update status + model assignment.
     payload2 = {
@@ -72,8 +74,5 @@ def pantsShipping(asset_tag, *args):
     logger.debug("pantsShipping: refreshing asset data for %s after update", asset_tag)
     junk, genericValues = getAssetInfo(asset_tag)
     logger.debug("pantsShipping: refreshed asset status=%s", genericValues.get("status_label", {}).get("name"))
-    # printData = [genericValues["asset_tag"], genericValues["status_label"]["name"], genericValues["name"]]
-
-    # createImage(printData)
 
     return f"Pants shipping complete for {asset_tag}."

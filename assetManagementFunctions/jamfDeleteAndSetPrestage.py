@@ -9,8 +9,6 @@ from utilities.logging_utils import configure_logging
 from utilities.jamfPrestageCommon import (
     _confirm_action,
     _add_serial_to_prestage,
-    _ask_retry_cancel,
-    _delete_computer_pro,
     _find_jamf_computer_by_serial,
     _get_prestage_list,
     _get_serial_from_snipe,
@@ -18,6 +16,7 @@ from utilities.jamfPrestageCommon import (
     _remove_from_all_prestages,
     _warn,
     create_jamf_client,
+    delete_computer_with_retry,
     get_prestage_settings,
 )
 
@@ -122,21 +121,12 @@ def jamf_delete_and_set_prestage(asset_tag: str) -> str:
         return (f"Set PreStage to {target_name} (ID {target_id}); "
                 f"SKIPPED delete (setting).")
 
-    while True:
-        logger.info("jamf_delete_and_set_prestage: attempting to delete Jamf computer ID %s", cid)
-        deleted_ok = _delete_computer_pro(jamf_client, cid, settings)
-        if deleted_ok:
-            logger.info("jamf_delete_and_set_prestage: successfully deleted Jamf computer ID %s", cid)
-            return (f"Set PreStage to {target_name} (ID {target_id}); "
-                    f"deleted Jamf computer-inventory ID {cid}.")
-        logger.error("jamf_delete_and_set_prestage: delete failed for Jamf computer ID %s", cid)
-        if _ask_retry_cancel("Jamf delete failed",
-                             f"Could not delete Jamf computer ID {cid}.\n\nRetry?"):
-            logger.debug("jamf_delete_and_set_prestage: user chose retry for delete of ID %s", cid)
-            continue
-        _warn("Jamf delete failed",
-              f"PreStage set succeeded, but deletion failed for ID {cid}.")
-        return f"[ERROR] JAMF: Delete failed for {cname} (ID {cid})."
+    return delete_computer_with_retry(
+        jamf_client, cid, cname, settings,
+        success_message=(f"Set PreStage to {target_name} (ID {target_id}); "
+                          f"deleted Jamf computer-inventory ID {cid}."),
+        failure_warn_message=f"PreStage set succeeded, but deletion failed for ID {cid}.",
+    )
 
 
 if __name__ == "__main__":

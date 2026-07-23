@@ -17,8 +17,10 @@ from typing import Optional, Tuple, Dict, List, Any, Set
 
 from utilities import Key
 from utilities.logging_utils import configure_logging
-from utilities.settings import  get_settings
+from utilities.settings import get_settings
 from utilities.otherApiBits import getAssetInfo
+from utilities.tk_geometry import center_window
+from utilities.api_retry import ensure_tk_root, ask_retry_cancel
 
 from jamf_pro_sdk import JamfProClient, SessionConfig
 from jamf_pro_sdk.clients.auth import ApiClientCredentialsProvider
@@ -52,6 +54,11 @@ def _to_bool(value, default: bool) -> bool:
         return False
     logger.debug("_to_bool: unrecognized %s, returning default=%s", s, default)
     return default
+
+
+def _status_code_of(exc: Exception):
+    """Return the HTTP status code from a caught exception's response, or None."""
+    return getattr(getattr(exc, "response", None), "status_code", None)
 
 
 def _to_float(value, default: float) -> float:
@@ -130,58 +137,6 @@ except Exception:
     _TK_OK = False
 
 
-def _ensure_tk_root():
-    """Return the current Tk root (or a hidden root if none exists).
-
-    Returns:
-        Tk root window, or None when Tk is unavailable.
-    """
-    logger.debug("_ensure_tk_root: _TK_OK=%s", _TK_OK)
-    if not _TK_OK:
-        logger.debug("_ensure_tk_root: Tk not available, returning None")
-        return None
-    root = getattr(_ensure_tk_root, "_root", None)
-    try:
-        if root is None or not root.winfo_exists():
-            logger.debug("_ensure_tk_root: no existing root; checking for default root")
-            existing = getattr(_tk, "_default_root", None)
-            if existing is not None and existing.winfo_exists():
-                root = existing
-                logger.debug("_ensure_tk_root: reusing existing _default_root")
-            else:
-                root = _tk.Tk()
-                root.withdraw()
-                logger.debug("_ensure_tk_root: created new hidden Tk root")
-            _ensure_tk_root._root = root
-        return root
-    except Exception:
-        logger.debug("_ensure_tk_root: exception while obtaining root; returning None")
-        return None
-
-
-def _ask_retry_cancel(title: str, message: str) -> bool:
-    """Show a retry/cancel dialog and return the user's choice.
-
-    Falls back to False (cancel) when Tk is unavailable or headless.
-
-    Args:
-        title: Dialog window title.
-        message: Question or error text to display.
-
-    Returns:
-        True when the user chooses Retry; False on Cancel or in headless mode.
-    """
-    try:
-        root = _ensure_tk_root()
-        if root:
-            return bool(_mb.askretrycancel(title, message, parent=root))
-    except Exception:
-        pass
-    configure_logging()
-    logger.warning("Prompt (no GUI): %s: %s -> cancel", title, message)
-    return False
-
-
 def _warn(title: str, message: str) -> None:
     """Show a warning dialog, or log the message when Tk is unavailable.
 
@@ -190,7 +145,7 @@ def _warn(title: str, message: str) -> None:
         message: Warning text to display.
     """
     try:
-        root = _ensure_tk_root()
+        root = ensure_tk_root()
         if root:
             _mb.showwarning(title, message, parent=root)
             return
@@ -213,7 +168,7 @@ def _confirm_action(title: str, message: str) -> bool:
         True when the user chooses Yes; False on No, cancel, or in headless mode.
     """
     try:
-        root = _ensure_tk_root()
+        root = ensure_tk_root()
         if root:
             return bool(_mb.askyesno(title, message, parent=root))
     except Exception:
@@ -373,6 +328,55 @@ def _get_prestage_scope_v2(
     return scope
 
 
+def _flatten_scope_serials(scope: Dict) -> Optional[List[str]]:
+    """Extract the flat list of serial numbers from either scope shape Jamf returns.
+
+    Shared by _build_scope_put_payload and _build_scope_add_payload, which
+    both need to normalize the same two API response shapes before doing
+    their own add/remove logic on the flat list:
+      A) assignments is a dict with a "serialNumbers" list.
+      B) assignments is a list of {"serialNumber": ...} objects.
+
+    Args:
+        scope: Scope dict returned by _get_prestage_scope_v2.
+
+    Returns:
+        List of serial number strings (non-string entries dropped), or None
+        when scope isn't a dict or has no recognizable "assignments" shape.
+    """
+    if not isinstance(scope, dict):
+        return None
+    assignments = scope.get("assignments")
+    if isinstance(assignments, dict):
+        cur = assignments.get("serialNumbers") or []
+        if not isinstance(cur, list):
+            cur = []
+        return [s for s in cur if isinstance(s, str)]
+    if isinstance(assignments, list):
+        out = []
+        for row in assignments:
+            s = (row or {}).get("serialNumber")
+            if isinstance(s, str) and s:
+                out.append(s)
+        return out
+    return None
+
+
+def _bad_scope_debug_message(scope: Dict) -> str:
+    """Return the appropriate debug message for a scope that yielded no serials.
+
+    Args:
+        scope: Scope dict that failed to normalize via _flatten_scope_serials.
+
+    Returns:
+        Debug string distinguishing a non-dict scope from a dict with no
+        recognizable "assignments" shape.
+    """
+    if not isinstance(scope, dict):
+        return "[DEBUG] Bad scope object."
+    return "[DEBUG] No 'assignments' in scope."
+
+
 def _build_scope_put_payload(scope: Dict, serial: str) -> Tuple[Optional[Dict], str]:
     """Build the doc-style PUT body Jamf expects for a serial removal.
 
@@ -388,42 +392,19 @@ def _build_scope_put_payload(scope: Dict, serial: str) -> Tuple[Optional[Dict], 
         present or the scope object is invalid; debug_message describes the
         result.
     """
-    if not isinstance(scope, dict):
-        return None, "[DEBUG] Bad scope object."
+    serials_now = _flatten_scope_serials(scope)
+    if serials_now is None:
+        return None, _bad_scope_debug_message(scope)
 
-    # Capture the version lock and assignments from the scope document.
-    version_lock = scope.get("versionLock")
-    assignments = scope.get("assignments")
-
-    before = 0
-    serials_now: List[str] = []
-
-    if isinstance(assignments, dict):
-        # Shape A: assignments is a dict with a "serialNumbers" list.
-        cur = assignments.get("serialNumbers") or []
-        if not isinstance(cur, list):
-            cur = []
-        before = len(cur)
-        # Build new list excluding only the target serial.
-        serials_now = [s for s in cur if s != serial]
-    elif isinstance(assignments, list):
-        # Shape B: assignments is a list of {"serialNumber": ...} objects.
-        cur = []
-        for row in assignments:
-            s = (row or {}).get("serialNumber")
-            if isinstance(s, str) and s:
-                cur.append(s)
-        before = len(cur)
-        serials_now = [s for s in cur if s != serial]
-    else:
-        return None, "[DEBUG] No 'assignments' in scope."
-
+    before = len(serials_now)
+    # Build new list excluding only the target serial.
+    serials_now = [s for s in serials_now if s != serial]
     after = len(serials_now)
     # If count is unchanged the serial was never in this scope.
     if after == before:
         return None, "[DEBUG] Serial not present; nothing to PUT."
 
-    payload = {"serialNumbers": serials_now, "versionLock": version_lock}
+    payload = {"serialNumbers": serials_now, "versionLock": scope.get("versionLock")}
     return payload, f"[DEBUG] Doc-style prune: serialNumbers {before}->{after}"
 
 
@@ -442,29 +423,9 @@ def _build_scope_add_payload(scope: Dict, serial: str) -> Tuple[Optional[Dict], 
         present or the scope object is invalid; debug_message describes the
         result.
     """
-    if not isinstance(scope, dict):
-        return None, "[DEBUG] Bad scope object."
-
-    # Capture the version lock and assignments from the scope document.
-    version_lock = scope.get("versionLock")
-    assignments = scope.get("assignments")
-
-    serials_now: List[str] = []
-
-    if isinstance(assignments, dict):
-        # Shape A: assignments is a dict with a "serialNumbers" list.
-        cur = assignments.get("serialNumbers") or []
-        if not isinstance(cur, list):
-            cur = []
-        serials_now = [s for s in cur if isinstance(s, str)]
-    elif isinstance(assignments, list):
-        # Shape B: assignments is a list of {"serialNumber": ...} objects.
-        for row in assignments:
-            s = (row or {}).get("serialNumber")
-            if isinstance(s, str) and s:
-                serials_now.append(s)
-    else:
-        return None, "[DEBUG] No 'assignments' in scope."
+    serials_now = _flatten_scope_serials(scope)
+    if serials_now is None:
+        return None, _bad_scope_debug_message(scope)
 
     if serial in serials_now:
         return None, "[DEBUG] Serial already present; nothing to PUT."
@@ -473,7 +434,7 @@ def _build_scope_add_payload(scope: Dict, serial: str) -> Tuple[Optional[Dict], 
     serials_now.append(serial)
     after = len(serials_now)
 
-    payload = {"serialNumbers": serials_now, "versionLock": version_lock}
+    payload = {"serialNumbers": serials_now, "versionLock": scope.get("versionLock")}
     return payload, f"[DEBUG] Doc-style add: serialNumbers {before}->{after}"
 
 
@@ -524,35 +485,52 @@ def _put_prestage_scope_v2(
             override_headers={"Accept": "application/json", "Content-Type": "application/json"},
         )
 
+    def _retry_after_lock_conflict(*, via_exception: bool = False) -> bool:
+        """Refresh versionLock and retry the PUT once after a 409 conflict.
+
+        Args:
+            via_exception: True when called from the except-clause path
+                (matches the prior "(exception)" log text for that path).
+
+        Returns:
+            True if the retried PUT succeeded (200/204), False otherwise.
+
+        Raises:
+            Exception: Propagates whatever _do_put(alt) raises, same as the
+                original inline code in the 409-status-code branch.
+        """
+        logger.warning(
+            "PreStage %s versionLock conflict%s. Refreshing and retrying...",
+            prestage_id,
+            " (exception)" if via_exception else "",
+        )
+        scope_now = _get_prestage_scope_v2(jamf_client, prestage_id, settings) or {}
+        new_lock = scope_now.get("versionLock")
+        alt = {
+            "serialNumbers": scope_obj.get("serialNumbers", []),
+            "versionLock": new_lock,
+        }
+        r2 = _do_put(alt)
+        if r2.status_code in (200, 204):
+            return True
+        try:
+            detail2 = r2.json()
+        except Exception:
+            detail2 = r2.text
+        logger.error(
+            "JAMF: PUT scope %s failed after lock refresh (%s): %s",
+            prestage_id,
+            r2.status_code,
+            detail2,
+        )
+        return False
+
     try:
         r = _do_put(scope_obj)
         if r.status_code in (200, 204):
             return True
         if r.status_code == 409:
-            logger.warning(
-                "PreStage %s versionLock conflict. Refreshing and retrying...",
-                prestage_id,
-            )
-            scope_now = _get_prestage_scope_v2(jamf_client, prestage_id, settings) or {}
-            new_lock = scope_now.get("versionLock")
-            alt = {
-                "serialNumbers": scope_obj.get("serialNumbers", []),
-                "versionLock": new_lock,
-            }
-            r2 = _do_put(alt)
-            if r2.status_code in (200, 204):
-                return True
-            try:
-                detail2 = r2.json()
-            except Exception:
-                detail2 = r2.text
-            logger.error(
-                "JAMF: PUT scope %s failed after lock refresh (%s): %s",
-                prestage_id,
-                r2.status_code,
-                detail2,
-            )
-            return False
+            return _retry_after_lock_conflict()
         try:
             detail = r.json()
         except Exception:
@@ -565,33 +543,10 @@ def _put_prestage_scope_v2(
         )
         return False
     except Exception as e:
-        status = getattr(getattr(e, "response", None), "status_code", None)
+        status = _status_code_of(e)
         if status == 409:
-            logger.warning(
-                "PreStage %s versionLock conflict (exception). Refreshing and retrying...",
-                prestage_id,
-            )
-            scope_now = _get_prestage_scope_v2(jamf_client, prestage_id, settings) or {}
-            new_lock = scope_now.get("versionLock")
-            alt = {
-                "serialNumbers": scope_obj.get("serialNumbers", []),
-                "versionLock": new_lock,
-            }
             try:
-                r2 = _do_put(alt)
-                if r2.status_code in (200, 204):
-                    return True
-                try:
-                    detail2 = r2.json()
-                except Exception:
-                    detail2 = r2.text
-                logger.error(
-                    "JAMF: PUT scope %s failed after lock refresh (%s): %s",
-                    prestage_id,
-                    r2.status_code,
-                    detail2,
-                )
-                return False
+                return _retry_after_lock_conflict(via_exception=True)
             except Exception as e2:
                 logger.error("JAMF: PUT scope %s retry failed: %s", prestage_id, e2)
                 return False
@@ -639,7 +594,7 @@ def _remove_from_all_prestages(
                 logger.debug("GET v2/computer-prestages/scope -> %s", r.status_code)
             break
         except Exception as e:
-            if not _ask_retry_cancel("Jamf PreStage scopes",
+            if not ask_retry_cancel("Jamf PreStage scopes",
                                      f"Failed to fetch aggregate scopes.\n\n{e}\n\nRetry?"):
                 logger.error("JAMF: Could not fetch aggregate PreStage scopes: %s", e)
                 agg = {}
@@ -687,7 +642,7 @@ def _remove_from_all_prestages(
             scope = _get_prestage_scope_v2(jamf_client, pid, settings)
             if scope is not None:
                 break
-            if not _ask_retry_cancel("Jamf PreStage scope",
+            if not ask_retry_cancel("Jamf PreStage scope",
                                      f"Failed to load scope for PreStage {pid}.\n\n"
                                      f"Retry to refetch, or Cancel to skip this PreStage?"):
                 logger.warning("Skipping PreStage %s (scope not available).", pid)
@@ -723,15 +678,10 @@ def _remove_from_all_prestages(
                     verify_ok = True
                     try:
                         scope_after = _get_prestage_scope_v2(jamf_client, pid, settings)
-                        if isinstance(scope_after, dict):
-                            a2 = scope_after.get("assignments")
-                            # Check both assignment shapes for lingering serial.
-                            if isinstance(a2, dict) and (serial in (a2.get("serialNumbers") or [])):
-                                verify_ok = False
-                            elif isinstance(a2, list) and any((row or {}).get("serialNumber") == serial for row in a2):
-                                verify_ok = False
+                        if serial in (_flatten_scope_serials(scope_after) or []):
+                            verify_ok = False
                     except Exception as ve:
-                        if _ask_retry_cancel("Verify removal",
+                        if ask_retry_cancel("Verify removal",
                                              f"Could not verify PreStage {pid} removal.\n\n{ve}\n\nRetry verify?"):
                             continue
                         verify_ok = False
@@ -743,7 +693,7 @@ def _remove_from_all_prestages(
                         break
                     else:
                         # Serial still present — offer to retry the update.
-                        if _ask_retry_cancel("Removal not verified",
+                        if ask_retry_cancel("Removal not verified",
                                              f"Serial still appears in PreStage {pid} after update.\n\nRetry update?"):
                             continue
                         logger.warning(
@@ -753,7 +703,7 @@ def _remove_from_all_prestages(
                         break
                 else:
                     # PUT failed — offer to retry or skip this PreStage.
-                    if _ask_retry_cancel("Update PreStage scope failed",
+                    if ask_retry_cancel("Update PreStage scope failed",
                                          f"Could not update PreStage {pid} scope.\n\nRetry?"):
                         continue
                     logger.warning("Skipped updating PreStage %s.", pid)
@@ -853,7 +803,7 @@ def _get_prestage_list(
             page += 1
         except Exception as e:
             # Only offer retry on the first page; subsequent failures abort silently.
-            if page == 0 and _ask_retry_cancel(
+            if page == 0 and ask_retry_cancel(
                 "Jamf PreStage list",
                 f"Failed to load PreStage list.\n\n{e}\n\nRetry?"
             ):
@@ -900,7 +850,7 @@ def _prompt_prestage_choice(prestages: List[Dict[str, Any]]) -> Optional[Dict[st
     if not _TK_OK:
         logger.error("Tk not available; cannot prompt for PreStage selection.")
         return None
-    root = _ensure_tk_root()
+    root = ensure_tk_root()
     if not root:
         logger.error("Tk root unavailable; cannot prompt for PreStage selection.")
         return None
@@ -954,10 +904,7 @@ def _prompt_prestage_choice(prestages: List[Dict[str, Any]]) -> Optional[Dict[st
         win.wait_visibility()
     except Exception:
         pass
-    sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
-    x = int((sw / 2) - (win.winfo_width() / 2))
-    y = int((sh / 2) - (win.winfo_height() / 2))
-    win.geometry(f"+{x}+{y}")
+    center_window(win)
     win.wait_window()
     return result["choice"]
 
@@ -987,7 +934,7 @@ def _add_serial_to_prestage(
         # Fetch the current scope to base our add payload on.
         scope = _get_prestage_scope_v2(jamf_client, prestage_id, settings)
         if scope is None:
-            if not _ask_retry_cancel("Jamf PreStage scope",
+            if not ask_retry_cancel("Jamf PreStage scope",
                                      f"Failed to load scope for PreStage {prestage_id}.\n\nRetry?"):
                 return False
             continue
@@ -1013,7 +960,7 @@ def _add_serial_to_prestage(
         # Attempt the PUT and offer retry if it fails.
         ok = _put_prestage_scope_v2(jamf_client, prestage_id, payload, settings)
         if not ok:
-            if _ask_retry_cancel("Update PreStage scope failed",
+            if ask_retry_cancel("Update PreStage scope failed",
                                  f"Could not update PreStage {prestage_id} scope.\n\nRetry?"):
                 continue
             return False
@@ -1021,18 +968,13 @@ def _add_serial_to_prestage(
         # Verify the serial now appears in the scope after the write.
         try:
             scope_after = _get_prestage_scope_v2(jamf_client, prestage_id, settings)
-            if isinstance(scope_after, dict):
-                a2 = scope_after.get("assignments")
-                # Check both shape A (dict) and shape B (list) for the serial.
-                if isinstance(a2, dict) and (serial in (a2.get("serialNumbers") or [])):
-                    return True
-                if isinstance(a2, list) and any((row or {}).get("serialNumber") == serial for row in a2):
-                    return True
+            if serial in (_flatten_scope_serials(scope_after) or []):
+                return True
         except Exception as ve:
-            if _ask_retry_cancel("Verify PreStage add",
+            if ask_retry_cancel("Verify PreStage add",
                                  f"Could not verify PreStage {prestage_id} add.\n\n{ve}\n\nRetry?"):
                 continue
-        if _ask_retry_cancel("Add not verified",
+        if ask_retry_cancel("Add not verified",
                              f"Serial not present in PreStage {prestage_id} after update.\n\nRetry?"):
             continue
         return False
@@ -1070,7 +1012,7 @@ def _verify_inventory_gone(jamf_client: JamfProClient, computer_id: int) -> bool
                 return False
         except Exception as e:
             # Some SDK versions raise instead of returning a 404 response.
-            sc = getattr(getattr(e, "response", None), "status_code", None)
+            sc = _status_code_of(e)
             if sc == 404:
                 return True
     # Could not determine state from either endpoint.
@@ -1134,7 +1076,7 @@ def _delete_computer_pro(
             return True
         logger.warning("v2 delete returned %s; verifying...", r.status_code)
     except Exception as e:
-        sc = getattr(getattr(e, "response", None), "status_code", None)
+        sc = _status_code_of(e)
         logger.warning("v2 delete raised %s; verifying...", sc or "exception")
 
     time.sleep(0.75)
@@ -1154,10 +1096,43 @@ def _delete_computer_pro(
             detail = r2.text
         logger.error("JAMF: v1 delete failed (%s): %s", r2.status_code, detail)
     except Exception as e:
-        sc = getattr(getattr(e, "response", None), "status_code", None)
+        sc = _status_code_of(e)
         if sc == 404:
             logger.info("Already gone on v1 (404) for ID %s.", computer_id)
             return True
         logger.error("JAMF: v1 delete request failed: %s", e)
 
     return False
+
+
+def delete_computer_with_retry(jamf_client, cid, cname, settings, success_message, failure_warn_message):
+    """Delete a Jamf computer with a retry/cancel dialog on failure.
+
+    Shared by jamf_remove_prestage_and_delete and jamf_delete_and_set_prestage,
+    which differ only in their success/failure message wording.
+
+    Args:
+        jamf_client: Authenticated JamfProClient instance.
+        cid: Numeric Jamf computer ID to delete.
+        cname: Display name for the computer, used in the failure return message.
+        settings: Prestage settings dict (dry_run flag respected by _delete_computer_pro).
+        success_message: Message to return when deletion succeeds.
+        failure_warn_message: Message shown via _warn() when the user gives up retrying.
+
+    Returns:
+        success_message on success, or "[ERROR] JAMF: Delete failed for {cname}
+        (ID {cid})." if the user cancels after repeated failures.
+    """
+    while True:
+        logger.info("delete_computer_with_retry: attempting to delete Jamf computer ID %s", cid)
+        deleted_ok = _delete_computer_pro(jamf_client, cid, settings)
+        if deleted_ok:
+            logger.info("delete_computer_with_retry: successfully deleted Jamf computer ID %s", cid)
+            return success_message
+        logger.error("delete_computer_with_retry: delete failed for Jamf computer ID %s", cid)
+        if ask_retry_cancel("Jamf delete failed",
+                             f"Could not delete Jamf computer ID {cid}.\n\nRetry?"):
+            logger.debug("delete_computer_with_retry: user chose retry for delete of ID %s", cid)
+            continue
+        _warn("Jamf delete failed", failure_warn_message)
+        return f"[ERROR] JAMF: Delete failed for {cname} (ID {cid})."

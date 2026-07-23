@@ -7,18 +7,19 @@ and applies changes to logging without requiring an app restart.
 import json
 import logging
 import os
+import subprocess
 import tkinter as tk
 from tkinter import font as tkfont
 from tkinter import messagebox
 
 from utilities.logging_utils import configure_logging
+from utilities.settings import safe_read_json, UTILITIES_DIR, SETTINGS_PATH, DEFAULTS_PATH
 from utilities.theme import get_ui_colors
+from utilities.tk_geometry import center_window
 
 logger = logging.getLogger(__name__)
 
-UTILITIES_DIR = os.path.dirname(os.path.realpath(__file__))
-SETTINGS_PATH = os.path.join(UTILITIES_DIR, "settings.json")
-DEFAULTS_PATH = os.path.join(UTILITIES_DIR, "defaultSettings.json")
+SCHEMA_PATH = os.path.join(UTILITIES_DIR, "settingsSchema.json")
 
 def settingsMenu():
     """Render the settings window with schema-based grouping.
@@ -27,24 +28,6 @@ def settingsMenu():
     to build a categorized, scrollable UI with reset/apply controls.
     """
     logger.debug("settingsMenu: opening settings window")
-
-    def _safe_read_json(path):
-        """Read a JSON file path and return a dict fallback on failure.
-
-        Args:
-            path: Filesystem path to a JSON file.
-
-        Returns:
-            Dict parsed from JSON or {} on failure.
-        """
-        logger.debug("_safe_read_json: reading %s", path)
-        try:
-            result = json.loads(open(path).read())
-            logger.debug("_safe_read_json: loaded %s keys from %s", len(result), path)
-            return result
-        except Exception:
-            logger.debug("_safe_read_json: could not read %s; returning {}", path)
-            return {}
 
     def resetAll():
         """Reset all editable fields to their default values."""
@@ -73,7 +56,7 @@ def settingsMenu():
         then queries the GitHub API for the latest commit.
         """
         logger.debug("checkUpdate: initiating update check")
-        import subprocess, sys, datetime
+        import datetime
         try:
             app_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))  # …/Resources/app
             meta_path = os.path.join(app_root, ".build", "meta.json")
@@ -167,7 +150,6 @@ def settingsMenu():
                 logger.debug("make_installer_usb: script not found at %s", usb_maker)
                 messagebox.showerror("USB Installer", "make_installer_usb.command not found.")
                 return
-            import subprocess
             logger.info("make_installer_usb: launching %s", usb_maker)
             subprocess.Popen(
                 ["bash", "-lc", f"exec {json.dumps(usb_maker)}"],
@@ -316,7 +298,7 @@ def settingsMenu():
 
         logger.info("apply: saving %s settings to settings.json", len(output))
         # Persist settings and refresh logging without restart.
-        open(str(os.path.dirname(os.path.realpath(__file__))) + "/settings.json", "w").write(json.dumps(output))
+        open(SETTINGS_PATH, "w").write(json.dumps(output))
         logger.debug("apply: settings written; reconfiguring logging")
         configure_logging()
 
@@ -332,9 +314,9 @@ def settingsMenu():
     _colors = get_ui_colors()
     logger.debug("settingsMenu: loading settings, defaults, and schema")
     # Load persisted settings, defaults, and schema for UI layout.
-    settingsDict = _safe_read_json(str(os.path.dirname(os.path.realpath(__file__))) + "/settings.json")
-    defaultsDict = _safe_read_json(str(os.path.dirname(os.path.realpath(__file__))) + "/defaultSettings.json")
-    schemaDict = _safe_read_json(str(os.path.dirname(os.path.realpath(__file__))) + "/settingsSchema.json")
+    settingsDict = safe_read_json(SETTINGS_PATH)
+    defaultsDict = safe_read_json(DEFAULTS_PATH)
+    schemaDict = safe_read_json(SCHEMA_PATH)
 
     # Merge keys from settings and defaults to ensure all fields render.
     keys = list(settingsDict.keys())
@@ -587,44 +569,21 @@ def settingsMenu():
     end_button.pack(side="right", fill="x", expand=True)
 
     logger.debug("settingsMenu: waiting for window dimensions to settle")
-    # Wait for the window to update its dimensions.
-    settings_window.update_idletasks()
-
-    # Get the window width and height.
-    window_width = settings_window.winfo_width()
-    window_height = settings_window.winfo_height()
-    logger.debug("settingsMenu: initial window size width=%s height=%s", window_width, window_height)
-
-    # Keep the window fully visible, reserving space for docks/taskbars.
-    margin_x = 40
-    margin_y = 120
-    usable_width = max(300, screen_width - margin_x)
-    usable_height = max(300, screen_height - margin_y)
-    logger.debug("settingsMenu: usable_width=%s usable_height=%s", usable_width, usable_height)
-
-    if window_width > usable_width or window_height > usable_height:
-        window_width = min(window_width, usable_width)
-        window_height = min(window_height, usable_height)
-        logger.debug("settingsMenu: clamping window size to width=%s height=%s", window_width, window_height)
-        settings_window.geometry(f"{window_width}x{window_height}")
-        settings_window.update_idletasks()
-
-    center_x = max(0, int((screen_width - window_width) / 2))
-    center_y = max(0, int((usable_height - window_height) / 2))
-    logger.debug("settingsMenu: centering window at x=%s y=%s", center_x, center_y)
-
-    settings_window.geometry(f"+{center_x}+{center_y}")
+    # Keep the window fully visible and clear of the macOS Dock: reserve
+    # space at the bottom, plus a little breathing room on the sides.
+    # Shrinks the window first if it doesn't fit that usable area.
+    center_window(settings_window, margin_left=20, margin_right=20, margin_top=0, margin_bottom=120)
     logger.info("settingsMenu: settings window displayed")
 
 
 # Get or make setting dictionary
-if os.path.isfile(str(os.path.dirname(os.path.realpath(__file__))) + "/settings.json"):
-    settings = json.loads(open(str(os.path.dirname(os.path.realpath(__file__))) + "/settings.json").read())
+if os.path.isfile(SETTINGS_PATH):
+    settings = json.loads(open(SETTINGS_PATH).read())
 else:
     settings = dict()
 
 # get default settings
-defaults = json.loads(open(str(os.path.dirname(os.path.realpath(__file__))) + "/defaultSettings.json").read())
+defaults = json.loads(open(DEFAULTS_PATH).read())
 
 # fill missing settings from defaults
 for key in defaults.keys():
@@ -632,6 +591,6 @@ for key in defaults.keys():
         settings[key] = defaults[key]
 
 # Write settings to json file
-open(str(os.path.dirname(os.path.realpath(__file__))) + "/settings.json", "w").write(json.dumps(settings))
+open(SETTINGS_PATH, "w").write(json.dumps(settings))
 logger.debug("settingsMenu module initialized: %s settings keys", len(settings))
 logger.info("Settings initialized on module load")

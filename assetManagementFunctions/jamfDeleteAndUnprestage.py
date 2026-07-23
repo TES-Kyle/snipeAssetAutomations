@@ -8,13 +8,12 @@ import logging
 from utilities.logging_utils import configure_logging
 from utilities.jamfPrestageCommon import (
     _confirm_action,
-    _ask_retry_cancel,
-    _delete_computer_pro,
     _find_jamf_computer_by_serial,
     _get_serial_from_snipe,
     _remove_from_all_prestages,
     _warn,
     create_jamf_client,
+    delete_computer_with_retry,
     get_prestage_settings,
 )
 
@@ -96,20 +95,11 @@ def jamf_remove_prestage_and_delete(asset_tag: str) -> str:
         return (f"Removed {serial} from {modified}/{seen} PreStage(s); "
                 "no Jamf record to delete.")
 
-    while True:
-        logger.info("jamf_remove_prestage_and_delete: attempting to delete Jamf computer ID %s", cid)
-        deleted_ok = _delete_computer_pro(jamf_client, cid, settings)
-        if deleted_ok:
-            logger.info("jamf_remove_prestage_and_delete: successfully deleted Jamf computer ID %s", cid)
-            return f"Deleted Jamf computer-inventory ID {cid}."
-        logger.error("jamf_remove_prestage_and_delete: delete failed for Jamf computer ID %s", cid)
-        if _ask_retry_cancel("Jamf delete failed",
-                             f"Could not delete Jamf computer ID {cid}.\n\nRetry?"):
-            logger.debug("jamf_remove_prestage_and_delete: user chose retry for delete of ID %s", cid)
-            continue
-        _warn("Jamf delete failed",
-              f"Removal from PreStages may have succeeded, but deletion failed for ID {cid}.")
-        return f"[ERROR] JAMF: Delete failed for {cname} (ID {cid})."
+    return delete_computer_with_retry(
+        jamf_client, cid, cname, settings,
+        success_message=f"Deleted Jamf computer-inventory ID {cid}.",
+        failure_warn_message=f"Removal from PreStages may have succeeded, but deletion failed for ID {cid}.",
+    )
 
 
 if __name__ == "__main__":

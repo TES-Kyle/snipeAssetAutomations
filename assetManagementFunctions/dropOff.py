@@ -14,9 +14,7 @@ settings.json must include:
   dropOffLostStatusId, dropOffChargerStatusId, macBookCategoryID, and field key overrides.
 """
 
-import json
 import logging
-import os
 import re
 from datetime import datetime
 
@@ -25,8 +23,11 @@ from tkinter import messagebox
 
 from utilities.labelPrinting import createImage
 from utilities.logging_utils import configure_logging
-from utilities.settings import  get_settings
+from utilities.settings import get_settings, set_setting
 from utilities.otherApiBits import *
+from utilities.tk_geometry import center_window
+from utilities.validation import valid_asset_tag
+from utilities.api_retry import call_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -71,79 +72,12 @@ HELP_TEXT = (
     "Damage levels:\n"
     "• Little/None — light enough damage that it would be suitable to give to a new 8th grade student.\n"
     "• Mild/Medium — enough cosmetic damage to not give to a new eighth grader, but still fully functional.\n"
-    "• Significant — functionality is impacted but repair is possible.\n"
-    "• Irreparable — the computer is so damaged or mangled that it’s either impossible or not sensible to repair."
+    "• Significant — functionality is impacted but repair is possible."
 )
 
 # ----------------------------
 # Settings helpers
 # ----------------------------
-def _settings_path():
-    """Return the path to utilities/settings.json.
-
-    Returns:
-        Absolute path string to the settings file.
-    """
-    # settings.json is one directory up, then in 'utilities'
-    # <this_file_dir>/../utilities/settings.json
-    base = os.path.dirname(os.path.realpath(__file__))
-    path = os.path.join(os.path.dirname(base), "utilities", "settings.json")
-    logger.debug("_settings_path: resolved path=%s", path)
-    return path
-
-def _load_settings():
-    """Load settings.json for the drop-off workflow.
-
-    Returns:
-        Dict of settings values or {} on failure.
-    """
-    configure_logging()
-    logger.debug("_load_settings: loading settings for drop-off workflow")
-    try:
-        # Read settings from disk with a fallback on any failure.
-        path = _settings_path()
-        logger.debug("_load_settings: reading file=%s", path)
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        logger.debug("_load_settings: loaded %s keys", len(data))
-        return data
-    except Exception:
-        logger.exception("Failed to read settings.json for drop-off workflow")
-        messagebox.showerror(
-            "Settings Error",
-            "Could not read settings.json at ../utilities/settings.json relative to this module."
-        )
-        return {}
-
-def _save_settings_key(key: str, value):
-    """Best-effort write-back to settings.json to keep defaults in sync.
-
-    Args:
-        key: Settings key to update.
-        value: New value to write (will be stored as string).
-
-    Returns:
-        True on success, False on failure.
-    """
-    configure_logging()
-    logger.debug("_save_settings_key: key=%s value=%s", key, value)
-    try:
-        p = _settings_path()
-        logger.debug("_save_settings_key: reading %s", p)
-        # Load existing settings, update one key, and write back.
-        with open(p, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        data[key] = str(value)
-        logger.info("_save_settings_key: writing key=%s to %s", key, p)
-        with open(p, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-        logger.debug("_save_settings_key: write complete for key=%s", key)
-        return True
-    except Exception as e:
-        logger.exception("Failed to update settings.json key %s", key)
-        messagebox.showwarning("Settings Write Warning", f"Couldn't update settings.json ({key}):\n{e}")
-        return False
-
 def _get_box_state_asset_tag_and_capacity():
     """Return tracker asset tag and box capacity from settings.
 
@@ -152,7 +86,7 @@ def _get_box_state_asset_tag_and_capacity():
     """
     configure_logging()
     logger.debug("_get_box_state_asset_tag_and_capacity: loading settings")
-    s = _load_settings()
+    s = get_settings()
     tag = s.get("boxStateAssetTag", "").strip()
     cap = s.get("defaultBoxCapacity", "12")
     logger.debug("_get_box_state_asset_tag_and_capacity: raw tag=%s raw cap=%s", tag, cap)
@@ -238,31 +172,12 @@ def _get_asset_by_tag_with_retry(asset_tag: str):
         or (False, None) if the user cancels after repeated failures.
     """
     configure_logging()
-    url = Key.API_URL_Base + "hardware/bytag/" + str(asset_tag)
-    while True:
-        try:
-            r = requests.get(url, headers=get_headers(), timeout=20)
-            if 200 <= r.status_code < 300:
-                logger.info("Loaded asset by tag for tracker: %s", asset_tag)
-                return True, r.json()
-            else:
-                try:
-                    msg = r.json()
-                except Exception:
-                    msg = r.text
-                logger.error("Tracker load failed for %s (HTTP %s): %s", asset_tag, r.status_code, msg)
-                retry = messagebox.askretrycancel(
-                    "Load Failed",
-                    f"Failed to load asset by tag '{asset_tag}' (HTTP {r.status_code}).\n"
-                    f"{str(msg)[:500]}\n\nRetry?"
-                )
-                if not retry:
-                    return False, None
-        except Exception as e:
-            logger.exception("Network error loading asset tag %s", asset_tag)
-            retry = messagebox.askretrycancel("Network Error", f"Error loading asset tag '{asset_tag}':\n{e}\n\nRetry?")
-            if not retry:
-                return False, None
+    data = call_with_retry(
+        f"Load asset '{asset_tag}'",
+        lambda: fetch_asset_by_tag(asset_tag),
+        is_success=lambda r: 200 <= r.status_code < 300,
+    )
+    return data is not None, data
 
 def _put_asset_notes_with_retry(asset_id: str, new_notes: str):
     """Update only the notes field of a Snipe-IT asset with Retry/Cancel.
@@ -277,30 +192,12 @@ def _put_asset_notes_with_retry(asset_id: str, new_notes: str):
     configure_logging()
     url = Key.API_URL_Base + "hardware/" + str(asset_id)
     payload = {"notes": new_notes}
-    while True:
-        try:
-            r = requests.put(url, json=payload, headers=get_headers(), timeout=20)
-            if 200 <= r.status_code < 300:
-                logger.info("Updated tracker notes for asset %s", asset_id)
-                return True
-            else:
-                try:
-                    msg = r.json()
-                except Exception:
-                    msg = r.text
-                logger.error("Tracker notes update failed for %s (HTTP %s): %s", asset_id, r.status_code, msg)
-                retry = messagebox.askretrycancel(
-                    "Update Failed",
-                    f"Failed to update tracker notes (HTTP {r.status_code}).\n"
-                    f"{str(msg)[:500]}\n\nRetry?"
-                )
-                if not retry:
-                    return False
-        except Exception as e:
-            logger.exception("Network error updating tracker notes for %s", asset_id)
-            retry = messagebox.askretrycancel("Network Error", f"Error updating tracker notes:\n{e}\n\nRetry?")
-            if not retry:
-                return False
+    result = call_with_retry(
+        f"Update tracker notes for asset {asset_id}",
+        lambda: requests.put(url, json=payload, headers=get_headers(), timeout=20),
+        is_success=lambda r: 200 <= r.status_code < 300,
+    )
+    return result is not None
 
 # ----------------------------
 # State (parse/format/validate) in tracker asset Notes
@@ -556,39 +453,56 @@ def _checkin_asset_with_retry(id, note="Checked in via Drop-Off automation"):
     configure_logging()
     url = Key.API_URL_Base + "hardware/" + str(id) + "/checkin"
     payload = {"note": note}
-    while True:
+
+    def _already_checked_in(resp):
         try:
-            r = requests.post(url, json=payload, headers=get_headers(), timeout=20)
-            if 200 <= r.status_code < 300:
-                logger.info("Checked in asset %s (drop-off)", id)
-                return True
-            else:
-                # If it's a known "not checked out" case, continue without blocking
-                try:
-                    msg = r.json()
-                except Exception:
-                    msg = r.text
-                text = str(msg).lower()
-                if "not checked out" in text or "already checked in" in text:
-                    # Non-fatal; proceed
-                    logger.info("Asset %s already checked in; continuing.", id)
-                    return True
-                logger.error("Check-in failed for %s (HTTP %s): %s", id, r.status_code, msg)
-                retry = messagebox.askretrycancel(
-                    "Check-In Failed",
-                    f"Failed to check in asset (HTTP {r.status_code}).\n"
-                    f"{str(msg)[:500]}\n\nRetry?"
-                )
-                if not retry:
-                    return False
-        except Exception as e:
-            logger.exception("Network error during check-in for %s", id)
-            retry = messagebox.askretrycancel(
-                "Network Error",
-                f"Error checking in asset:\n{e}\n\nRetry?"
-            )
-            if not retry:
-                return False
+            msg = resp.json()
+        except Exception:
+            msg = resp.text
+        text = str(msg).lower()
+        return "not checked out" in text or "already checked in" in text
+
+    result = call_with_retry(
+        f"Check in asset {id}",
+        lambda: requests.post(url, json=payload, headers=get_headers(), timeout=20),
+        is_success=lambda r: 200 <= r.status_code < 300,
+        is_nonfatal=_already_checked_in,
+    )
+    return result is not None
+
+def _update_asset_fields_with_retry(asset_id, asset_tag, status_id, model_id, notes, extra_fields=None):
+    """PUT updated status/notes (and optional extra fields) with Retry/Cancel.
+
+    Shared by _update_asset_with_retry (adds charger/cord/box custom fields)
+    and _update_asset_status_and_notes_with_retry (status/notes only).
+
+    Args:
+        asset_id: Numeric Snipe-IT asset ID (string or int).
+        asset_tag: Asset tag string (used in payload and error messages).
+        status_id: Status ID integer to assign.
+        model_id: Model ID integer (required by Snipe-IT PUT).
+        notes: Full replacement notes text to write.
+        extra_fields: Optional dict of additional payload fields to merge in.
+
+    Returns:
+        True on success, False if the user cancels after repeated failures.
+    """
+    configure_logging()
+    url = Key.API_URL_Base + "hardware/" + str(asset_id)
+    payload = {
+        "asset_tag": asset_tag,
+        "status_id": status_id,
+        "model_id": model_id,
+        "notes": notes,
+    }
+    if extra_fields:
+        payload.update(extra_fields)
+    result = call_with_retry(
+        f"Update asset {asset_tag}",
+        lambda: requests.put(url, json=payload, headers=get_headers(), timeout=20),
+        is_success=lambda r: 200 <= r.status_code < 300,
+    )
+    return result is not None
 
 def _update_asset_with_retry(id, assetTag, statusID, modelID, chargerCond, cordCond, boxLabel, existingNotes):
     """Update a drop-off device's status and custom fields with Retry/Cancel.
@@ -606,52 +520,21 @@ def _update_asset_with_retry(id, assetTag, statusID, modelID, chargerCond, cordC
     Returns:
         True on success, False if the user cancels after repeated failures.
     """
-    configure_logging()
-    putURL = Key.API_URL_Base + "hardware/" + str(id)
     charger_key, cord_key, box_key = _get_dropoff_field_keys()
-    payload = {
-        "asset_tag": assetTag,
-        "status_id": statusID,
-        "model_id": modelID,
-        "notes": existingNotes,
-        charger_key: "y" if chargerCond == "y" else "n",
-        cord_key: "y" if cordCond == "y" else "n",
-        box_key: boxLabel
-    }
     logger.debug(
         "Drop-off payload keys: charger=%s cord=%s box=%s",
         charger_key,
         cord_key,
         box_key,
     )
-
-    while True:
-        try:
-            response = requests.put(putURL, json=payload, headers=get_headers(), timeout=20)
-            if 200 <= response.status_code < 300:
-                logger.info("Updated drop-off asset %s (box=%s)", id, boxLabel)
-                return True
-            else:
-                try:
-                    msg = response.json()
-                except Exception:
-                    msg = response.text
-                logger.error("Drop-off update failed for %s (HTTP %s): %s", assetTag, response.status_code, msg)
-                retry = messagebox.askretrycancel(
-                    "Update Failed",
-                    f"Failed to update asset {assetTag} (HTTP {response.status_code}).\n"
-                    f"{str(msg)[:500]}\n\nRetry?"
-                )
-                if not retry:
-                    return False
-        except Exception as e:
-            logger.exception("Network error updating asset %s", assetTag)
-            retry = messagebox.askretrycancel(
-                "Network Error",
-                f"Error updating asset {assetTag}:\n{e}\n\nRetry?"
-            )
-            if not retry:
-                return False
+    return _update_asset_fields_with_retry(
+        id, assetTag, statusID, modelID, existingNotes,
+        extra_fields={
+            charger_key: "y" if chargerCond == "y" else "n",
+            cord_key: "y" if cordCond == "y" else "n",
+            box_key: boxLabel,
+        },
+    )
 
 def _update_asset_status_and_notes_with_retry(asset_id, asset_tag, status_id, model_id, new_notes):
     """Update only the status and notes of a Snipe-IT asset with Retry/Cancel.
@@ -666,41 +549,37 @@ def _update_asset_status_and_notes_with_retry(asset_id, asset_tag, status_id, mo
     Returns:
         True on success, False if the user cancels after repeated failures.
     """
-    configure_logging()
-    url = Key.API_URL_Base + "hardware/" + str(asset_id)
-    payload = {
-        "asset_tag": asset_tag,
-        "status_id": status_id,
-        "model_id": model_id,
-        "notes": new_notes,
-    }
-    while True:
-        try:
-            r = requests.put(url, json=payload, headers=get_headers(), timeout=20)
-            if 200 <= r.status_code < 300:
-                logger.info("Updated status/notes for asset %s (status=%s)", asset_tag, status_id)
-                return True
-            else:
-                try:
-                    msg = r.json()
-                except Exception:
-                    msg = r.text
-                logger.error("Status/notes update failed for %s (HTTP %s): %s", asset_tag, r.status_code, msg)
-                retry = messagebox.askretrycancel(
-                    "Update Failed",
-                    f"Failed to update asset {asset_tag} (HTTP {r.status_code}).\n"
-                    f"{str(msg)[:500]}\n\nRetry?"
-                )
-                if not retry:
-                    return False
-        except Exception as e:
-            logger.exception("Network error updating status/notes for %s", asset_tag)
-            retry = messagebox.askretrycancel(
-                "Network Error",
-                f"Error updating asset {asset_tag}:\n{e}\n\nRetry?"
-            )
-            if not retry:
-                return False
+    return _update_asset_fields_with_retry(asset_id, asset_tag, status_id, model_id, new_notes)
+
+
+def _append_note(existing_notes_raw, new_note):
+    """Append new_note to existing notes (rstripped), or return new_note alone if there were none."""
+    existing = (existing_notes_raw or "").rstrip()
+    return (existing + "\n" + new_note) if existing else new_note
+
+
+def _process_secondary_asset(tag, main_asset_tag, note_template, status_id, dialog_title, fetch_fail_prefix=""):
+    """Fetch, note-append, checkin, and status-update a lost/charger asset during drop-off.
+
+    Args:
+        tag: Asset tag of the secondary (lost or charger) asset to process.
+        main_asset_tag: Tag of the main device being dropped off, inserted into note_template.
+        note_template: Note format string with an {asset_tag} placeholder.
+        status_id: Target status ID to set on this asset.
+        dialog_title: Title used for both the "could not fetch" warning dialog and the log line.
+        fetch_fail_prefix: Optional text prepended to the tag in the fetch-failure message.
+    """
+    logger.info("Processing %s %s", dialog_title.lower(), tag)
+    _var_list, data = getAssetInfo(tag, allow_missing=False)
+    if not data or data.get("status") == "error":
+        messagebox.showwarning(dialog_title, f"Could not fetch data for {fetch_fail_prefix}{tag} — skipping.")
+        return
+    asset_id = str(data["id"])
+    model_id = (data.get("model") or {}).get("id")
+    notes = _append_note(data.get("notes"), note_template.format(asset_tag=main_asset_tag))
+    # Check in first (non-fatal if already checked in), then set status + note.
+    _checkin_asset_with_retry(asset_id)
+    _update_asset_status_and_notes_with_retry(asset_id, tag, status_id, model_id, notes)
 
 # ----------------------------
 # Help / Box State UI
@@ -712,7 +591,7 @@ def _open_help_dialog(parent):
         parent: Parent Tkinter widget for the dialog.
     """
     logger.debug("_open_help_dialog: opening help dialog")
-    settings = _load_settings()
+    settings = get_settings()
     tracker_tag = settings.get("boxStateAssetTag", "").strip()
     try:
         default_cap = int(settings.get("defaultBoxCapacity", 12))
@@ -810,11 +689,10 @@ def _open_help_dialog(parent):
             logger.error("save_capacity: failed to push updated notes")
             return
 
-        _save_settings_key("defaultBoxCapacity", new_cap)
+        set_setting("defaultBoxCapacity", str(new_cap))
         logger.debug("save_capacity: settings key updated")
 
         state_var.set(_format_state_line(state))
-        # messagebox.showinfo("Capacity Updated", f"Capacity set to {new_cap}.")
 
     tk.Button(cap_frame, text="Save", command=save_capacity).pack(side="left", padx=10, pady=8)
 
@@ -857,7 +735,6 @@ def _open_help_dialog(parent):
 
         state_var.set(_format_state_line(new_state))
         logger.info("reset_all: all streams reset to box 1 / computer 0")
-        # messagebox.showinfo("Reset Complete", "All streams reset to box 1 / computer 0 (capacity unchanged).")
 
     tk.Button(reset_frame, text="Reset All Streams", command=reset_all).pack(side="left", padx=10, pady=8)
 
@@ -875,14 +752,7 @@ def _open_help_dialog(parent):
     refresh_state()
 
     # Center dialog
-    dlg.update_idletasks()
-    sw = dlg.winfo_screenwidth()
-    sh = dlg.winfo_screenheight()
-    ww = dlg.winfo_width()
-    wh = dlg.winfo_height()
-    cx = int((sw / 2) - (ww / 2))
-    cy = int((sh / 2) - (wh / 2))
-    dlg.geometry(f"+{cx}+{cy}")
+    center_window(dlg)
 
 # ----------------------------
 # UI + main flow
@@ -911,8 +781,8 @@ def dropOff(asset_tag):
             return
 
         charger_asset_tag = charger_tag_var.get().strip()
-        if charger_asset_tag and not re.fullmatch(r"\d{4,5}", charger_asset_tag):
-            messagebox.showerror("Invalid Charger Tag", "Charger asset tag must be 4 or 5 digits with no other characters.")
+        if charger_asset_tag and not valid_asset_tag(charger_asset_tag):
+            messagebox.showerror("Invalid Charger Tag", "Charger asset tag must match the configured asset tag pattern.")
             return
 
         seniorStatus = drop.get()         # 1=Senior, 0=Withdrawal
@@ -955,7 +825,7 @@ def dropOff(asset_tag):
                 stream = "WD"
 
         # Pull state → assign → push (tight window)
-        settings_data = _load_settings()
+        settings_data = get_settings()
         try:
             default_cap = int(settings_data.get("defaultBoxCapacity", 12))
         except Exception:
@@ -981,8 +851,7 @@ def dropOff(asset_tag):
             noun = "Asset" if len(lost_tags) == 1 else "Assets"
             note_parts.append(f"{noun} {tag_list} {verb} marked lost during dropoff.")
         device_note = "\n".join(note_parts)
-        existing_device_notes = (assetData.get("notes") or "").rstrip()
-        full_device_notes = (existing_device_notes + "\n" + device_note) if existing_device_notes else device_note
+        full_device_notes = _append_note(assetData.get("notes"), device_note)
 
         # Update the actual device asset with Retry/Cancel
         if not _update_asset_with_retry(
@@ -1013,34 +882,14 @@ def dropOff(asset_tag):
         for cb_var, lost_tag in check_vars:
             if not cb_var.get():
                 continue
-            logger.info("Processing lost asset %s", lost_tag)
-            _var_list, lost_data = getAssetInfo(lost_tag, allow_missing=False)
-            if not lost_data or lost_data.get("status") == "error":
-                messagebox.showwarning("Lost Asset", f"Could not fetch data for {lost_tag} — skipping.")
-                continue
-            lost_id = str(lost_data["id"])
-            lost_model_id = (lost_data.get("model") or {}).get("id")
-            existing_notes = (lost_data.get("notes") or "").rstrip()
-            note_text = LOST_ASSET_NOTE.format(asset_tag=asset_tag)
-            appended_notes = (existing_notes + "\n" + note_text) if existing_notes else note_text
-            # Check in first (non-fatal if already checked in), then set status 6 + note.
-            _checkin_asset_with_retry(lost_id)
-            _update_asset_status_and_notes_with_retry(lost_id, lost_tag, lost_status_id, lost_model_id, appended_notes)
+            _process_secondary_asset(lost_tag, asset_tag, LOST_ASSET_NOTE, lost_status_id, "Lost Asset")
 
         # Process charger asset if a tag was entered.
         if charger_asset_tag:
-            logger.info("Processing charger asset %s", charger_asset_tag)
-            _var_list, charger_data = getAssetInfo(charger_asset_tag, allow_missing=False)
-            if not charger_data or charger_data.get("status") == "error":
-                messagebox.showwarning("Charger Asset", f"Could not fetch data for charger {charger_asset_tag} — skipping.")
-            else:
-                charger_asset_id = str(charger_data["id"])
-                charger_model_id = (charger_data.get("model") or {}).get("id")
-                charger_existing_notes = (charger_data.get("notes") or "").rstrip()
-                charger_note_text = CHARGER_ASSET_NOTE.format(asset_tag=asset_tag)
-                charger_appended_notes = (charger_existing_notes + "\n" + charger_note_text) if charger_existing_notes else charger_note_text
-                _checkin_asset_with_retry(charger_asset_id)
-                _update_asset_status_and_notes_with_retry(charger_asset_id, charger_asset_tag, charger_status_id, charger_model_id, charger_appended_notes)
+            _process_secondary_asset(
+                charger_asset_tag, asset_tag, CHARGER_ASSET_NOTE, charger_status_id, "Charger Asset",
+                fetch_fail_prefix="charger ",
+            )
 
         dropoff_window.destroy()
 
@@ -1165,13 +1014,6 @@ def dropOff(asset_tag):
         )
 
         # Center window
-        dropoff_window.update_idletasks()
-        sw = dropoff_window.winfo_screenwidth()
-        sh = dropoff_window.winfo_screenheight()
-        ww = dropoff_window.winfo_width()
-        wh = dropoff_window.winfo_height()
-        cx = int((sw / 2) - (ww / 2))
-        cy = int((sh / 2) - (wh / 2))
-        dropoff_window.geometry(f"+{cx}+{cy}")
+        center_window(dropoff_window)
 
     return f"Drop-off window opened for {asset_tag}. Submit to complete."

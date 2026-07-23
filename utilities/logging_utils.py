@@ -9,7 +9,6 @@ It also exposes a settings loader so log level updates can be applied at runtime
 
 from __future__ import annotations
 
-import json
 import logging
 import logging.handlers
 import os
@@ -64,27 +63,6 @@ class SafeRotatingFileHandler(logging.handlers.RotatingFileHandler):
                 pass
 
 
-def _safe_read_json(path: str) -> dict:
-    """Read a JSON file and return a dict, or {} on failure.
-
-    Args:
-        path: JSON file path to read.
-
-    Returns:
-        Parsed dict or empty dict when read/parse fails.
-    """
-    logger.debug("_safe_read_json: reading path=%s", path)
-    try:
-        # Read JSON from disk; return empty dict on any error.
-        with open(path, "r") as fh:
-            data = json.load(fh)
-        logger.debug("_safe_read_json: loaded %s keys from %s", len(data) if isinstance(data, dict) else "N/A", path)
-        return data
-    except Exception as exc:
-        logger.debug("_safe_read_json: failed to read %s: %s", path, exc)
-        return {}
-
-
 def _resolve_log_level(level_name: Optional[str]) -> int:
     """Resolve a log level name to a logging level, defaulting to DEBUG.
 
@@ -126,7 +104,7 @@ def _update_handler_levels(log: logging.Logger, level: int) -> None:
     # Apply the new level across supported handler types.
     updated = 0
     for handler in log.handlers:
-        if isinstance(handler, (logging.handlers.RotatingFileHandler, StderrStreamHandler, logging.StreamHandler, QueueLogHandler)):
+        if isinstance(handler, (logging.handlers.RotatingFileHandler, logging.StreamHandler, QueueLogHandler)):
             handler.setLevel(level)
             updated += 1
     logger.debug("_update_handler_levels: updated %s handlers", updated)

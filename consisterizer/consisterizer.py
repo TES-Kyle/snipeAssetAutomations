@@ -40,10 +40,13 @@ from utilities.otherApiBits import (
     getAllModelOptions,
 )
 from utilities.logging_utils import configure_logging
-from utilities.settings import  get_settings
+from utilities.settings import get_settings
 from utilities.Key import API_URL_Base  # API creds
 from utilities.api_user import get_api_headers, get_api_key
 from utilities.theme import get_ui_colors
+from utilities.tk_geometry import center_window
+from utilities.validation import valid_asset_tag
+from utilities.api_retry import call_with_retry
 
 from consisterizer.consisterizerScriptsRouting import (
     submit_func_list,
@@ -180,8 +183,6 @@ KNOWN_FIELDS = set(FIELD_ORDER)
 
 # Regex that matches any {token} placeholder in template strings.
 TOKEN_RE = re.compile(r"\{([^{}]+)\}")
-# Fallback asset-tag regex used when the settings value is invalid.
-ASSET_TAG_RE_DEFAULT = re.compile(r"^\d{4,5}$")
 
 # Internal sentinel that marks a "{has_value}" default constraint.
 HAS_VALUE_SENTINEL = "<<HAS_VALUE>>"
@@ -209,29 +210,6 @@ def _norm_field_key(k: str) -> str:
         logger.debug("_norm_field_key: non-string input, returning empty")
         return ""
     return k.strip().lower().replace(" ", "_")
-
-
-def valid_asset_tag(value: str) -> bool:
-    """Validate an asset tag string against the configured regex.
-
-    Args:
-        value: Asset tag string to validate.
-
-    Returns:
-        True if the tag matches the configured regex, False otherwise.
-    """
-    logger.debug("valid_asset_tag: value=%s", value)
-    settings = get_settings()
-    pattern = settings.get("assetTagRegex", r"^\d{4,5}$")
-    logger.debug("valid_asset_tag: pattern=%s", pattern)
-    try:
-        regex = re.compile(pattern)
-    except re.error:
-        logger.error("Invalid assetTagRegex setting: %s", pattern)
-        regex = ASSET_TAG_RE_DEFAULT
-    result = bool(regex.match(value or ""))
-    logger.debug("valid_asset_tag: value=%s result=%s", value, result)
-    return result
 
 
 def valid_date(value: str) -> bool:
@@ -476,7 +454,6 @@ def _open_help(parent):
 # Main Entry
 # =============================================================================
 
-# was: def consisterizer(asset_tag, _checked_values=None):
 def consisterizer(asset_tag, alias=None, _checked_values=None):
     """Open the Consisterizer window for a given asset tag.
 
@@ -512,15 +489,12 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     # -------------------------------------------------------------------------
     win = tk.Toplevel()
     win.title(f"Consisterizer — {asset_tag}")
-    win.update_idletasks()
     # Size the window to fill the screen (but never smaller than MIN_W x MIN_H),
     # then center it.
     sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
     W = max(MIN_W, sw)
     H = max(MIN_H, sh)
-    x = (sw - W) // 2
-    y = (sh - H) // 2
-    win.geometry(f"{W}x{H}+{x}+{y}")
+    center_window(win, width=W, height=H)
     win.minsize(MIN_W, MIN_H)
     win.lift()
     # F1 opens the in-app help dialog from anywhere in the window.
@@ -724,15 +698,23 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     grid_box.pack(fill="both", expand=True, padx=12, pady=6)
     grid_box.grid_columnconfigure(0, weight=1)
 
+    def _configure_grid_columns(container):
+        """Apply the shared 5-column layout (Field/Updates/Reset/Current/Result).
+
+        Used for both the fixed header and the scrollable body so their
+        columns stay pixel-aligned.
+        """
+        container.grid_columnconfigure(0, weight=0, minsize=FIELD_COL_PX)
+        container.grid_columnconfigure(1, weight=1, uniform="flex", minsize=FLEX_MIN_UPDATES)
+        container.grid_columnconfigure(2, weight=0, minsize=RESET_COL_PX)
+        container.grid_columnconfigure(3, weight=1, uniform="flex", minsize=FLEX_MIN_CURRENT)
+        container.grid_columnconfigure(4, weight=1, uniform="flex", minsize=FLEX_MIN_RESULT)
+
     # Header (fixed)
     header = tk.Frame(grid_box, bg=HEADER_BG)
     header.grid(row=0, column=0, sticky="ew")
 
-    header.grid_columnconfigure(0, weight=0, minsize=FIELD_COL_PX)
-    header.grid_columnconfigure(1, weight=1, uniform="flex", minsize=FLEX_MIN_UPDATES)
-    header.grid_columnconfigure(2, weight=0, minsize=RESET_COL_PX)
-    header.grid_columnconfigure(3, weight=1, uniform="flex", minsize=FLEX_MIN_CURRENT)
-    header.grid_columnconfigure(4, weight=1, uniform="flex", minsize=FLEX_MIN_RESULT)
+    _configure_grid_columns(header)
 
     tk.Label(header, text="Field",   font=("Arial", 12, "bold"), bg=HEADER_BG, fg=HEADER_FG).grid(row=0, column=0, sticky="w", padx=6, pady=4)
     tk.Label(header, text="Updates", font=("Arial", 12, "bold"), bg=HEADER_BG, fg=HEADER_FG).grid(row=0, column=1, sticky="w", padx=6, pady=4)
@@ -756,11 +738,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     inner_window = grid_canvas.create_window((0, 0), window=grid_inner, anchor="nw")
 
     # Body columns: must match header
-    grid_inner.grid_columnconfigure(0, weight=0, minsize=FIELD_COL_PX)
-    grid_inner.grid_columnconfigure(1, weight=1, uniform="flex", minsize=FLEX_MIN_UPDATES)
-    grid_inner.grid_columnconfigure(2, weight=0, minsize=RESET_COL_PX)
-    grid_inner.grid_columnconfigure(3, weight=1, uniform="flex", minsize=FLEX_MIN_CURRENT)
-    grid_inner.grid_columnconfigure(4, weight=1, uniform="flex", minsize=FLEX_MIN_RESULT)
+    _configure_grid_columns(grid_inner)
 
     # Keep scroll/wrap/widths in sync
     rows_by_key = {}
@@ -868,6 +846,33 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     win.bind_all("<Button-4>", _on_mousewheel)
     win.bind_all("<Button-5>", _on_mousewheel)
 
+    def _safe_get_fg(widget, default):
+        """Return a widget's foreground colour, or a fallback if unavailable."""
+        try:
+            return widget.cget("foreground")
+        except Exception:
+            return default
+
+    def _make_simple_ac_on_change(ac_ref, cur_val, rr, field_name):
+        """Build an on_change callback for a non-clearable autocomplete field.
+
+        Reverts to the current value when blank/empty, otherwise adopts the
+        typed text. Shared by the 'status' and 'model' fields, whose
+        on_change logic is identical apart from the log label.
+        """
+        def on_change():
+            txt = ac_ref.get().strip()
+            logger.debug("on_change(%s): txt=%s cur_val=%s", field_name, txt, cur_val)
+            rr["ac_selected"] = ac_ref.get_selected()
+            if not txt or txt in {"{empty}", "{blank}"}:
+                logger.debug("on_change(%s): empty/blank, reverting to current", field_name)
+                rr["result_var"].set(cur_val)
+            else:
+                logger.debug("on_change(%s): setting result to txt=%s", field_name, txt)
+                rr["result_var"].set(txt)
+            recompute_all_results()
+        return on_change
+
     # ===== Body rows =====
     for i, key in enumerate(FIELD_ORDER):
         # Current value for this field; None becomes "" for safe comparisons.
@@ -902,10 +907,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
         res_lbl.grid(row=i + 1, column=4, sticky="nsew", padx=6, pady=3)
 
         # Capture the result-label's default foreground so highlighting can restore it.
-        try:
-            fg_default = res_lbl.cget("foreground")
-        except Exception:
-            fg_default = ROW_FG
+        fg_default = _safe_get_fg(res_lbl, ROW_FG)
 
         row_record = {
             "key": key,
@@ -925,25 +927,9 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             ac.grid(row=i + 1, column=1, sticky="nsew", padx=6, pady=3)
             ac.set_options(status_options)
 
-            try:
-                ac_fg_default = ac.entry.cget("foreground")
-            except Exception:
-                ac_fg_default = ENTRY_FG
+            ac_fg_default = _safe_get_fg(ac.entry, ENTRY_FG)
 
-            def on_change(ac_ref=ac, cur_val=cur, rr=row_record):
-                """Update result value and recompute on status change."""
-                txt = ac_ref.get().strip()
-                logger.debug("on_change(status): txt=%s cur_val=%s", txt, cur_val)
-                rr["ac_selected"] = ac_ref.get_selected()
-                if not txt or txt in {"{empty}", "{blank}"}:
-                    logger.debug("on_change(status): empty/blank, reverting to current")
-                    rr["result_var"].set(cur_val)
-                else:
-                    logger.debug("on_change(status): setting result to txt=%s", txt)
-                    rr["result_var"].set(txt)
-                recompute_all_results()
-
-            ac.bind_change(on_change)
+            ac.bind_change(_make_simple_ac_on_change(ac, cur, row_record, "status"))
             row_record.update({"text_widget_type": "ac", "ac": ac, "ac_fg_default": ac_fg_default})
 
         elif key == "assigned_to":
@@ -951,10 +937,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             ac.grid(row=i + 1, column=1, sticky="nsew", padx=6, pady=3)
             ac.set_options(assignee_options)
 
-            try:
-                ac_fg_default = ac.entry.cget("foreground")
-            except Exception:
-                ac_fg_default = ENTRY_FG
+            ac_fg_default = _safe_get_fg(ac.entry, ENTRY_FG)
 
             def on_change(ac_ref=ac, cur_val=cur, rr=row_record):
                 """Update result value and runtime username on assignee change."""
@@ -987,26 +970,9 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             ac.grid(row=i + 1, column=1, sticky="nsew", padx=6, pady=3)
             ac.set_options(model_options)
 
-            try:
-                ac_fg_default = ac.entry.cget("foreground")
-            except Exception:
-                ac_fg_default = ENTRY_FG
+            ac_fg_default = _safe_get_fg(ac.entry, ENTRY_FG)
 
-            def on_change(ac_ref=ac, cur_val=cur, rr=row_record):
-                """Update result value on model change."""
-                txt = ac_ref.get().strip()
-                sel = ac_ref.get_selected()
-                logger.debug("on_change(model): txt=%s cur_val=%s", txt, cur_val)
-                rr["ac_selected"] = sel
-                if not txt or txt in {"{empty}", "{blank}"}:
-                    logger.debug("on_change(model): non-clearable field, reverting to current")
-                    rr["result_var"].set(cur_val)  # non-clearable
-                else:
-                    logger.debug("on_change(model): setting result to txt=%s", txt)
-                    rr["result_var"].set(txt)
-                recompute_all_results()
-
-            ac.bind_change(on_change)
+            ac.bind_change(_make_simple_ac_on_change(ac, cur, row_record, "model"))
             row_record.update({"text_widget_type": "ac", "ac": ac, "ac_fg_default": ac_fg_default})
 
         else:
@@ -1567,10 +1533,6 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             checkout_user_id, checkout_location_id).
         """
         logger.debug("_build_patch_payload: building patch payload from snapshot")
-        NULL_STR = "null"
-        TEXT_CLEAR_EMPTY = {"name", "serial", "order_number", "notes"}
-        DATE_CLEAR_NULLSTR = {"purchase_date", "expected_checkin"}
-
         payload = {}
         changed = False
         need_checkin = False
@@ -1656,6 +1618,22 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                      changed, need_checkin, must_checkin_first, list(payload.keys()))
         return payload, changed, need_checkin, must_checkin_first, checkout_user_id, checkout_location_id
 
+    def _require_snipe_config(op_name: str) -> bool:
+        """Return True if SNIPE_BASE/API key are configured; else show an error.
+
+        Shared guard for the PATCH/checkin/checkout helpers below.
+        """
+        if not SNIPE_BASE or not get_api_key():
+            logger.error("%s: missing SNIPE_BASE or API key", op_name)
+            messagebox.showerror("Snipe-IT", "Missing API_URL_Base or API key in utilities.Key.")
+            return False
+        return True
+
+    def _snipe_call_with_retry(op_name: str, request_fn) -> bool:
+        """Run a Snipe-IT write request through call_with_retry; True on success."""
+        result = call_with_retry(op_name, request_fn, busy_widget=win)
+        return result is not None
+
     def _api_patch_with_retry(asset_id: int, payload: dict) -> bool:
         """PATCH the asset and prompt the user to retry on failures.
 
@@ -1667,67 +1645,17 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             True if the PATCH succeeded, False if cancelled.
         """
         logger.debug("_api_patch_with_retry: asset_id=%s payload_keys=%s", asset_id, list(payload.keys()))
-        if not SNIPE_BASE or not get_api_key():
-            logger.error("_api_patch_with_retry: missing SNIPE_BASE or API key")
-            messagebox.showerror("Snipe-IT", "Missing API_URL_Base or API key in utilities.Key.")
+        if not _require_snipe_config("_api_patch_with_retry"):
             return False
 
         url = f"{SNIPE_BASE}/hardware/{asset_id}"
         headers = get_api_headers()
         logger.info("_api_patch_with_retry: PATCH url=%s", url)
 
-        def _cursor_busy(on=True):
-            """Toggle a busy cursor while API calls are in flight."""
-            logger.debug("_cursor_busy: on=%s", on)
-            try:
-                win.config(cursor="watch" if on else "")
-                win.update_idletasks()
-            except Exception:
-                pass
-
-        while True:
-            try:
-                _cursor_busy(True)
-                logger.debug("_api_patch_with_retry: sending PATCH request")
-                r = requests.patch(url, json=payload, headers=headers, timeout=25)
-                logger.debug("_api_patch_with_retry: PATCH response status=%s", r.status_code)
-            except requests.RequestException as e:
-                _cursor_busy(False)
-                logger.error("_api_patch_with_retry: network error=%s", e)
-                if not messagebox.askretrycancel("Network Error", f"{e}\n\nRetry?"):
-                    return False
-                continue
-            finally:
-                _cursor_busy(False)
-
-            if 200 <= r.status_code < 300:
-                logger.debug("_api_patch_with_retry: HTTP success, checking response body")
-                try:
-                    data = r.json()
-                    if str(data.get("status")).lower() == "error":
-                        msgs = data.get("messages")
-                        if isinstance(msgs, list):
-                            msg = "; ".join(msgs)
-                        elif isinstance(msgs, dict):
-                            msg = "; ".join(str(v) for v in msgs.values())
-                        else:
-                            msg = str(msgs or data)
-                        logger.error("_api_patch_with_retry: Snipe-IT reported error: %s", msg)
-                        if not messagebox.askretrycancel("Update failed", f"Snipe-IT error:\n{msg}\n\nRetry?"):
-                            return False
-                        continue
-                except Exception:
-                    pass
-                logger.info("_api_patch_with_retry: PATCH succeeded for asset_id=%s", asset_id)
-                return True
-
-            try:
-                detail = r.json()
-            except Exception:
-                detail = r.text
-            logger.error("_api_patch_with_retry: HTTP error status=%s detail=%s", r.status_code, detail)
-            if not messagebox.askretrycancel("HTTP Error", f"PATCH {r.status_code}\n{detail}\n\nRetry?"):
-                return False
+        return _snipe_call_with_retry(
+            f"Update asset {asset_id}",
+            lambda: requests.patch(url, json=payload, headers=headers, timeout=25),
+        )
 
     def _api_checkin_with_retry(asset_id: int, note: str = "Consisterizer unassign", location_id: int | None = None) -> bool:
         """POST /hardware/{id}/checkin to unassign the asset.
@@ -1741,9 +1669,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             True if checkin succeeded, False if cancelled.
         """
         logger.debug("_api_checkin_with_retry: asset_id=%s note=%s location_id=%s", asset_id, note, location_id)
-        if not SNIPE_BASE or not get_api_key():
-            logger.error("_api_checkin_with_retry: missing SNIPE_BASE or API key")
-            messagebox.showerror("Snipe-IT", "Missing API_URL_Base or API key in utilities.Key.")
+        if not _require_snipe_config("_api_checkin_with_retry"):
             return False
 
         url = f"{SNIPE_BASE}/hardware/{asset_id}/checkin"
@@ -1753,52 +1679,10 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             body["location_id"] = location_id
         logger.info("_api_checkin_with_retry: POST checkin url=%s", url)
 
-        def _cursor_busy(on=True):
-            """Toggle a busy cursor while API calls are in flight."""
-            logger.debug("_cursor_busy: on=%s", on)
-            try:
-                win.config(cursor="watch" if on else "")
-                win.update_idletasks()
-            except Exception:
-                pass
-
-        while True:
-            try:
-                _cursor_busy(True)
-                logger.debug("_api_checkin_with_retry: sending POST checkin request")
-                r = requests.post(url, json=body, headers=headers, timeout=25)
-                logger.debug("_api_checkin_with_retry: checkin response status=%s", r.status_code)
-            except requests.RequestException as e:
-                _cursor_busy(False)
-                logger.error("_api_checkin_with_retry: network error=%s", e)
-                if not messagebox.askretrycancel("Network Error", f"{e}\n\nRetry?"):
-                    return False
-                continue
-            finally:
-                _cursor_busy(False)
-
-            if 200 <= r.status_code < 300:
-                logger.debug("_api_checkin_with_retry: HTTP success, checking response body")
-                try:
-                    data = r.json()
-                    if str(data.get("status")).lower() == "error":
-                        msg = "; ".join(data.get("messages") or []) or str(data)
-                        logger.error("_api_checkin_with_retry: Snipe-IT error: %s", msg)
-                        if not messagebox.askretrycancel("Check-in failed", f"Snipe-IT error:\n{msg}\n\nRetry?"):
-                            return False
-                        continue
-                except Exception:
-                    pass
-                logger.info("_api_checkin_with_retry: checkin succeeded for asset_id=%s", asset_id)
-                return True
-
-            try:
-                detail = r.json()
-            except Exception:
-                detail = r.text
-            logger.error("_api_checkin_with_retry: HTTP error status=%s detail=%s", r.status_code, detail)
-            if not messagebox.askretrycancel("HTTP Error", f"CHECKIN {r.status_code}\n{detail}\n\nRetry?"):
-                return False
+        return _snipe_call_with_retry(
+            f"Check in asset {asset_id}",
+            lambda: requests.post(url, json=body, headers=headers, timeout=25),
+        )
 
     def _api_checkout_with_retry(asset_id: int, *, user_id: int | None = None,
                                  location_id: int | None = None,
@@ -1817,9 +1701,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             True if checkout succeeded, False if cancelled.
         """
         logger.debug("_api_checkout_with_retry: asset_id=%s user_id=%s location_id=%s", asset_id, user_id, location_id)
-        if not SNIPE_BASE or not get_api_key():
-            logger.error("_api_checkout_with_retry: missing SNIPE_BASE or API key")
-            messagebox.showerror("Snipe-IT", "Missing API_URL_Base or API key in utilities.Key.")
+        if not _require_snipe_config("_api_checkout_with_retry"):
             return False
 
         url = f"{SNIPE_BASE}/hardware/{asset_id}/checkout"
@@ -1843,52 +1725,10 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
 
         logger.info("_api_checkout_with_retry: POST checkout url=%s", url)
 
-        def _cursor_busy(on=True):
-            """Toggle a busy cursor while API calls are in flight."""
-            logger.debug("_cursor_busy: on=%s", on)
-            try:
-                win.config(cursor="watch" if on else "")
-                win.update_idletasks()
-            except Exception:
-                pass
-
-        while True:
-            try:
-                _cursor_busy(True)
-                logger.debug("_api_checkout_with_retry: sending POST checkout request")
-                r = requests.post(url, json=body, headers=headers, timeout=25)
-                logger.debug("_api_checkout_with_retry: checkout response status=%s", r.status_code)
-            except requests.RequestException as e:
-                _cursor_busy(False)
-                logger.error("_api_checkout_with_retry: network error=%s", e)
-                if not messagebox.askretrycancel("Network Error", f"{e}\n\nRetry?"):
-                    return False
-                continue
-            finally:
-                _cursor_busy(False)
-
-            if 200 <= r.status_code < 300:
-                logger.debug("_api_checkout_with_retry: HTTP success, checking response body")
-                try:
-                    data = r.json()
-                    if str(data.get("status")).lower() == "error":
-                        msg = "; ".join(data.get("messages") or []) or str(data)
-                        logger.error("_api_checkout_with_retry: Snipe-IT error: %s", msg)
-                        if not messagebox.askretrycancel("Checkout failed", f"Snipe-IT error:\n{msg}\n\nRetry?"):
-                            return False
-                        continue
-                except Exception:
-                    pass
-                logger.info("_api_checkout_with_retry: checkout succeeded for asset_id=%s", asset_id)
-                return True
-
-            try:
-                detail = r.json()
-            except Exception:
-                detail = r.text
-            logger.error("_api_checkout_with_retry: HTTP error status=%s detail=%s", r.status_code, detail)
-            if not messagebox.askretrycancel("HTTP Error", f"CHECKOUT {r.status_code}\n{detail}\n\nRetry?"):
-                return False
+        return _snipe_call_with_retry(
+            f"Check out asset {asset_id}",
+            lambda: requests.post(url, json=body, headers=headers, timeout=25),
+        )
 
     # -------------------------------------------------------------------------
     # Footer (scripts + status line)
@@ -2567,6 +2407,17 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
         has_current_asset.set(False)
         asset_entry.focus_set()
 
+    def _show_invalid_tag_error(tag: str, log_prefix: str):
+        """Show the invalid-asset-tag error, mark the entry, and refocus it."""
+        pattern = get_settings().get("assetTagRegex", r"^\d{4,5}$")
+        logger.debug("%s: invalid tag=%s pattern=%s", log_prefix, tag, pattern)
+        messagebox.showerror("Asset Tag", f"Asset tag does not match pattern: {pattern}")
+        try:
+            asset_entry.configure(style="ConsistError.TEntry")
+        except Exception:
+            pass
+        asset_entry.focus_set()
+
     def _load_asset_from_entry() -> bool:
         """Load whatever is typed in the centered Asset Tag box.
 
@@ -2576,14 +2427,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
         tag = asset_tag_var.get().strip()
         logger.debug("_load_asset_from_entry: tag=%s", tag)
         if not valid_asset_tag(tag):
-            pattern = get_settings().get("assetTagRegex", r"^\d{4,5}$")
-            logger.debug("_load_asset_from_entry: invalid tag=%s pattern=%s", tag, pattern)
-            messagebox.showerror("Asset Tag", f"Asset tag does not match pattern: {pattern}")
-            try:
-                asset_entry.configure(style="ConsistError.TEntry")
-            except Exception:
-                pass
-            asset_entry.focus_set()
+            _show_invalid_tag_error(tag, "_load_asset_from_entry")
             return False
         logger.info("_load_asset_from_entry: loading asset tag=%s", tag)
         ok = _switch_asset_in_place(tag)
@@ -2626,14 +2470,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             new_tag = asset_tag_var.get().strip()
             logger.debug("_submit_and_maybe_switch: batch mode, next_tag=%s", new_tag)
             if not valid_asset_tag(new_tag):
-                pattern = get_settings().get("assetTagRegex", r"^\d{4,5}$")
-                logger.debug("_submit_and_maybe_switch: invalid next_tag=%s", new_tag)
-                messagebox.showerror("Asset Tag", f"Asset tag does not match pattern: {pattern}")
-                try:
-                    asset_entry.configure(style="ConsistError.TEntry")
-                except Exception:
-                    pass
-                asset_entry.focus_set()
+                _show_invalid_tag_error(new_tag, "_submit_and_maybe_switch")
                 return False
 
         # --- 2) Save/update current asset in Snipe-IT ---
@@ -2712,6 +2549,6 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     _update_box_number_state()
 
     # Re-apply geometry to ensure the window stays at the intended size/position.
-    win.geometry(f"{W}x{H}+{x}+{y}")
+    center_window(win, width=W, height=H)
     win.minsize(MIN_W, MIN_H)
     return f"Consisterizer opened for {asset_tag}."

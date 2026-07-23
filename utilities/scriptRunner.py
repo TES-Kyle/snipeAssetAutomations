@@ -1,4 +1,11 @@
-"""Run long tasks in a separate process and stream logs to a Tk window."""
+"""Run long tasks in a separate process and stream logs to a Tk window.
+
+Not currently wired into any menu — the scripts this used to run were
+migrated to Windmill (see utilities/windmill.py). Kept here for the next
+manual long-running script that needs a local log window instead of a
+Windmill job; wire it up via otherManagementFunctions/otherFunctionsRouting.py
+when that need comes up again.
+"""
 
 import logging
 import multiprocessing as mp
@@ -11,6 +18,7 @@ from tkinter.scrolledtext import ScrolledText
 
 from utilities.logging_utils import configure_logging
 from utilities.settings import  get_settings
+from utilities.tk_geometry import center_window
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +85,6 @@ def handler(func, autoclose_delay=120):
         logger.debug("handler: autoclose_delay from settings=%s", autoclose_delay)
     except Exception:
         logger.debug("handler: could not read logWindowAutocloseSeconds, keeping default=%s", autoclose_delay)
-        autoclose_delay = autoclose_delay
 
     global _window_counter
     _window_counter += 1
@@ -87,11 +94,7 @@ def handler(func, autoclose_delay=120):
     win.title(f"Script Log #{_window_counter}")
 
     # Center on screen.
-    win.update_idletasks()
-    w, h = 600, 400
-    x = (win.winfo_screenwidth() // 2) - (w // 2)
-    y = (win.winfo_screenheight() // 2) - (h // 2)
-    win.geometry(f"{w}x{h}+{x}+{y}")
+    center_window(win, width=600, height=400)
 
     log_box = ScrolledText(win, height=20, width=80, state="normal")
     log_box.pack(padx=10, pady=10, fill="both", expand=True)

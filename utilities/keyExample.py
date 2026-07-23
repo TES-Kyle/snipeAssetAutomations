@@ -7,7 +7,7 @@ API_KEYS = {
             "user1": "{secret}",
             "user2": "{secret}",
             "user3": "{secret}",
-            "Generic": "{{secret}",
+            "Generic": "{secret}",
             }
 # Email credentials and destinations.
 tech_email_info = ["email@example.org", "{secret}"]
