@@ -85,7 +85,6 @@ def handler(func, autoclose_delay=120):
         logger.debug("handler: autoclose_delay from settings=%s", autoclose_delay)
     except Exception:
         logger.debug("handler: could not read logWindowAutocloseSeconds, keeping default=%s", autoclose_delay)
-        autoclose_delay = autoclose_delay
 
     global _window_counter
     _window_counter += 1

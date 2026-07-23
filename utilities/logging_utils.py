@@ -104,7 +104,7 @@ def _update_handler_levels(log: logging.Logger, level: int) -> None:
     # Apply the new level across supported handler types.
     updated = 0
     for handler in log.handlers:
-        if isinstance(handler, (logging.handlers.RotatingFileHandler, StderrStreamHandler, logging.StreamHandler, QueueLogHandler)):
+        if isinstance(handler, (logging.handlers.RotatingFileHandler, logging.StreamHandler, QueueLogHandler)):
             handler.setLevel(level)
             updated += 1
     logger.debug("_update_handler_levels: updated %s handlers", updated)

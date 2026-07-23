@@ -17,7 +17,7 @@ from typing import Optional, Tuple, Dict, List, Any, Set
 
 from utilities import Key
 from utilities.logging_utils import configure_logging
-from utilities.settings import  get_settings
+from utilities.settings import get_settings
 from utilities.otherApiBits import getAssetInfo
 from utilities.tk_geometry import center_window
 from utilities.api_retry import ensure_tk_root, ask_retry_cancel
@@ -54,6 +54,11 @@ def _to_bool(value, default: bool) -> bool:
         return False
     logger.debug("_to_bool: unrecognized %s, returning default=%s", s, default)
     return default
+
+
+def _status_code_of(exc: Exception):
+    """Return the HTTP status code from a caught exception's response, or None."""
+    return getattr(getattr(exc, "response", None), "status_code", None)
 
 
 def _to_float(value, default: float) -> float:
@@ -538,7 +543,7 @@ def _put_prestage_scope_v2(
         )
         return False
     except Exception as e:
-        status = getattr(getattr(e, "response", None), "status_code", None)
+        status = _status_code_of(e)
         if status == 409:
             try:
                 return _retry_after_lock_conflict(via_exception=True)
@@ -673,13 +678,8 @@ def _remove_from_all_prestages(
                     verify_ok = True
                     try:
                         scope_after = _get_prestage_scope_v2(jamf_client, pid, settings)
-                        if isinstance(scope_after, dict):
-                            a2 = scope_after.get("assignments")
-                            # Check both assignment shapes for lingering serial.
-                            if isinstance(a2, dict) and (serial in (a2.get("serialNumbers") or [])):
-                                verify_ok = False
-                            elif isinstance(a2, list) and any((row or {}).get("serialNumber") == serial for row in a2):
-                                verify_ok = False
+                        if serial in (_flatten_scope_serials(scope_after) or []):
+                            verify_ok = False
                     except Exception as ve:
                         if ask_retry_cancel("Verify removal",
                                              f"Could not verify PreStage {pid} removal.\n\n{ve}\n\nRetry verify?"):
@@ -968,13 +968,8 @@ def _add_serial_to_prestage(
         # Verify the serial now appears in the scope after the write.
         try:
             scope_after = _get_prestage_scope_v2(jamf_client, prestage_id, settings)
-            if isinstance(scope_after, dict):
-                a2 = scope_after.get("assignments")
-                # Check both shape A (dict) and shape B (list) for the serial.
-                if isinstance(a2, dict) and (serial in (a2.get("serialNumbers") or [])):
-                    return True
-                if isinstance(a2, list) and any((row or {}).get("serialNumber") == serial for row in a2):
-                    return True
+            if serial in (_flatten_scope_serials(scope_after) or []):
+                return True
         except Exception as ve:
             if ask_retry_cancel("Verify PreStage add",
                                  f"Could not verify PreStage {prestage_id} add.\n\n{ve}\n\nRetry?"):
@@ -1017,7 +1012,7 @@ def _verify_inventory_gone(jamf_client: JamfProClient, computer_id: int) -> bool
                 return False
         except Exception as e:
             # Some SDK versions raise instead of returning a 404 response.
-            sc = getattr(getattr(e, "response", None), "status_code", None)
+            sc = _status_code_of(e)
             if sc == 404:
                 return True
     # Could not determine state from either endpoint.
@@ -1081,7 +1076,7 @@ def _delete_computer_pro(
             return True
         logger.warning("v2 delete returned %s; verifying...", r.status_code)
     except Exception as e:
-        sc = getattr(getattr(e, "response", None), "status_code", None)
+        sc = _status_code_of(e)
         logger.warning("v2 delete raised %s; verifying...", sc or "exception")
 
     time.sleep(0.75)
@@ -1101,7 +1096,7 @@ def _delete_computer_pro(
             detail = r2.text
         logger.error("JAMF: v1 delete failed (%s): %s", r2.status_code, detail)
     except Exception as e:
-        sc = getattr(getattr(e, "response", None), "status_code", None)
+        sc = _status_code_of(e)
         if sc == 404:
             logger.info("Already gone on v1 (404) for ID %s.", computer_id)
             return True
@@ -1141,5 +1136,3 @@ def delete_computer_with_retry(jamf_client, cid, cname, settings, success_messag
             continue
         _warn("Jamf delete failed", failure_warn_message)
         return f"[ERROR] JAMF: Delete failed for {cname} (ID {cid})."
-
-    return False

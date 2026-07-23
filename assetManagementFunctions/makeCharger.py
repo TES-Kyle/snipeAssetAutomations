@@ -417,7 +417,7 @@ def makeCharger(asset_tag):
 
         # Assigned To (optional) with validation of type.
         assn_sel = assignee_ac.get_selected()
-        assn_type = (assn_sel or {}).get("type", "").strip().lower() if assn_sel else ""
+        assn_type = assn_sel.get("type", "").strip().lower() if assn_sel else ""
         user_id = None
         location_id = None
         logger.debug("submit: assn_sel=%s assn_type=%s", assn_sel, assn_type)

@@ -30,7 +30,7 @@ def valid_asset_tag(value: str, settings: dict = None) -> bool:
     logger.debug("valid_asset_tag: value=%s", value)
     if settings is None:
         settings = get_settings()
-    pattern = settings.get("assetTagRegex", r"^\d{4,5}$")
+    pattern = settings.get("assetTagRegex", ASSET_TAG_RE_DEFAULT.pattern)
     logger.debug("valid_asset_tag: pattern=%s", pattern)
     try:
         regex = re.compile(pattern)

@@ -145,7 +145,7 @@ def newRepair(asset_tag):
         """
         logger.debug("submitMaintenance: asset_tag=%s at_fault=%s title=%s", asset_tag, at_fault, title)
         logger.info("submitMaintenance: fetching asset data for %s", asset_tag)
-        junk, assetData = getAssetInfo(asset_tag)
+        _, assetData = getAssetInfo(asset_tag)
         logger.debug("submitMaintenance: asset id=%s name=%s", assetData.get("id"), assetData.get("name"))
         url = Key.API_URL_Base.rstrip("/")
 
@@ -223,12 +223,13 @@ def newRepair(asset_tag):
                 content = repair_notice(full_name or "")
 
             subject = "Repair Notice"
-            recipient = recipient_email if recipient_email and is_email(recipient_email) else support_email
+            recipient_valid = bool(recipient_email and is_email(recipient_email))
+            recipient = recipient_email if recipient_valid else support_email
             logger.info("submitMaintenance: sending repair notice to recipient=%s subject=%s", recipient, subject)
             if recipient is support_email:
                 if not full_name:
                     subject = "Error name not found: " + subject
-                if not (recipient_email and is_email(recipient_email)):
+                if not recipient_valid:
                     subject = "Error email not valid/missing: " + subject
             logger.debug("submitMaintenance: final subject=%s", subject)
 
@@ -338,7 +339,7 @@ def newRepair(asset_tag):
             return False
 
         # Refresh asset data for label fields.
-        junk, assetData = getAssetInfo(asset_tag)
+        _, assetData = getAssetInfo(asset_tag)
 
         # 4) Print label (Retry / Skip / Cancel).
         logger.debug("submitMaintenance: refreshing asset data for label printing")

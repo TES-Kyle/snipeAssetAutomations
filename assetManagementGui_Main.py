@@ -253,19 +253,17 @@ def create_main_window(root):
     # == Main Window UI Construction
     # =========================================================================
 
-    # --- NEW: Top bar to hold tabs and settings button ---
+    # Top bar to hold tabs and settings button
     top_bar_frame = tk.Frame(root)
     top_bar_frame.pack(side="top", fill="x", padx=10, pady=5)
 
-    # MODIFIED: Frame for tabs is now packed inside the top_bar_frame
     tab_button_frame = tk.Frame(top_bar_frame)
     tab_button_frame.pack(side="left")
 
-    # MODIFIED: Settings frame is now packed inside the top_bar_frame
     settings_frame = tk.Frame(top_bar_frame)
     settings_frame.pack(side="right")
 
-    # MODIFIED: Main content container is now packed to fill the remaining space
+    # Main content container fills the remaining space
     main_container = tk.Frame(root)
     main_container.pack(side="top", fill="both", expand=True)
 

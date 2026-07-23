@@ -13,15 +13,12 @@ from tkinter import font as tkfont
 from tkinter import messagebox
 
 from utilities.logging_utils import configure_logging
-from utilities.settings import safe_read_json
+from utilities.settings import safe_read_json, UTILITIES_DIR, SETTINGS_PATH, DEFAULTS_PATH
 from utilities.theme import get_ui_colors
 from utilities.tk_geometry import center_window
 
 logger = logging.getLogger(__name__)
 
-UTILITIES_DIR = os.path.dirname(os.path.realpath(__file__))
-SETTINGS_PATH = os.path.join(UTILITIES_DIR, "settings.json")
-DEFAULTS_PATH = os.path.join(UTILITIES_DIR, "defaultSettings.json")
 SCHEMA_PATH = os.path.join(UTILITIES_DIR, "settingsSchema.json")
 
 def settingsMenu():

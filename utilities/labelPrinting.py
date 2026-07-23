@@ -75,15 +75,14 @@ def createImage(values):
 
     # Find the maximum font size for each line of text.
     max_font_size = 1
-    variables = values
-    assetTag = variables[0]
-    logger.debug("createImage: asset tag=%s, %s text rows to render", assetTag, len(variables))
+    assetTag = values[0]
+    logger.debug("createImage: asset tag=%s, %s text rows to render", assetTag, len(values))
     font_sizes = []
-    for var in variables:
+    for var in values:
         font_size = 1
         font = ImageFont.truetype(font_name, font_size)
         text_bbox = draw.textbbox((0, 0), var, font=font)
-        while text_bbox[2] < image_width / 2 and text_bbox[3] < image_height / len(variables) and font_size <= 100:
+        while text_bbox[2] < image_width / 2 and text_bbox[3] < image_height / len(values) and font_size <= 100:
             max_font_size = font_size
             font_size += 1
             font = ImageFont.truetype(font_name, font_size)
@@ -94,11 +93,11 @@ def createImage(values):
     logger.debug("createImage: font_sizes=%s", font_sizes)
 
     # Calculate the y-position for each text row.
-    y_positions = [i * (image_height / len(variables)) for i in range(len(variables))]
+    y_positions = [i * (image_height / len(values)) for i in range(len(values))]
     logger.debug("createImage: y_positions=%s", y_positions)
 
     # Draw text values on the left half of the label.
-    for i, var in enumerate(variables):
+    for i, var in enumerate(values):
         font_size = font_sizes[i]
         font = ImageFont.truetype(font_name, font_size)
         text_bbox = draw.textbbox((0, 0), var, font=font)
@@ -106,7 +105,7 @@ def createImage(values):
         text_height = text_bbox[3] - text_bbox[1]
         # Center each line within its row area.
         x_position = (image_width / 2 - text_width) / 2
-        y_position = y_positions[i] + (image_height / len(variables) - text_height) / 2 - 40
+        y_position = y_positions[i] + (image_height / len(values) - text_height) / 2 - 40
         logger.debug("createImage: drawing row %s var=%s at x=%s y=%s font_size=%s", i, var, x_position, y_position, font_size)
         draw.text((x_position, y_position), var, fill="black", font=font)
 

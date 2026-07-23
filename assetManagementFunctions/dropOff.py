@@ -72,8 +72,7 @@ HELP_TEXT = (
     "Damage levels:\n"
     "• Little/None — light enough damage that it would be suitable to give to a new 8th grade student.\n"
     "• Mild/Medium — enough cosmetic damage to not give to a new eighth grader, but still fully functional.\n"
-    "• Significant — functionality is impacted but repair is possible.\n"
-    "• Irreparable — the computer is so damaged or mangled that it’s either impossible or not sensible to repair."
+    "• Significant — functionality is impacted but repair is possible."
 )
 
 # ----------------------------
@@ -552,6 +551,36 @@ def _update_asset_status_and_notes_with_retry(asset_id, asset_tag, status_id, mo
     """
     return _update_asset_fields_with_retry(asset_id, asset_tag, status_id, model_id, new_notes)
 
+
+def _append_note(existing_notes_raw, new_note):
+    """Append new_note to existing notes (rstripped), or return new_note alone if there were none."""
+    existing = (existing_notes_raw or "").rstrip()
+    return (existing + "\n" + new_note) if existing else new_note
+
+
+def _process_secondary_asset(tag, main_asset_tag, note_template, status_id, dialog_title, fetch_fail_prefix=""):
+    """Fetch, note-append, checkin, and status-update a lost/charger asset during drop-off.
+
+    Args:
+        tag: Asset tag of the secondary (lost or charger) asset to process.
+        main_asset_tag: Tag of the main device being dropped off, inserted into note_template.
+        note_template: Note format string with an {asset_tag} placeholder.
+        status_id: Target status ID to set on this asset.
+        dialog_title: Title used for both the "could not fetch" warning dialog and the log line.
+        fetch_fail_prefix: Optional text prepended to the tag in the fetch-failure message.
+    """
+    logger.info("Processing %s %s", dialog_title.lower(), tag)
+    _var_list, data = getAssetInfo(tag, allow_missing=False)
+    if not data or data.get("status") == "error":
+        messagebox.showwarning(dialog_title, f"Could not fetch data for {fetch_fail_prefix}{tag} — skipping.")
+        return
+    asset_id = str(data["id"])
+    model_id = (data.get("model") or {}).get("id")
+    notes = _append_note(data.get("notes"), note_template.format(asset_tag=main_asset_tag))
+    # Check in first (non-fatal if already checked in), then set status + note.
+    _checkin_asset_with_retry(asset_id)
+    _update_asset_status_and_notes_with_retry(asset_id, tag, status_id, model_id, notes)
+
 # ----------------------------
 # Help / Box State UI
 # ----------------------------
@@ -664,7 +693,6 @@ def _open_help_dialog(parent):
         logger.debug("save_capacity: settings key updated")
 
         state_var.set(_format_state_line(state))
-        # messagebox.showinfo("Capacity Updated", f"Capacity set to {new_cap}.")
 
     tk.Button(cap_frame, text="Save", command=save_capacity).pack(side="left", padx=10, pady=8)
 
@@ -707,7 +735,6 @@ def _open_help_dialog(parent):
 
         state_var.set(_format_state_line(new_state))
         logger.info("reset_all: all streams reset to box 1 / computer 0")
-        # messagebox.showinfo("Reset Complete", "All streams reset to box 1 / computer 0 (capacity unchanged).")
 
     tk.Button(reset_frame, text="Reset All Streams", command=reset_all).pack(side="left", padx=10, pady=8)
 
@@ -824,8 +851,7 @@ def dropOff(asset_tag):
             noun = "Asset" if len(lost_tags) == 1 else "Assets"
             note_parts.append(f"{noun} {tag_list} {verb} marked lost during dropoff.")
         device_note = "\n".join(note_parts)
-        existing_device_notes = (assetData.get("notes") or "").rstrip()
-        full_device_notes = (existing_device_notes + "\n" + device_note) if existing_device_notes else device_note
+        full_device_notes = _append_note(assetData.get("notes"), device_note)
 
         # Update the actual device asset with Retry/Cancel
         if not _update_asset_with_retry(
@@ -856,34 +882,14 @@ def dropOff(asset_tag):
         for cb_var, lost_tag in check_vars:
             if not cb_var.get():
                 continue
-            logger.info("Processing lost asset %s", lost_tag)
-            _var_list, lost_data = getAssetInfo(lost_tag, allow_missing=False)
-            if not lost_data or lost_data.get("status") == "error":
-                messagebox.showwarning("Lost Asset", f"Could not fetch data for {lost_tag} — skipping.")
-                continue
-            lost_id = str(lost_data["id"])
-            lost_model_id = (lost_data.get("model") or {}).get("id")
-            existing_notes = (lost_data.get("notes") or "").rstrip()
-            note_text = LOST_ASSET_NOTE.format(asset_tag=asset_tag)
-            appended_notes = (existing_notes + "\n" + note_text) if existing_notes else note_text
-            # Check in first (non-fatal if already checked in), then set status 6 + note.
-            _checkin_asset_with_retry(lost_id)
-            _update_asset_status_and_notes_with_retry(lost_id, lost_tag, lost_status_id, lost_model_id, appended_notes)
+            _process_secondary_asset(lost_tag, asset_tag, LOST_ASSET_NOTE, lost_status_id, "Lost Asset")
 
         # Process charger asset if a tag was entered.
         if charger_asset_tag:
-            logger.info("Processing charger asset %s", charger_asset_tag)
-            _var_list, charger_data = getAssetInfo(charger_asset_tag, allow_missing=False)
-            if not charger_data or charger_data.get("status") == "error":
-                messagebox.showwarning("Charger Asset", f"Could not fetch data for charger {charger_asset_tag} — skipping.")
-            else:
-                charger_asset_id = str(charger_data["id"])
-                charger_model_id = (charger_data.get("model") or {}).get("id")
-                charger_existing_notes = (charger_data.get("notes") or "").rstrip()
-                charger_note_text = CHARGER_ASSET_NOTE.format(asset_tag=asset_tag)
-                charger_appended_notes = (charger_existing_notes + "\n" + charger_note_text) if charger_existing_notes else charger_note_text
-                _checkin_asset_with_retry(charger_asset_id)
-                _update_asset_status_and_notes_with_retry(charger_asset_id, charger_asset_tag, charger_status_id, charger_model_id, charger_appended_notes)
+            _process_secondary_asset(
+                charger_asset_tag, asset_tag, CHARGER_ASSET_NOTE, charger_status_id, "Charger Asset",
+                fetch_fail_prefix="charger ",
+            )
 
         dropoff_window.destroy()
 

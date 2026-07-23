@@ -40,7 +40,7 @@ from utilities.otherApiBits import (
     getAllModelOptions,
 )
 from utilities.logging_utils import configure_logging
-from utilities.settings import  get_settings
+from utilities.settings import get_settings
 from utilities.Key import API_URL_Base  # API creds
 from utilities.api_user import get_api_headers, get_api_key
 from utilities.theme import get_ui_colors
