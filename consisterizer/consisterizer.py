@@ -94,6 +94,7 @@ WHAT IT DOES
 BATCH vs ONE-AT-A-TIME
 - Batch mode (checked): Submit current, then switch to the asset tag typed in the box. The box is centered up top; Enter runs submit+switch.
 - One-at-a-time (unchecked): Submit current, then the window clears CURRENT/RESULT and waits. Your Updates stay put so you can scan the next tag and reuse them.
+- Clear button: Skip the loaded asset WITHOUT saving or editing it in Snipe-IT. Purges CURRENT/RESULT and waits for the next tag, same as after a submit — but Updates/Reset stay put so you don't lose values you want to reuse.
 
 UPDATES COLUMN
 - Text boxes accept literal values or templates (see TOKENS).
@@ -670,11 +671,15 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     has_current_asset = tk.BooleanVar(value=True)  # we start with an asset loaded
 
     def _update_submit_enabled(*_):
-        """Enable or disable submit based on active asset state."""
+        """Enable or disable submit/clear based on active asset state."""
         has_asset = has_current_asset.get()
         logger.debug("_update_submit_enabled: has_current_asset=%s", has_asset)
         try:
             submit_btn.configure(state=("normal" if has_asset else "disabled"))
+        except Exception:
+            pass
+        try:
+            clear_btn.configure(state=("normal" if has_asset else "disabled"))
         except Exception:
             pass
 
@@ -1758,9 +1763,13 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     status_lbl = ttk.Label(footer, textvariable=status_var)
     status_lbl.grid(row=1, column=0, sticky="w", padx=6)
 
-    # Submit button stub; real command attached later after function defs
-    submit_btn = ttk.Button(footer, text="Submit & Save")
-    submit_btn.grid(row=1, column=1, padx=8)  # centered
+    # Submit/Clear buttons stub; real commands attached later after function defs
+    center_btns = ttk.Frame(footer)
+    center_btns.grid(row=1, column=1, padx=8)  # centered
+    clear_btn = ttk.Button(center_btns, text="Clear")
+    clear_btn.pack(side="left", padx=(0, 6))
+    submit_btn = ttk.Button(center_btns, text="Submit & Save")
+    submit_btn.pack(side="left")
     ttk.Button(footer, text="Close", command=win.destroy).grid(row=1, column=2, sticky="e")
 
     # --- Alias support -------------------------------------------------------
@@ -2269,6 +2278,16 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             messagebox.showerror("Load Failed", f"Could not fetch asset '{new_tag}'.\n{e}")
             return False
 
+        if not new_assetData.get("id"):
+            # getAssetInfo() already showed the user an error dialog (asset not
+            # found, API error, etc). Bail out here WITHOUT touching assetData/
+            # current_map so the currently-loaded asset stays intact instead of
+            # getting replaced by a blank/phantom one with no id — that phantom
+            # state is what previously made every later save/switch attempt
+            # keep failing until the window was closed and reopened.
+            logger.warning("_switch_asset_in_place: no asset found for tag=%s, keeping current asset", new_tag)
+            return False
+
         assetData = new_assetData
         current_map = extract_current_values(assetData)
         logger.debug("_switch_asset_in_place: asset loaded, updating UI rows")
@@ -2337,15 +2356,17 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
         _update_box_number_state()
         return True
 
-    def _clear_to_wait_for_next(saved_tag: str | None = None):
+    def _clear_to_wait_for_next(saved_tag: str | None = None, cleared: bool = False):
         """Clear only CURRENT/RESULT and go to a 'waiting' state.
 
         Keeps all Updates inputs and Reset checkboxes intact.
 
         Args:
             saved_tag: Optional tag that was just saved, for the status line.
+            cleared: True if this is an explicit abandon-without-saving (Clear
+                button) rather than a post-submit clear.
         """
-        logger.debug("_clear_to_wait_for_next: saved_tag=%s", saved_tag)
+        logger.debug("_clear_to_wait_for_next: saved_tag=%s cleared=%s", saved_tag, cleared)
         nonlocal assetData, current_map
         assetData = {}
         current_map = {k: "" for k in FIELD_ORDER}
@@ -2401,11 +2422,28 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
         if saved_tag:
             logger.info("_clear_to_wait_for_next: saved tag=%s, entering waiting state", saved_tag)
             status_var.set(f"Saved {saved_tag}. Ready for next asset.")
+        elif cleared:
+            logger.info("_clear_to_wait_for_next: cleared without saving, entering waiting state")
+            status_var.set("Cleared (nothing saved). Ready for next asset.")
         else:
             logger.info("_clear_to_wait_for_next: entering waiting state")
             status_var.set("Ready for next asset.")
         has_current_asset.set(False)
         asset_entry.focus_set()
+
+    def _clear_active_asset():
+        """Abandon the current asset without saving or editing it.
+
+        Purges the loaded asset from the screen/active state (like after a
+        submit) but never touches Snipe-IT — lets the user skip an asset
+        without being forced to either save unwanted edits or discard the
+        Updates/Reset selections they want to reuse on the next asset.
+        """
+        logger.info("_clear_active_asset: clearing active asset without saving")
+        if not has_current_asset.get():
+            logger.debug("_clear_active_asset: no current asset loaded, nothing to clear")
+            return
+        _clear_to_wait_for_next(cleared=True)
 
     def _show_invalid_tag_error(tag: str, log_prefix: str):
         """Show the invalid-asset-tag error, mark the entry, and refocus it."""
@@ -2529,8 +2567,9 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     asset_entry.bind("<Return>", _on_asset_tag_return, add="+")
     asset_entry.focus_set()
 
-    # Wire up the submit now that functions exist
+    # Wire up the submit/clear now that functions exist
     submit_btn.configure(command=_submit_and_maybe_switch)
+    clear_btn.configure(command=_clear_active_asset)
 
     # -------------------------------------------------------------------------
     # Initial compute
