@@ -3,8 +3,8 @@
 import logging
 
 from utilities.logging_utils import configure_logging
-from utilities.otherApiBits import *
-from utilities import optionsCache
+from utilities import Key, optionsCache
+from utilities.otherApiBits import getAssetInfo, get_headers
 from utilities.api_user import get_api_key
 from utilities.autocomplete import AutoCompleteEntry
 from utilities.tk_geometry import center_window

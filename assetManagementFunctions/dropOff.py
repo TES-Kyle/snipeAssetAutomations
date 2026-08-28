@@ -21,10 +21,21 @@ from datetime import datetime
 import tkinter as tk
 from tkinter import messagebox
 
+import requests
+
 from utilities.labelPrinting import createImage
 from utilities.logging_utils import configure_logging
 from utilities.settings import get_settings, set_setting
-from utilities.otherApiBits import *
+from utilities import Key
+from utilities.otherApiBits import (
+    append_note,
+    build_asset_info_frame,
+    build_user_asset_list_frame,
+    fetch_asset_by_tag,
+    getAssetInfo,
+    get_headers,
+    put_notes_with_retry,
+)
 from utilities.tk_geometry import center_window
 from utilities.validation import valid_asset_tag
 from utilities.api_retry import call_with_retry

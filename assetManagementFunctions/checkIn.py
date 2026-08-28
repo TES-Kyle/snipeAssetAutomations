@@ -3,8 +3,8 @@
 import logging
 
 from utilities.logging_utils import configure_logging
-from utilities.otherApiBits import *
-from utilities import optionsCache
+from utilities import Key, optionsCache
+from utilities.otherApiBits import build_asset_info_frame, getAssetInfo, get_headers
 from utilities.tk_geometry import center_window
 from utilities.checkInOutCommon import (
     resolve_status_id,

@@ -6,11 +6,15 @@ from datetime import date
 import tkinter as tk
 from tkinter import messagebox
 
+import requests
+
 from utilities.labelPrinting import createImage
 from utilities.logging_utils import configure_logging
 from utilities.settings import  get_settings
-from utilities.messaging import *
-from utilities.otherApiBits import *
+from utilities import Key
+from utilities.Key import support_email
+from utilities.messaging import is_email, message, remove_fine_warning, repair_notice, repair_notice_no_fine
+from utilities.otherApiBits import build_asset_info_frame, getAssetInfo, getLatestCheckinName, get_headers
 from utilities.tk_geometry import center_window
 from utilities.api_retry import call_with_retry, SKIPPED
 

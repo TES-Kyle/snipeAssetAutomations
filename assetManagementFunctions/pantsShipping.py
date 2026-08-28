@@ -3,9 +3,12 @@
 import logging
 from tkinter import messagebox
 
+import requests
+
 from utilities.logging_utils import configure_logging
 from utilities.settings import get_settings
-from utilities.otherApiBits import *
+from utilities import Key
+from utilities.otherApiBits import getAssetInfo, get_headers
 
 logger = logging.getLogger(__name__)
 

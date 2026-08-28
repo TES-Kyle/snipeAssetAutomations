@@ -30,7 +30,18 @@ from paramiko import SSHException
 from ringcentral import SDK
 from ringcentral.http.api_exception import ApiException
 
-from utilities.Key import *  # noqa: F401,F403 - provides credentials/constants used below
+from utilities.Key import (
+    ringCentralClientID,
+    ringCentralClientSecret,
+    ringCentralFromNumber,
+    ringCentralURLBase,
+    ringCentralUserJWT,
+    ruvna_hostname,
+    ruvna_password,
+    ruvna_username,
+    support_email,
+    tech_email_info,
+)
 from utilities.logging_utils import configure_logging
 from utilities.settings import get_settings
 

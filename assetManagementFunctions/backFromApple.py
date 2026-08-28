@@ -7,11 +7,14 @@ from datetime import date, datetime, timedelta
 import tkinter as tk
 from tkinter import messagebox
 
+import requests
+
 from utilities.logging_utils import configure_logging
 from utilities.settings import  get_settings
-from utilities.otherApiBits import *
-from utilities.Key import *
-from utilities.messaging import *
+from utilities import Key
+from utilities.Key import operations_email, support_email
+from utilities.messaging import is_email, message, ready_fine, ready_no_fine, remove_fine_warning
+from utilities.otherApiBits import build_asset_info_frame, getAssetInfo, getLatestCheckinName, get_headers
 from utilities.tk_geometry import center_window
 
 logger = logging.getLogger(__name__)

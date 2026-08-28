@@ -3,7 +3,7 @@
 import logging
 
 from utilities.logging_utils import configure_logging
-from utilities.otherApiBits import *
+from utilities.otherApiBits import getAssetInfo
 from utilities.labelPrinting import createImage
 
 logger = logging.getLogger(__name__)
