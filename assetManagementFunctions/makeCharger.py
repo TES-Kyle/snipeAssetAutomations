@@ -14,6 +14,7 @@ from utilities.api_user import get_api_headers, get_api_key
 from utilities.logging_utils import configure_logging
 from utilities.settings import  get_settings
 from utilities.tk_geometry import center_window
+from utilities.tk_date_entry import build_date_entry_frame
 from utilities.api_retry import call_with_retry
 
 import tkinter as tk
@@ -270,43 +271,6 @@ def makeCharger(asset_tag):
     assignee_options_data = []
     model_options_data = []
 
-    # Inline placeholder support for AutoCompleteEntry
-    def _set_loading_placeholder(ac: AutoCompleteEntry, text="loading…", disable=True):
-        """Apply a disabled placeholder to an autocomplete entry.
-
-        Args:
-            ac: AutoCompleteEntry widget to update.
-            text: Placeholder text to display.
-            disable: If True, disable the entry widget.
-        """
-        logger.debug("_set_loading_placeholder: text=%s disable=%s", text, disable)
-        try:
-            ac.entry.configure(foreground="#666")
-            ac.entry.delete(0, tk.END)
-            ac.entry.insert(0, text)
-            ac._placeholder_active = True  # mark
-            if disable:
-                ac.entry.state(["disabled"])
-        except Exception:
-            pass
-
-    def _clear_placeholder_if_loading(ac: AutoCompleteEntry):
-        """Remove loading placeholder state if it is active.
-
-        Args:
-            ac: AutoCompleteEntry widget to clear.
-        """
-        # clear only if we set our loading placeholder
-        if getattr(ac, "_placeholder_active", False):
-            logger.debug("_clear_placeholder_if_loading: clearing placeholder")
-            try:
-                ac.entry.state(["!disabled"])
-                ac.entry.delete(0, tk.END)
-                ac.entry.configure(foreground="black")
-            except Exception:
-                pass
-            ac._placeholder_active = False
-
     def _apply_preloaded_options_to_widgets():
         """Push preloaded options into autocomplete widgets."""
         # Runs on Tk thread
@@ -314,15 +278,15 @@ def makeCharger(asset_tag):
                      status_options_ready.is_set(), assignee_options_ready.is_set(), model_options_ready.is_set())
         if status_options_ready.is_set():
             logger.debug("_apply_preloaded_options_to_widgets: applying %s status options", len(status_options_data))
-            _clear_placeholder_if_loading(status_ac)
+            status_ac.set_loading(False)
             status_ac.set_options(status_options_data)
         if assignee_options_ready.is_set():
             logger.debug("_apply_preloaded_options_to_widgets: applying %s assignee options", len(assignee_options_data))
-            _clear_placeholder_if_loading(assignee_ac)
+            assignee_ac.set_loading(False)
             assignee_ac.set_options(assignee_options_data)
         if model_options_ready.is_set():
             logger.debug("_apply_preloaded_options_to_widgets: applying %s model options", len(model_options_data))
-            _clear_placeholder_if_loading(model_ac)
+            model_ac.set_loading(False)
             model_ac.set_options(model_options_data)
 
     def _preload_options_thread():
@@ -369,7 +333,7 @@ def makeCharger(asset_tag):
         logger.info("Starting makeCharger submit for %s", asset_number.get())
 
         # Don't allow submit while required pickers still "loading…"
-        if getattr(status_ac, "_placeholder_active", False) or getattr(model_ac, "_placeholder_active", False):
+        if status_ac.is_loading() or model_ac.is_loading():
             messagebox.showinfo("Please wait", "Still loading options. Try again in a moment.")
             return
 
@@ -594,7 +558,7 @@ def makeCharger(asset_tag):
     ttk.Label(model_frame, text="Model:").grid(row=0, column=0, sticky="w")
     model_ac = AutoCompleteEntry(model_frame, width=20)
     model_ac.grid(row=0, column=1, sticky="ew")
-    _set_loading_placeholder(model_ac, "loading…", disable=True)
+    model_ac.set_loading(True)
 
     # ---------- Status ----------
     status_frame = ttk.Frame(charger_window)
@@ -604,7 +568,7 @@ def makeCharger(asset_tag):
     ttk.Label(status_frame, text="Status:").grid(row=0, column=0, sticky="w")
     status_ac = AutoCompleteEntry(status_frame, width=20)
     status_ac.grid(row=0, column=1, sticky="ew")
-    _set_loading_placeholder(status_ac, "loading…", disable=True)
+    status_ac.set_loading(True)
 
     # ---------- Assigned To (optional) ----------
     assignee_frame = ttk.Frame(charger_window)
@@ -614,7 +578,7 @@ def makeCharger(asset_tag):
     ttk.Label(assignee_frame, text="Checkout To (optional):").grid(row=0, column=0, sticky="w")
     assignee_ac = AutoCompleteEntry(assignee_frame, width=20)
     assignee_ac.grid(row=0, column=1, sticky="ew")
-    _set_loading_placeholder(assignee_ac, "loading…", disable=True)
+    assignee_ac.set_loading(True)
 
     # ---------- Name ----------
     name_frame = ttk.Frame(charger_window)
@@ -657,39 +621,9 @@ def makeCharger(asset_tag):
         .grid(row=0, column=1, sticky="ew")
 
     # ---------- Purchase Date (Entry, YYYY-MM-DD or blank) ----------
-    date_partial_re = re.compile(r"^\d{0,4}(-\d{0,2}(-\d{0,2})?)?$")
-
-    def _validate_date(P: str) -> bool:
-        """Allow partial/complete YYYY-MM-DD input.
-
-        Args:
-            P: Proposed new value of the date entry widget.
-
-        Returns:
-            True if the value is an acceptable partial or full date, False otherwise.
-        """
-        # Permit deletion
-        if P == "":
-            return True
-        # Disallow anything longer than 10
-        if len(P) > 10:
-            logger.debug("_validate_date: input too long: %s", P)
-            return False
-        # Only digits and hyphens in allowed positions, with partials OK
-        result = bool(date_partial_re.fullmatch(P))
-        if not result:
-            logger.debug("_validate_date: invalid date input: %s", P)
-        return result
-
-    date_frame = ttk.Frame(charger_window)
-    date_frame.pack(fill="x", padx=10, pady=6)
-    date_frame.grid_columnconfigure(0, weight=0)
-    date_frame.grid_columnconfigure(1, weight=1)
-    ttk.Label(date_frame, text="Purchase Date (YYYY-MM-DD):").grid(row=0, column=0, sticky="w")
-    purchase_date_var = tk.StringVar()
-    ttk.Entry(date_frame, textvariable=purchase_date_var,
-              validate="key", validatecommand=(charger_window.register(_validate_date), "%P"))\
-        .grid(row=0, column=1, sticky="ew")
+    date_frame, purchase_date_var, _purchase_date_entry = build_date_entry_frame(
+        charger_window, "Purchase Date (YYYY-MM-DD):"
+    )
 
     # ---------- Order Number ----------
     order_frame = ttk.Frame(charger_window)

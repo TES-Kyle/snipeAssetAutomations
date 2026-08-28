@@ -7,6 +7,7 @@ from utilities.settings import get_settings
 from utilities.otherApiBits import *
 from utilities.api_user import get_api_key
 from utilities.tk_geometry import center_window
+from utilities.tk_date_entry import build_date_entry_frame
 from utilities.checkInOutCommon import (
     resolve_status_id,
     build_asset_tag_frame,
@@ -15,7 +16,6 @@ from utilities.checkInOutCommon import (
 )
 import tkinter as tk
 from tkinter import ttk
-from tkcalendar import DateEntry
 from tkinter import messagebox
 import requests
 from assetManagementFunctions.checkIn import checkIn
@@ -226,17 +226,11 @@ def checkoutTo(asset_tag):
     # More parameters here #######
     # Consider adding "checkout to", "notes" and "status" options later
 
-    # Purchase Date Frame
-    date_frame = tk.Frame(checkout_window)
-    date_frame.pack(fill='x', padx=10, pady=5)
-    date_label = tk.Label(date_frame, text="Expected Check-In:")
-    date_label.pack(side='left')
-
-    date_var = tk.StringVar()
-    date_entry = DateEntry(date_frame, textvariable=date_var, date_pattern='yyyy-mm-dd')
-    date_var.set('')
-
-    date_entry.pack(side='left', expand=True, fill='x')
+    # Expected Check-In date -- keystroke-validated plain Entry (same pattern
+    # as makeCharger.py's Purchase Date field) rather than tkcalendar.DateEntry,
+    # whose popup positioning was unreliable across multiple monitors/desktops
+    # and whose field couldn't reliably be cleared.
+    date_frame, date_var, date_entry = build_date_entry_frame(checkout_window, "Expected Check-In (YYYY-MM-DD):")
 
     # Submit button
     submit_button = tk.Button(checkout_window, text="Submit", command=submit)

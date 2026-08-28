@@ -51,6 +51,7 @@ class AutoCompleteEntry(ttk.Frame):
         self._selected = None
         self._change_cbs = []
         self._hover_open = False
+        self._loading = False
 
         # Popup with listbox (no scrollbar)
         self.popup = tk.Toplevel(self)
@@ -126,6 +127,38 @@ class AutoCompleteEntry(ttk.Frame):
         logger.debug("AutoCompleteEntry.bind_change: registering callback %s", callback)
         if callable(callback):
             self._change_cbs.append(callback)
+
+    def set_loading(self, is_loading: bool, text: str = "loading…"):
+        """Show or clear a disabled grey loading placeholder in the entry.
+
+        Common pattern for options populated from a background thread:
+        show this while the fetch is in flight, then clear it once
+        set_options() has real data. Callers can check is_loading() to
+        block submission while it's still showing.
+
+        Args:
+            is_loading: True to show the placeholder and disable typing;
+                False to clear it, restore normal styling, and re-enable.
+            text: Placeholder text to show while is_loading is True.
+        """
+        logger.debug("AutoCompleteEntry.set_loading: is_loading=%s text=%s", is_loading, text)
+        self._loading = is_loading
+        try:
+            if is_loading:
+                self.entry.configure(foreground="#666")
+                self.entry.delete(0, tk.END)
+                self.entry.insert(0, text)
+                self.entry.state(["disabled"])
+            else:
+                self.entry.state(["!disabled"])
+                self.entry.delete(0, tk.END)
+                self.entry.configure(foreground="black")
+        except Exception:
+            pass
+
+    def is_loading(self) -> bool:
+        """Return True while the loading placeholder is showing."""
+        return self._loading
 
     def set_selected_by_label(self, label: str):
         """Programmatically set entry + selected option by exact label match.

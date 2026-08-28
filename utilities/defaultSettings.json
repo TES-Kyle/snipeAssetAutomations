@@ -63,5 +63,12 @@
   "jamfPrestageStrictRemovalGuard": "1",
   "jamfPrestageDeleteAfterRemove": "1",
   "jamfPrestageDebugVerbose": "1",
-  "assetTagRegex": "^\\d{4,5}$"
+  "assetTagRegex": "^\\d{4,5}$",
+  "loanCheckoutAllowedCategoryIDs": "24",
+  "loanCheckoutStatusId": "31",
+  "loanCheckoutSemesterCutoffDates": "07-15;12-27",
+  "loanCheckoutMaxBeforeOverride": "3",
+  "loanCheckoutReasonList": "repair:Repair:1:off;left_home:Left at home:0:0;lost:Lost (maybe permanent):0:7;other:Other:0:",
+  "loanCheckoutCcParentDefaultSecond": "0",
+  "loanCheckoutCcParentDefaultThird": "1"
 }

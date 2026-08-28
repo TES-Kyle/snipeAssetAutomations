@@ -593,6 +593,62 @@ Trinity Episcopal School IT Department
 """
 
 
+def loan_checkout_warning_second(full_name, reason_label, expected_checkin=None):
+    """Return a warning notice for a person's 2nd unexcused loaner checkout since the last cutoff.
+
+    Args:
+        full_name: The person's full name (or display label) to embed in the message.
+        reason_label: The reason text given for this checkout.
+        expected_checkin: Optional expected check-in date string (YYYY-MM-DD).
+
+    Returns:
+        Multi-line string containing the formatted warning notice.
+    """
+    logger.debug("loan_checkout_warning_second: full_name=%s reason_label=%s", full_name, reason_label)
+    checkin_line = f"\nThe device is expected back by {expected_checkin}." if expected_checkin else ""
+    return f"""Hello,
+
+This is a notice that {full_name} has checked out a loaner computer for the 2nd time this semester.
+
+Reason given: {reason_label}{checkin_line}
+
+We are limiting loan computers to 3 per semester because repeated loaner checkouts can be disruptive. Please make sure you bring your own computer to school when possible.
+
+Thank you for your attention.
+
+Sincerely,
+Trinity Episcopal School IT Department
+"""
+
+
+def loan_checkout_warning_third(full_name, reason_label, expected_checkin=None):
+    """Return a warning notice for a person's 3rd (or later) unexcused loaner checkout since the last cutoff.
+
+    Args:
+        full_name: The person's full name (or display label) to embed in the message.
+        reason_label: The reason text given for this checkout.
+        expected_checkin: Optional expected check-in date string (YYYY-MM-DD).
+
+    Returns:
+        Multi-line string containing the formatted warning notice.
+    """
+    logger.debug("loan_checkout_warning_third: full_name=%s reason_label=%s", full_name, reason_label)
+    checkin_line = f"\nThe device is expected back by {expected_checkin}." if expected_checkin else ""
+    return f"""Hello,
+
+This is a notice that {full_name} has checked out a loaner computer for the 3rd (or more) time this semester.
+
+Reason given: {reason_label}{checkin_line}
+
+This is at or beyond the maximum number of loaner checkouts allowed without additional consideration. All further loan checkouts this semester are subject to review. We have a limited stock of loan computers available and will prioritize other students if stock is low.
+
+Thank you for your attention.
+
+Sincerely,
+Trinity Episcopal School IT Department
+"""
+
+
 # ---------------------------------------------------------------------
 # Helper: remove_fine_warning and is_email
 # ---------------------------------------------------------------------

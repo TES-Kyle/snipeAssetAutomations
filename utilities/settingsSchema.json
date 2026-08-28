@@ -415,6 +415,48 @@
           "description": "Regex used to validate asset tag input (e.g., ^\\d{4,5}$)."
         }
       ]
+    },
+    {
+      "name": "Loan Checkout",
+      "description": "Loaner computer checkout workflow: eligible categories/status, semester cutoffs, and reason list.",
+      "collapsed": true,
+      "items": [
+        {
+          "key": "loanCheckoutAllowedCategoryIDs",
+          "label": "Allowed Category IDs",
+          "description": "Semicolon-separated category IDs eligible for loaner checkout. Blank disables the device-type check."
+        },
+        {
+          "key": "loanCheckoutStatusId",
+          "label": "Loaner Status ID",
+          "description": "Status ID that marks a device as an available loaner. Blank disables the status check."
+        },
+        {
+          "key": "loanCheckoutSemesterCutoffDates",
+          "label": "Semester Cutoff Dates",
+          "description": "Semicolon-separated recurring MM-DD (or MM/DD) checkpoints, no year, e.g. a date mid-winter-break and a date mid-summer-break. Checkouts are counted since whichever checkpoint most recently occurred -- never needs updating year to year."
+        },
+        {
+          "key": "loanCheckoutMaxBeforeOverride",
+          "label": "Max Checkouts Before Override",
+          "description": "Unexcused non-repair checkouts allowed per period before requiring an override to proceed. Integer."
+        },
+        {
+          "key": "loanCheckoutReasonList",
+          "label": "Reason List",
+          "description": "Semicolon-separated reasons as key:Label:repair(0/1):dueDays. repair only sets the 'Count against loan limit' checkbox's default (off for repair, on otherwise) and disables the check-in date field for that reason -- staff can still override the checkbox per checkout. dueDays controls the check-in date field: blank = manual entry, an integer = defaults to today+N (still editable), 'off' = field not applicable (disabled), e.g. for repairs. Do not use ':' or ';' inside a label."
+        },
+        {
+          "key": "loanCheckoutCcParentDefaultSecond",
+          "label": "CC Parent Default (2nd Checkout)",
+          "description": "1 to default the parent-CC checkbox on for the 2nd-checkout warning email, 0 for off."
+        },
+        {
+          "key": "loanCheckoutCcParentDefaultThird",
+          "label": "CC Parent Default (3rd Checkout)",
+          "description": "1 to default the parent-CC checkbox on for the 3rd/at-max-checkout warning email, 0 for off."
+        }
+      ]
     }
   ]
 }

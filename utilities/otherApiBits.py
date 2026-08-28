@@ -15,6 +15,7 @@ import tkinter as tk
 from tkinter import font as tkfont, messagebox, ttk
 
 from utilities import Key
+from utilities.api_retry import call_with_retry
 from utilities.api_user import get_api_headers
 from utilities.logging_utils import configure_logging
 from utilities.settings import get_settings
@@ -430,6 +431,60 @@ def getLatestCheckinName(asset_id, email=False, username=False):
         return activity_data['rows'][0]['target']['name']
     except (KeyError, IndexError):
         return None
+
+
+def append_note(existing_notes_raw, new_note):
+    """Append new_note to existing notes (rstripped), or return new_note alone if there were none.
+
+    Snipe-IT has no atomic "append note" endpoint for any record type, so
+    every caller that maintains a running log in a notes field builds the
+    full replacement text with this helper before PUTting it back via
+    put_notes_with_retry(). Shared by dropOff.py (asset notes) and
+    loanCheckout.py (user notes).
+
+    Args:
+        existing_notes_raw: Current notes value from the API (may be None/empty).
+        new_note: Note text to append.
+
+    Returns:
+        Combined notes string.
+    """
+    existing = (existing_notes_raw or "").rstrip()
+    return (existing + "\n" + new_note) if existing else new_note
+
+
+def put_notes_with_retry(record_kind: str, record_id, new_notes: str) -> bool:
+    """Update just the notes field of a Snipe-IT hardware or user record, with Retry/Cancel.
+
+    Uses PATCH rather than PUT: Snipe-IT's PUT endpoints validate as a full
+    resource replace (e.g. /users/{id} rejects a notes-only PUT because
+    first_name/username are "required"), while its PATCH endpoints are
+    documented as true partial updates -- send only the field(s) you want
+    to change. See https://snipe-it.readme.io/reference/users-3 and
+    https://snipe-it.readme.io/reference/hardware-partial-update.
+
+    Args:
+        record_kind: Snipe-IT API path segment for the record type, e.g.
+            "hardware" or "users".
+        record_id: Numeric Snipe-IT record ID.
+        new_notes: Full replacement notes text to write (build it with
+            append_note() first if you're adding to existing notes).
+
+    Returns:
+        True on success, False if the user cancels after repeated failures.
+    """
+    configure_logging()
+    url = Key.API_URL_Base + f"{record_kind}/" + str(record_id)
+    payload = {"notes": new_notes}
+    # Deliberately no is_success override here -- use call_with_retry's
+    # default_is_success, which also rejects Snipe-IT's "HTTP 200 but body
+    # says status: error" responses (e.g. a permissions/validation error on
+    # this specific record type) instead of treating them as success.
+    result = call_with_retry(
+        f"Update {record_kind} {record_id} notes",
+        lambda: requests.patch(url, json=payload, headers=get_headers(), timeout=20),
+    )
+    return result is not None
 
 
 def _get_paged(url: str, headers: dict | None = None, limit: int = 500, extra_params: str = ""):

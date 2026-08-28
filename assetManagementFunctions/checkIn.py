@@ -76,17 +76,22 @@ def checkIn(asset_tag, checkOutOrigin=None):
         checkin_window.destroy()
         return f"Check-in complete for {asset_number.get()}."
 
-    def flash_window(window, duration=3000, interval=500):
-        """Flash the window background to draw attention.
+    def flash_widget(widget, duration=3000, interval=500):
+        """Flash a single widget's background to draw attention.
+
+        Flashes only the given widget (not the whole window) so the rest of
+        the window's frames/buttons -- which never had a matching bg set --
+        don't show up as a mismatched patchwork alongside the flash.
 
         Args:
-            window: Tk widget to flash.
+            widget: Tk widget to flash.
             duration: Total duration in milliseconds.
             interval: Toggle interval in milliseconds.
         """
-        logger.debug("flash_window: starting flash duration=%s interval=%s", duration, interval)
+        logger.debug("flash_widget: starting flash duration=%s interval=%s", duration, interval)
         start_time = time.time() * 1000  # current time in ms
-        colors = itertools.cycle(["yellow", "white"])  # Alternate colors
+        original_bg = widget.cget("bg")
+        colors = itertools.cycle(["yellow", original_bg])  # Alternate with the widget's own original color.
         def toggle_color():
             """Toggle the flash color until the duration elapses."""
             elapsed = (time.time() * 1000) - start_time
@@ -95,16 +100,16 @@ def checkIn(asset_tag, checkOutOrigin=None):
                 # Change the background color
                 new_color = next(colors)
                 logger.debug("toggle_color: setting bg to %s", new_color)
-                window.configure(bg=new_color)
+                widget.configure(bg=new_color)
                 # Schedule another toggle
-                window.after(interval, toggle_color)
+                widget.after(interval, toggle_color)
             else:
-                # Reset to original color when done
-                logger.debug("toggle_color: flash complete, resetting bg")
-                window.configure(bg="SystemButtonFace")  # or whatever the original color was
+                # Reset to the widget's original color when done
+                logger.debug("toggle_color: flash complete, resetting bg to %s", original_bg)
+                widget.configure(bg=original_bg)
 
         toggle_color()
-    
+
 
     logger.debug("checkIn: creating check-in window for %s", asset_tag)
     checkin_window = tk.Toplevel()
@@ -112,10 +117,13 @@ def checkIn(asset_tag, checkOutOrigin=None):
     var_list, assetData = getAssetInfo(asset_tag)
     logger.debug("checkIn: asset fetched id=%s name=%s", assetData.get("id"), assetData.get("name"))
 
-    checkin_window.geometry('500x150')
+    # Device info pane so staff can see what they're about to check in.
+    info_frame, _info_check_vars = build_asset_info_frame(checkin_window, var_list)
+    info_frame.pack(fill='x', padx=10, pady=(10, 5))
+
     if checkOutOrigin is not None:
         logger.debug("checkIn: checkOutOrigin set, showing already-checked-in warning")
-        w = tk.Label(checkin_window, text="THIS ASSET IS STILL CHECKED IN.")
+        w = tk.Label(checkin_window, text="THIS ASSET IS STILL CHECKED IN.\nClick Check In below to check it in first.")
         w.pack()
 
 
@@ -130,8 +138,10 @@ def checkIn(asset_tag, checkOutOrigin=None):
     # More parameters here #######
     # Consider adding "checkout to", "notes" and "status" options later
 
-    # Submit button
-    submit_button = tk.Button(checkin_window, text="Submit", command=submit)
+    # Submit button -- labeled "Check In" when opened from the "still
+    # checked in" redirect so it's clear what this smaller window does.
+    submit_button_text = "Check In" if checkOutOrigin is not None else "Submit"
+    submit_button = tk.Button(checkin_window, text=submit_button_text, command=submit)
     submit_button.pack(pady=10)
 
     # Soft Message Frame
@@ -141,7 +151,7 @@ def checkIn(asset_tag, checkOutOrigin=None):
     center_window(checkin_window)
     
     if checkOutOrigin is not None:
-        flash_window(checkin_window, duration=3000, interval=500)
+        flash_widget(w, duration=3000, interval=500)
 
 
     return f"Check-in window opened for {asset_tag}. Submit to complete."

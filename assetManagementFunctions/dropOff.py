@@ -182,6 +182,9 @@ def _get_asset_by_tag_with_retry(asset_tag: str):
 def _put_asset_notes_with_retry(asset_id: str, new_notes: str):
     """Update only the notes field of a Snipe-IT asset with Retry/Cancel.
 
+    Thin wrapper over otherApiBits.put_notes_with_retry (shared with the
+    loan checkout module, which does the same PUT against /users instead).
+
     Args:
         asset_id: Numeric Snipe-IT asset ID as a string.
         new_notes: Full replacement notes text to write.
@@ -189,15 +192,7 @@ def _put_asset_notes_with_retry(asset_id: str, new_notes: str):
     Returns:
         True on success, False if the user cancels after repeated failures.
     """
-    configure_logging()
-    url = Key.API_URL_Base + "hardware/" + str(asset_id)
-    payload = {"notes": new_notes}
-    result = call_with_retry(
-        f"Update tracker notes for asset {asset_id}",
-        lambda: requests.put(url, json=payload, headers=get_headers(), timeout=20),
-        is_success=lambda r: 200 <= r.status_code < 300,
-    )
-    return result is not None
+    return put_notes_with_retry("hardware", asset_id, new_notes)
 
 # ----------------------------
 # State (parse/format/validate) in tracker asset Notes
@@ -552,12 +547,6 @@ def _update_asset_status_and_notes_with_retry(asset_id, asset_tag, status_id, mo
     return _update_asset_fields_with_retry(asset_id, asset_tag, status_id, model_id, new_notes)
 
 
-def _append_note(existing_notes_raw, new_note):
-    """Append new_note to existing notes (rstripped), or return new_note alone if there were none."""
-    existing = (existing_notes_raw or "").rstrip()
-    return (existing + "\n" + new_note) if existing else new_note
-
-
 def _process_secondary_asset(tag, main_asset_tag, note_template, status_id, dialog_title, fetch_fail_prefix=""):
     """Fetch, note-append, checkin, and status-update a lost/charger asset during drop-off.
 
@@ -576,7 +565,7 @@ def _process_secondary_asset(tag, main_asset_tag, note_template, status_id, dial
         return
     asset_id = str(data["id"])
     model_id = (data.get("model") or {}).get("id")
-    notes = _append_note(data.get("notes"), note_template.format(asset_tag=main_asset_tag))
+    notes = append_note(data.get("notes"), note_template.format(asset_tag=main_asset_tag))
     # Check in first (non-fatal if already checked in), then set status + note.
     _checkin_asset_with_retry(asset_id)
     _update_asset_status_and_notes_with_retry(asset_id, tag, status_id, model_id, notes)
@@ -851,7 +840,7 @@ def dropOff(asset_tag):
             noun = "Asset" if len(lost_tags) == 1 else "Assets"
             note_parts.append(f"{noun} {tag_list} {verb} marked lost during dropoff.")
         device_note = "\n".join(note_parts)
-        full_device_notes = _append_note(assetData.get("notes"), device_note)
+        full_device_notes = append_note(assetData.get("notes"), device_note)
 
         # Update the actual device asset with Retry/Cancel
         if not _update_asset_with_retry(
