@@ -4,6 +4,7 @@ import logging
 
 from utilities.logging_utils import configure_logging
 from utilities.otherApiBits import *
+from utilities import optionsCache
 from utilities.tk_geometry import center_window
 from utilities.checkInOutCommon import (
     resolve_status_id,
@@ -43,8 +44,14 @@ def checkIn(asset_tag, checkOutOrigin=None):
         """Perform the check-in API call and close the window."""
         logger.debug("submit: checking in asset_tag=%s", asset_tag)
 
+        # Confirm the selected status is still valid before resolving it --
+        # catches a value picked before a live-refresh dropped it.
+        if not optionsCache.revalidate_for_submit("status", status_ac):
+            messagebox.showerror("Outdated Selection", "The selected Status is no longer available. Please pick again.")
+            return
+
         # Resolve the selected status label into an ID.
-        statusID = resolve_status_id(url, status_var.get())
+        statusID = resolve_status_id(url, status_ac.get())
         logger.debug("submit: resolved statusID=%s for %s", statusID, asset_tag)
 
         # Block submission if the status list did not resolve to an ID.
@@ -133,7 +140,7 @@ def checkIn(asset_tag, checkOutOrigin=None):
 
     # Status Frame
     current_status_name = assetData["status_label"]["name"]
-    status_frame, status_var, status_combobox = build_status_picker_frame(checkin_window, url, current_status_name)
+    status_frame, status_ac = build_status_picker_frame(checkin_window, current_status_name)
 
     # More parameters here #######
     # Consider adding "checkout to", "notes" and "status" options later

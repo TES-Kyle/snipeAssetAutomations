@@ -3,9 +3,10 @@
 import logging
 
 from utilities.logging_utils import configure_logging
-from utilities.settings import get_settings
 from utilities.otherApiBits import *
+from utilities import optionsCache
 from utilities.api_user import get_api_key
+from utilities.autocomplete import AutoCompleteEntry
 from utilities.tk_geometry import center_window
 from utilities.tk_date_entry import build_date_entry_frame
 from utilities.checkInOutCommon import (
@@ -15,14 +16,10 @@ from utilities.checkInOutCommon import (
     build_soft_message_frame,
 )
 import tkinter as tk
-from tkinter import ttk
 from tkinter import messagebox
 import requests
 from assetManagementFunctions.checkIn import checkIn
-import threading
 
-debounce_timer = None
-user_cache = {}
 logger = logging.getLogger(__name__)
 
 def checkoutTo(asset_tag):
@@ -57,41 +54,44 @@ def checkoutTo(asset_tag):
 
         logger.debug("Proceeding with checkout for %s", asset_tag)
 
+        # Confirm selections are still valid before resolving them --
+        # catches a value picked before a live-refresh dropped it.
+        if not optionsCache.revalidate_for_submit("status", status_ac):
+            messagebox.showerror("Outdated Selection", "The selected Status is no longer available. Please pick again.")
+            return
+        if not optionsCache.revalidate_for_submit("assignee", checkout_to_ac, transform=optionsCache.filter_to_users):
+            messagebox.showerror("Outdated Selection", "The selected person is no longer available. Please pick again.")
+            return
+
         # Resolve status/user selections and build the payload.
-        statusID = resolve_status_id(url, status_var.get())
+        statusID = resolve_status_id(url, status_ac.get())
         expectedCheckIn = date_var.get()
 
-        # Look up the user selection by search text.
-        userID = fetch_users(checkout_to_var.get())
-        if len(userID) == 0:
-            messagebox.showerror("Error", "No matching users found")
-            return
-        if len(userID) > 1:
-            messagebox.showerror("Error", "Multiple matching users")
+        selected_user = checkout_to_ac.get_selected()
+        if selected_user is None:
+            messagebox.showerror("Error", "Pick a person to check the device out to.")
             return
 
         if not statusID:
             messagebox.showerror("Error", "Status label is required")
             return
 
-        # Build the checkout payload when a single user is resolved.
-        if len(userID) == 1:
-            userID = userID[list(userID.keys())[0]]
-            logger.info(
-                "Checkout target resolved for %s: user_id=%s status=%s expected_checkin=%s",
-                asset_tag,
-                userID,
-                statusID,
-                expectedCheckIn,
-            )
+        userID = selected_user["id"]
+        logger.info(
+            "Checkout target resolved for %s: user_id=%s status=%s expected_checkin=%s",
+            asset_tag,
+            userID,
+            statusID,
+            expectedCheckIn,
+        )
 
-            payload = {
-                "checkout_to_type": "user",
-                "assigned_user": userID,
-                "status_id": statusID,
-                "expected_checkin": expectedCheckIn if expectedCheckIn else None
-            }
-            logger.debug("Checkout payload for %s: %s", asset_tag, payload)
+        payload = {
+            "checkout_to_type": "user",
+            "assigned_user": userID,
+            "status_id": statusID,
+            "expected_checkin": expectedCheckIn if expectedCheckIn else None
+        }
+        logger.debug("Checkout payload for %s: %s", asset_tag, payload)
 
         # Perform checkout request and handle errors.
         response2 = requests.post(
@@ -109,89 +109,6 @@ def checkoutTo(asset_tag):
         checkout_window.destroy()
         return f"Checkout complete for {asset_number.get()} (user {userID})."
 
-    def fetch_users(query):
-        """Fetch a list of users based on a search query.
-
-        Args:
-            query: Search query for the users endpoint.
-
-        Returns:
-            Dict of {user_name: user_id} or empty dict on failure.
-        """
-        settings = get_settings()
-        try:
-            limit = int(settings.get("userSearchLimit", 5))
-        except Exception:
-            limit = 5
-
-        # Query the Snipe-IT users endpoint with a limit.
-        response = requests.get(
-            url + f"/users?search={query}&limit={limit}",
-            headers=get_headers(),
-        )
-
-        # Return empty results on error.
-        if response.status_code != 200:
-            logger.error("User lookup failed for %s: %s", query, response.text)
-            return []
-
-        data = response.json()
-        users = {user['name']: user['id'] for user in data['rows']}
-        return users
-
-    def update_user_list(event):
-        """Debounce user lookup as the entry text changes."""
-        global debounce_timer
-        # Ensure API user prompt (if needed) happens on the UI thread.
-        get_api_key()
-        query = checkout_to_var.get()
-        logger.debug("update_user_list: query=%s", query)
-
-        # Debounce keystrokes to avoid spamming the API.
-        if debounce_timer:
-            debounce_timer.cancel()
-
-        if len(query) < 1:
-            logger.debug("update_user_list: query too short, skipping")
-            return
-
-        logger.debug("update_user_list: scheduling async fetch for query=%s", query)
-        debounce_timer = threading.Timer(0.3, lambda: fetch_users_async(query))
-        debounce_timer.start()
-
-    def fetch_users_async(query):
-        """Fetch user matches asynchronously and update the combobox.
-
-        Args:
-            query: Search query to look up users.
-        """
-        logger.debug("fetch_users_async: query=%s", query)
-        # Use cached results when available.
-        if query in user_cache:
-            logger.debug("fetch_users_async: cache hit for query=%s", query)
-            user_combobox['values'] = list(user_cache[query].keys())
-            return
-
-        def fetch():
-            """Fetch and cache user results for the query."""
-            logger.debug("fetch: fetching users for query=%s in background", query)
-            users = fetch_users(query)
-            if users:
-                logger.debug("fetch: caching %s users for query=%s", len(users), query)
-                user_cache[query] = users
-                user_combobox['values'] = list(users.keys())
-
-        threading.Thread(target=fetch).start()
-
-    def on_tab_complete(event):
-        """Autocomplete the first user option on Tab."""
-        logger.debug("on_tab_complete: Tab pressed for user combobox")
-        values = user_combobox['values']
-        if values:
-            user_combobox.set(values[0])
-            logger.debug("on_tab_complete: set to first user option: %s", values[0])
-        return "break"
-
     logger.debug("checkoutTo: creating checkout window for %s", asset_tag)
     checkout_window = tk.Toplevel()
 
@@ -208,7 +125,7 @@ def checkoutTo(asset_tag):
 
     # Status Frame
     current_status_name = assetData["status_label"]["name"]
-    status_frame, status_var, status_combobox = build_status_picker_frame(checkout_window, url, current_status_name)
+    status_frame, status_ac = build_status_picker_frame(checkout_window, current_status_name)
 
     # Checkout To Frame
     checkout_to_frame = tk.Frame(checkout_window)
@@ -216,11 +133,12 @@ def checkoutTo(asset_tag):
     checkout_to_label = tk.Label(checkout_to_frame, text="Checkout To:")
     checkout_to_label.pack(side='left')
 
-    checkout_to_var = tk.StringVar()
-    user_combobox = ttk.Combobox(checkout_to_frame, textvariable=checkout_to_var)
-    user_combobox.pack(side='left', expand=True, fill='x')
-    user_combobox.bind('<KeyRelease>', update_user_list)
-    user_combobox.bind('<Tab>', on_tab_complete)
+    checkout_to_ac = AutoCompleteEntry(checkout_to_frame, width=30)
+    checkout_to_ac.pack(side='left', expand=True, fill='x')
+    optionsCache.load_widget(checkout_window, "assignee", checkout_to_ac, transform=optionsCache.filter_to_users)
+    optionsCache.start_live_refresh(
+        checkout_window, "assignee", lambda opts: checkout_to_ac.set_options(optionsCache.filter_to_users(opts)),
+    )
 
 
     # More parameters here #######

@@ -57,6 +57,7 @@
   "statusSearchLimit": "30",
   "statusSearchLimitFiltered": "5",
   "userSearchLimit": "5",
+  "optionsCacheTtlSeconds": "300",
   "jamfPrestageDryRun": "0",
   "jamfPrestageVerifySSL": "1",
   "jamfPrestageRateLimitDelay": "0.35",

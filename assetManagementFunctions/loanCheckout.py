@@ -49,12 +49,12 @@ from utilities.logging_utils import configure_logging
 from utilities.settings import get_settings
 from utilities.otherApiBits import (
     getAssetInfo,
-    getAllAssigneeOptions,
     get_headers,
     build_asset_info_frame,
     append_note,
     put_notes_with_retry,
 )
+from utilities import optionsCache
 from utilities.Key import API_URL_Base
 from utilities.api_user import get_api_key
 from utilities.api_retry import call_with_retry
@@ -807,6 +807,17 @@ def loanCheckout(asset_tag):
             messagebox.showerror("Error", "Pick a person to check the device out to.")
             return
 
+        # Confirm the picked person still exists before trusting it -- a
+        # form filled out right as the window opened could otherwise use
+        # data that's been cached since long before this window existed.
+        # (selected_user is only refreshed when the user interacts with
+        # person_ac, so a live-refresh silently invalidating the selection
+        # in the background wouldn't otherwise be caught here.)
+        if not optionsCache.revalidate_for_submit("assignee", person_ac, transform=optionsCache.filter_to_users):
+            selected_user.update({"id": None, "email": "", "name": ""})
+            messagebox.showerror("Outdated Selection", "The selected person is no longer available. Please pick again.")
+            return
+
         reason = _resolved_reason()
         if reason is None:
             if reason_by_label.get(reason_var.get(), {}).get("key") == "other":
@@ -940,22 +951,6 @@ def loanCheckout(asset_tag):
         logger.info("submit: loan checkout complete for %s -> user=%s", asset_tag, selected_user["name"])
         checkout_window.destroy()
 
-    def _load_person_options():
-        """Fetch assignable users in the background and populate the picker (people only, no locations)."""
-        try:
-            users = [o for o in (getAllAssigneeOptions() or []) if o.get("type") == "user"]
-            logger.debug("_load_person_options: loaded %s user options", len(users))
-        except Exception:
-            logger.exception("_load_person_options: failed to load assignee options")
-            users = []
-
-        def apply():
-            """Clear the loading placeholder and populate the picker (Tk thread)."""
-            person_ac.set_loading(False)
-            person_ac.set_options(users)
-
-        checkout_window.after(0, apply)
-
     # ---- Build the window -----------------------------------------------
     logger.debug("loanCheckout: creating checkout window for %s", asset_tag)
     checkout_window = tk.Toplevel()
@@ -1005,9 +1000,16 @@ def loanCheckout(asset_tag):
     tk.Label(person_frame, text="Checkout To:").pack(side="left")
     person_ac = AutoCompleteEntry(person_frame, width=30)
     person_ac.pack(side="left", expand=True, fill="x")
-    person_ac.set_loading(True)
     person_ac.bind_change(on_person_change)
-    threading.Thread(target=_load_person_options, daemon=True).start()
+    # Stale-while-revalidate load: a "loading…" flash only shows the first
+    # time "assignee" is ever loaded in this app run, not on every window
+    # open. While this window stays open and focused, live-refresh then
+    # quietly keeps it current with Snipe-IT instead of requiring a reopen
+    # to see changes (e.g. a newly-added user) made elsewhere.
+    optionsCache.load_widget(checkout_window, "assignee", person_ac, transform=optionsCache.filter_to_users)
+    optionsCache.start_live_refresh(
+        checkout_window, "assignee", lambda opts: person_ac.set_options(optionsCache.filter_to_users(opts)),
+    )
 
     # Live-ish checkout-count display for the selected person -- normal-
     # weight descriptive text, with just the number itself bold/enlarged so

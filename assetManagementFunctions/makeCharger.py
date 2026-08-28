@@ -2,13 +2,9 @@
 
 # makeCharger.py (full-width layout + YYYY-MM-DD entry + inline "loading…" placeholders)
 import logging
-from utilities.otherApiBits import (
-    getAssetInfo,
-    getAllStatusOptions,
-    getAllAssigneeOptions,
-    getAllModelOptions,
-)
+from utilities.otherApiBits import getAssetInfo
 from utilities.autocomplete import AutoCompleteEntry
+from utilities import optionsCache
 from utilities.Key import API_URL_Base
 from utilities.api_user import get_api_headers, get_api_key
 from utilities.logging_utils import configure_logging
@@ -262,68 +258,16 @@ def makeCharger(asset_tag):
             return True
         return "charger" in label
 
-    # ------------------------ async preload ------------------------
-    status_options_ready = threading.Event()
-    assignee_options_ready = threading.Event()
-    model_options_ready = threading.Event()
+    def _charger_models_only(options):
+        """Filter+sort a raw model-options list down to just charger models.
 
-    status_options_data = []
-    assignee_options_data = []
-    model_options_data = []
+        Args:
+            options: Raw model options from optionsCache.
 
-    def _apply_preloaded_options_to_widgets():
-        """Push preloaded options into autocomplete widgets."""
-        # Runs on Tk thread
-        logger.debug("_apply_preloaded_options_to_widgets: status_ready=%s assignee_ready=%s model_ready=%s",
-                     status_options_ready.is_set(), assignee_options_ready.is_set(), model_options_ready.is_set())
-        if status_options_ready.is_set():
-            logger.debug("_apply_preloaded_options_to_widgets: applying %s status options", len(status_options_data))
-            status_ac.set_loading(False)
-            status_ac.set_options(status_options_data)
-        if assignee_options_ready.is_set():
-            logger.debug("_apply_preloaded_options_to_widgets: applying %s assignee options", len(assignee_options_data))
-            assignee_ac.set_loading(False)
-            assignee_ac.set_options(assignee_options_data)
-        if model_options_ready.is_set():
-            logger.debug("_apply_preloaded_options_to_widgets: applying %s model options", len(model_options_data))
-            model_ac.set_loading(False)
-            model_ac.set_options(model_options_data)
-
-    def _preload_options_thread():
-        """Fetch options in the background and notify the UI."""
-        nonlocal status_options_data, assignee_options_data, model_options_data
-        logger.debug("_preload_options_thread: starting background preload")
-        try:
-            status_options_data = getAllStatusOptions() or []
-            logger.debug("_preload_options_thread: loaded %s status options", len(status_options_data))
-        except Exception:
-            logger.exception("_preload_options_thread: failed to load status options")
-            status_options_data = []
-        status_options_ready.set()
-
-        try:
-            assignee_options_data = getAllAssigneeOptions() or []
-            logger.debug("_preload_options_thread: loaded %s assignee options", len(assignee_options_data))
-        except Exception:
-            logger.exception("_preload_options_thread: failed to load assignee options")
-            assignee_options_data = []
-        assignee_options_ready.set()
-
-        try:
-            m_opts = getAllModelOptions() or []
-            model_options_data = sorted([o for o in m_opts if _is_charger_model(o)],
-                                        key=lambda o: (o.get("label") or "").lower())
-            logger.debug("_preload_options_thread: loaded %s charger model options", len(model_options_data))
-        except Exception:
-            logger.exception("_preload_options_thread: failed to load model options")
-            model_options_data = []
-        model_options_ready.set()
-
-        try:
-            logger.debug("_preload_options_thread: scheduling UI update on Tk thread")
-            charger_window.after(0, _apply_preloaded_options_to_widgets)
-        except Exception:
-            pass
+        Returns:
+            Charger-only options, sorted by label.
+        """
+        return sorted([o for o in options if _is_charger_model(o)], key=lambda o: (o.get("label") or "").lower())
 
     # ------------------------ submit flow ------------------------
     def submit(_e=None):
@@ -367,6 +311,21 @@ def makeCharger(asset_tag):
         # Date validation (allow blank or YYYY-MM-DD)
         if purchase_date_val and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", purchase_date_val):
             messagebox.showerror("Validation", "Purchase Date must be YYYY-MM-DD or blank.")
+            return
+
+        # Confirm each picked value still exists before trusting it -- a
+        # form filled out right as the window opened could otherwise use
+        # data that's been cached since long before this window existed.
+        if not optionsCache.revalidate_for_submit("status", status_ac):
+            messagebox.showerror("Outdated Selection", "The selected Status is no longer available. Please pick again.")
+            return
+        if not optionsCache.revalidate_for_submit("model", model_ac, transform=_charger_models_only):
+            messagebox.showerror("Outdated Selection", "The selected Model is no longer available. Please pick again.")
+            return
+        if not optionsCache.revalidate_for_submit("assignee", assignee_ac):
+            messagebox.showerror(
+                "Outdated Selection", "The selected Checkout To value is no longer available. Please pick again.",
+            )
             return
 
         # Status (must be a real picked row).
@@ -558,7 +517,8 @@ def makeCharger(asset_tag):
     ttk.Label(model_frame, text="Model:").grid(row=0, column=0, sticky="w")
     model_ac = AutoCompleteEntry(model_frame, width=20)
     model_ac.grid(row=0, column=1, sticky="ew")
-    model_ac.set_loading(True)
+    # Loading state (if any is actually needed) is decided by
+    # optionsCache.load_widget() below, once every widget exists.
 
     # ---------- Status ----------
     status_frame = ttk.Frame(charger_window)
@@ -568,7 +528,6 @@ def makeCharger(asset_tag):
     ttk.Label(status_frame, text="Status:").grid(row=0, column=0, sticky="w")
     status_ac = AutoCompleteEntry(status_frame, width=20)
     status_ac.grid(row=0, column=1, sticky="ew")
-    status_ac.set_loading(True)
 
     # ---------- Assigned To (optional) ----------
     assignee_frame = ttk.Frame(charger_window)
@@ -578,7 +537,6 @@ def makeCharger(asset_tag):
     ttk.Label(assignee_frame, text="Checkout To (optional):").grid(row=0, column=0, sticky="w")
     assignee_ac = AutoCompleteEntry(assignee_frame, width=20)
     assignee_ac.grid(row=0, column=1, sticky="ew")
-    assignee_ac.set_loading(True)
 
     # ---------- Name ----------
     name_frame = ttk.Frame(charger_window)
@@ -650,6 +608,20 @@ def makeCharger(asset_tag):
     # Ensure API user prompt (if needed) happens on the main thread.
     get_api_key()
 
-    # Kick off async loads after showing window
-    threading.Thread(target=_preload_options_thread, daemon=True).start()
+    # Load each picker from the shared cache -- stale-while-revalidate, so a
+    # "loading…" flash only shows the first time this kind is ever loaded
+    # in this app run, not on every window open.
+    optionsCache.load_widget(charger_window, "status", status_ac)
+    optionsCache.load_widget(charger_window, "assignee", assignee_ac)
+    optionsCache.load_widget(charger_window, "model", model_ac, transform=_charger_models_only)
+
+    # While this window stays open and focused, quietly keep the pickers'
+    # options current with Snipe-IT instead of requiring a reopen to see
+    # changes made elsewhere.
+    optionsCache.start_live_refresh(charger_window, "status", status_ac.set_options)
+    optionsCache.start_live_refresh(charger_window, "assignee", assignee_ac.set_options)
+    optionsCache.start_live_refresh(
+        charger_window, "model", lambda opts: model_ac.set_options(_charger_models_only(opts)),
+    )
+
     return f"Make Charger window opened for {asset_tag}."

@@ -8,10 +8,11 @@ implementation instead of two copies that could drift apart.
 
 import logging
 import tkinter as tk
-from tkinter import ttk
 
 import requests
 
+from utilities import optionsCache
+from utilities.autocomplete import AutoCompleteEntry
 from utilities.otherApiBits import get_headers
 from utilities.settings import get_settings
 
@@ -109,47 +110,38 @@ def build_asset_tag_frame(parent, asset_tag, on_enter):
     return frame, asset_number, entry
 
 
-def build_status_picker_frame(parent, url, current_status_name=""):
-    """Build the 'Status:' label + autocomplete combobox row.
+def build_status_picker_frame(parent, current_status_name=""):
+    """Build the 'Status:' label + autocomplete entry row.
+
+    Backed by the shared optionsCache "status" kind (same cached/live-
+    refreshing full list used by makeCharger.py, loanCheckout.py, and
+    consisterizer.py) instead of a per-window live search on every dropdown
+    open. Loaded synchronously (cache-accelerated) so the field can be
+    pre-filled with the asset's current status immediately, matching the
+    original combobox's blocking-at-open behavior.
 
     Args:
-        parent: Tk parent widget.
-        url: Snipe-IT API base URL, used by the combobox's postcommand to
-            refresh options via fetch_statuses().
+        parent: Tk parent widget; also used as the live-refresh window.
         current_status_name: Initial status label to show.
 
     Returns:
-        (frame, status_var, status_combobox).
+        (frame, status_ac): status_ac is an AutoCompleteEntry -- callers
+        read its current text via status_ac.get(), same as status_var.get()
+        before.
     """
     frame = tk.Frame(parent)
     frame.pack(fill='x', padx=10, pady=5)
     label = tk.Label(frame, text="Status:")
     label.pack(side='left')
 
-    status_var = tk.StringVar(value=current_status_name)
+    status_ac = AutoCompleteEntry(frame)
+    status_ac.pack(side='left', expand=True, fill='x')
+    status_ac.set_options(optionsCache.get_options("status"))
+    status_ac.set_selected_by_label(current_status_name)
 
-    def update_status_list():
-        """Populate the status combobox with API results."""
-        logger.debug("update_status_list: refreshing status options")
-        statuses = fetch_statuses(url)
-        logger.debug("Status options: %s", statuses)
-        if statuses:
-            status_combobox['values'] = list(statuses.keys())
+    optionsCache.start_live_refresh(parent, "status", status_ac.set_options)
 
-    def on_status_tab_complete(event):
-        """Autocomplete the first status option on Tab."""
-        logger.debug("on_status_tab_complete: Tab pressed for status combobox")
-        values = status_combobox['values']
-        if values:
-            status_combobox.set(values[0])
-            logger.debug("on_status_tab_complete: set to first status option: %s", values[0])
-        return "break"
-
-    status_combobox = ttk.Combobox(frame, textvariable=status_var, postcommand=update_status_list)
-    status_combobox.pack(side='left', expand=True, fill='x')
-    status_combobox.bind('<Tab>', on_status_tab_complete)
-
-    return frame, status_var, status_combobox
+    return frame, status_ac
 
 
 def build_soft_message_frame(parent):

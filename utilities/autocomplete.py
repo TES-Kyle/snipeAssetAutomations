@@ -12,6 +12,27 @@ _IGNORE_KEYS = {
     "Up", "Down", "Left", "Right", "Home", "End", "Prior", "Next", "Insert",
 }
 
+
+def _label_matches_any_option(text, options):
+    """Return True if text exactly matches some option's label.
+
+    Pure/testable core of AutoCompleteEntry's require_match styling: a
+    field is only ever flagged invalid because of this check, kept
+    separate from the widget so it doesn't need a live Tk display to test.
+
+    Args:
+        text: Candidate text (should already be stripped by the caller).
+        options: Iterable of option dicts with "label" keys.
+
+    Returns:
+        True if any option's label equals text exactly, or if text is empty
+        (an empty field isn't a mismatched value, just an absent one).
+    """
+    if not text:
+        return True
+    return any(opt.get("label") == text for opt in options)
+
+
 class AutoCompleteEntry(ttk.Frame):
     """Reusable autocomplete Entry with popup Listbox (auto-height up to 5 items).
 
@@ -32,19 +53,47 @@ class AutoCompleteEntry(ttk.Frame):
     focus leaves both the entry and popup.
     """
 
-    def __init__(self, parent, *, width=40):
+    def __init__(self, parent, *, width=40, require_match=True):
         """Initialize the entry and popup listbox widgets.
 
         Args:
             parent: Tk parent widget.
             width: Entry width in characters.
+            require_match: If True (the default -- currently true for every
+                field in the app), the entry shows a red/invalid style
+                whenever it holds non-blank text that doesn't exactly match
+                a current option's label -- including a previously valid
+                selection that set_options() later drops (e.g. because it
+                was deleted in Snipe-IT and a refresh no longer includes
+                it). Set False for fields that intentionally accept
+                free-text values outside the option list (e.g.
+                consisterizer's "{empty}" sentinel for clearing an
+                assignment).
         """
-        logger.debug("AutoCompleteEntry.__init__: parent=%s, width=%s", parent, width)
+        logger.debug("AutoCompleteEntry.__init__: parent=%s, width=%s, require_match=%s", parent, width, require_match)
         super().__init__(parent)
-        self.entry = ttk.Entry(self, width=width)
-        self.entry.grid(row=0, column=0, sticky="ew")
+
+        # Classic tk.Frame (not ttk) wrapping just the Entry, so the
+        # invalid-value indicator is a colored highlight border rather than
+        # a ttk style tweak: ttk's Aqua theme (macOS) silently ignores
+        # fieldbackground/bordercolor customization on ttk.Entry in
+        # practice, but a classic widget's highlightbackground/
+        # highlightthickness are drawn by Tk itself and always render.
+        # (Also avoids fighting over self.entry's own `style` option, which
+        # at least one caller -- consisterizer.py -- already uses for an
+        # unrelated highlight of its own.)
+        # Thickness is fixed from the start (not toggled) so the widget's
+        # footprint never changes size -- only the border *color* toggles,
+        # matching the background (invisible) when valid.
+        self._entry_wrap = tk.Frame(self, highlightthickness=2)
+        self._entry_wrap.grid(row=0, column=0, sticky="ew")
+        self._valid_border_color = self._entry_wrap.cget("highlightbackground")
+
+        self.entry = ttk.Entry(self._entry_wrap, width=width)
+        self.entry.pack(fill="both", expand=True)
         self.grid_columnconfigure(0, weight=1)
         self.advance_focus_on_select = True
+        self.require_match = require_match
 
         self._all_options = []   # [{"label": str, ...}, ...]
         self._matches = []       # current top matches
@@ -85,15 +134,26 @@ class AutoCompleteEntry(ttk.Frame):
         # Keep popup width aligned with entry
         self.entry.bind("<Configure>", lambda e: self._place_popup())
 
+        self._update_validity_style()
+
     # ---------- Public API ----------
     def set_options(self, options):
         """Replace the autocomplete option list.
+
+        If the currently selected option is no longer present in the new
+        list (e.g. a live-refresh dropped it), the selection is cleared --
+        get_selected() should never keep returning something that's not
+        actually in the current option list.
 
         Args:
             options: Iterable of dicts with a "label" key.
         """
         self._all_options = list(options or [])
         logger.debug("AutoCompleteEntry.set_options: %s options loaded", len(self._all_options))
+        if self._selected is not None and self._selected not in self._all_options:
+            logger.debug("AutoCompleteEntry.set_options: previously selected option no longer present; clearing")
+            self._selected = None
+        self._update_validity_style()
 
     def get(self) -> str:
         """Return the current entry text."""
@@ -220,10 +280,39 @@ class AutoCompleteEntry(ttk.Frame):
     # ---------- Internals ----------
     def _fire_change(self):
         """Invoke change callbacks with best-effort isolation."""
+        self._update_validity_style()
         # Isolate callback failures to keep the widget responsive.
         for cb in self._change_cbs:
             try: cb()
             except Exception: pass
+
+    def _update_validity_style(self):
+        """Apply/clear the invalid-value indicator based on require_match.
+
+        Runs on every text/selection change (via _fire_change) and every
+        set_options() call, so a value that was fine when picked but later
+        stops matching (a live-refresh removed it) gets flagged the moment
+        that happens -- not just at some later submit-time check.
+
+        Only touches _entry_wrap's highlight border, deliberately never
+        self.entry's own ttk `style` option: at least one caller
+        (consisterizer.py) already uses that same attribute on the same
+        widget for an unrelated highlight (its own default-mismatch
+        indicator), and fighting over one shared attribute would make
+        whichever call happened last silently win.
+        """
+        if not self.require_match:
+            return
+        text = self.entry.get().strip()
+        is_invalid = not _label_matches_any_option(text, self._all_options)
+        # Thickness is never touched here (fixed at construction) so the
+        # widget never changes size when this toggles -- only the color
+        # does, blending into the background when valid.
+        border_color = "red" if is_invalid else self._valid_border_color
+        try:
+            self._entry_wrap.configure(highlightbackground=border_color, highlightcolor=border_color)
+        except Exception:
+            logger.debug("AutoCompleteEntry._update_validity_style: failed to set border color")
 
     def _on_key(self, e):
         """Handle key release events and refresh matches."""

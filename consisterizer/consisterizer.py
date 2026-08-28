@@ -33,12 +33,8 @@ from tkinter import messagebox, ttk
 from tkinter import font as tkfont
 
 from utilities.autocomplete import AutoCompleteEntry
-from utilities.otherApiBits import (
-    getAssetInfo,
-    getAllStatusOptions,
-    getAllAssigneeOptions,
-    getAllModelOptions,
-)
+from utilities import optionsCache
+from utilities.otherApiBits import getAssetInfo
 from utilities.logging_utils import configure_logging
 from utilities.settings import get_settings
 from utilities.Key import API_URL_Base  # API creds
@@ -513,11 +509,6 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     current_map = extract_current_values(assetData)
     default_font = tkfont.nametofont("TkDefaultFont")
 
-    # Preload options once to avoid repeated API calls as the UI renders.
-    status_options = getAllStatusOptions()
-    assignee_options = getAllAssigneeOptions()
-    model_options = getAllModelOptions()
-
     def _prepend_special_option(options, label, opt_type):
         """Ensure a special sentinel label exists at the top of an autocomplete list.
 
@@ -548,13 +539,30 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             "meta": {},
         }] + options
 
-    # Inject sentinel options into each autocomplete list:
+    # Sentinel-injecting transforms, shared between the one-time preload
+    # below (for the label->id maps used at submit time) and the live
+    # AutoCompleteEntry widgets (loaded/refreshed via optionsCache further
+    # down) -- so both always agree on what "{blank}"/"{empty}" mean.
     # - status/model get {blank} (keep current; they cannot be cleared to empty)
     # - assigned_to gets both {empty} (explicit unassign) and {blank} (keep current)
-    status_options = _prepend_special_option(status_options, "{blank}", "blank")
-    model_options = _prepend_special_option(model_options, "{blank}", "blank")
-    assignee_options = _prepend_special_option(assignee_options, "{empty}", "empty")
-    assignee_options = _prepend_special_option(assignee_options, "{blank}", "blank")
+    def _status_options_transform(opts):
+        return _prepend_special_option(opts, "{blank}", "blank")
+
+    def _model_options_transform(opts):
+        return _prepend_special_option(opts, "{blank}", "blank")
+
+    def _assignee_options_transform(opts):
+        opts = _prepend_special_option(opts, "{empty}", "empty")
+        return _prepend_special_option(opts, "{blank}", "blank")
+
+    # Preload once (still synchronous/blocking at window-open, same timing
+    # as before -- but now cache-accelerated) for the label->id maps used
+    # to resolve template-expanded/typed values at submit time, further
+    # down. The interactive widgets themselves are loaded separately, async,
+    # via optionsCache.load_widget() below.
+    status_options = _status_options_transform(optionsCache.get_options("status"))
+    assignee_options = _assignee_options_transform(optionsCache.get_options("assignee"))
+    model_options = _model_options_transform(optionsCache.get_options("model"))
 
     # live value for {username} token
     runtime_username = tk.StringVar(value=current_map.get("_assigned_username", ""))
@@ -878,6 +886,19 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             recompute_all_results()
         return on_change
 
+    def _make_live_refresh_applier(widget, transform):
+        """Bind a widget/transform pair for a live-refresh callback.
+
+        Must capture both by value (via these parameters), not by closing
+        over the loop-local `ac`/transform names directly -- `ac` is
+        reassigned on every iteration of the FIELD_ORDER loop below, so a
+        plain lambda referencing it would apply every refresh to whichever
+        field happened to be built last.
+        """
+        def _apply(opts):
+            widget.set_options(transform(opts))
+        return _apply
+
     # ===== Body rows =====
     for i, key in enumerate(FIELD_ORDER):
         # Current value for this field; None becomes "" for safe comparisons.
@@ -930,7 +951,10 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
         if key == "status":
             ac = AutoCompleteEntry(grid_inner)
             ac.grid(row=i + 1, column=1, sticky="nsew", padx=6, pady=3)
-            ac.set_options(status_options)
+            optionsCache.load_widget(win, "status", ac, transform=_status_options_transform)
+            optionsCache.start_live_refresh(
+                win, "status", _make_live_refresh_applier(ac, _status_options_transform)
+            )
 
             ac_fg_default = _safe_get_fg(ac.entry, ENTRY_FG)
 
@@ -940,7 +964,10 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
         elif key == "assigned_to":
             ac = AutoCompleteEntry(grid_inner)
             ac.grid(row=i + 1, column=1, sticky="nsew", padx=6, pady=3)
-            ac.set_options(assignee_options)
+            optionsCache.load_widget(win, "assignee", ac, transform=_assignee_options_transform)
+            optionsCache.start_live_refresh(
+                win, "assignee", _make_live_refresh_applier(ac, _assignee_options_transform)
+            )
 
             ac_fg_default = _safe_get_fg(ac.entry, ENTRY_FG)
 
@@ -973,7 +1000,10 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
         elif key == "model":
             ac = AutoCompleteEntry(grid_inner)
             ac.grid(row=i + 1, column=1, sticky="nsew", padx=6, pady=3)
-            ac.set_options(model_options)
+            optionsCache.load_widget(win, "model", ac, transform=_model_options_transform)
+            optionsCache.start_live_refresh(
+                win, "model", _make_live_refresh_applier(ac, _model_options_transform)
+            )
 
             ac_fg_default = _safe_get_fg(ac.entry, ENTRY_FG)
 
@@ -2187,6 +2217,28 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             logger.debug("_submit_current_asset: validation errors=%s", errors)
             messagebox.showerror("Validation Errors", "Please fix the following:\n\n" + "\n".join(errors))
             return False, (current_map.get("asset_tag") or ""), {}
+
+        # Confirm any changed status/model/assigned_to selection is still
+        # valid before _build_patch_payload() resolves it to an ID -- catches
+        # a value picked before a live-refresh silently dropped it. Only
+        # fields that actually changed are checked, since _build_patch_payload
+        # skips unchanged fields entirely (revalidating an untouched field
+        # could block a save over a value the user never intended to submit).
+        for field_key, kind, transform in (
+            ("status", "status", _status_options_transform),
+            ("model", "model", _model_options_transform),
+            ("assigned_to", "assignee", _assignee_options_transform),
+        ):
+            if str(snapshot.get(field_key, "")) == str(rows_by_key[field_key]["current"]):
+                continue
+            ac = rows_by_key[field_key]["ac"]
+            if not optionsCache.revalidate_for_submit(kind, ac, transform=transform):
+                logger.warning("_submit_current_asset: stale selection for field=%s", field_key)
+                messagebox.showerror(
+                    "Outdated Selection",
+                    f"The selected {field_key.replace('_', ' ').title()} is no longer available. Please pick again.",
+                )
+                return False, (current_map.get("asset_tag") or ""), {}
 
         warnings = _collect_default_warnings(snapshot) if prompt_on_warnings else []
         if warnings:

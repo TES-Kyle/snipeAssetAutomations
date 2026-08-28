@@ -352,6 +352,11 @@
           "key": "userSearchLimit",
           "label": "User Search Limit",
           "description": "Max users to load for filtered search."
+        },
+        {
+          "key": "optionsCacheTtlSeconds",
+          "label": "Options Cache TTL (Seconds)",
+          "description": "How long cached status/model/assignee option lists stay fresh before refetching. Also the default live-refresh poll interval for open windows."
         }
       ]
     },
