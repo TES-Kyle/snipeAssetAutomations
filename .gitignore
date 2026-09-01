@@ -6,6 +6,7 @@ Vent/
 .DS_Store
 .idea/
 utilities/settings.json
+utilities/partialInstallManifest.json
 venv/
 .venv/
 icon.icns

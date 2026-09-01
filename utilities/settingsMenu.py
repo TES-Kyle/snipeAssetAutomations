@@ -13,6 +13,7 @@ from tkinter import font as tkfont
 from tkinter import messagebox
 
 from utilities.logging_utils import configure_logging
+from utilities.partialInstallBuilder import open_partial_install_builder
 from utilities.settings import safe_read_json, UTILITIES_DIR, SETTINGS_PATH, DEFAULTS_PATH
 from utilities.theme import get_ui_colors
 from utilities.tk_geometry import center_window
@@ -59,6 +60,15 @@ def settingsMenu():
         import datetime
         try:
             app_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))  # …/Resources/app
+
+            # For a partial install, update_in_place.command re-derives and
+            # re-applies the same trim (routing tables + Key.py) against the
+            # freshly cloned code before this app ever sees the update --
+            # see utilities/partialInstallBuilder.py's update_selection_in_place()
+            # and Blocks C2/F2 in that script. If the fresh code needs a
+            # secret this machine was never given, the script refuses the
+            # update itself (with its own dialog) rather than that logic
+            # living here too.
             meta_path = os.path.join(app_root, ".build", "meta.json")
             logger.debug("checkUpdate: meta_path=%s", meta_path)
             if not os.path.isfile(meta_path):
@@ -161,6 +171,15 @@ def settingsMenu():
         except Exception as e:
             logger.exception("make_installer_usb: unexpected error")
             messagebox.showerror("USB Installer", str(e))
+
+    def build_partial_install_usb():
+        """Open the partial-install checklist window."""
+        logger.debug("build_partial_install_usb: opening builder window")
+        try:
+            open_partial_install_builder(settings_window)
+        except Exception as e:
+            logger.exception("build_partial_install_usb: unexpected error")
+            messagebox.showerror("Partial-Install USB", str(e))
 
     def sync_key_usb():
         """Sync Key.py between the local install and a USB drive.
@@ -351,6 +370,8 @@ def settingsMenu():
     update_button.pack(side="left")
     usb_button = tk.Button(update_frame, text="Make Installer USB", command=make_installer_usb)
     usb_button.pack(side="left", padx=(10, 0))
+    partial_usb_button = tk.Button(update_frame, text="Build Partial-Install USB…", command=build_partial_install_usb)
+    partial_usb_button.pack(side="left", padx=(10, 0))
     sync_key_button = tk.Button(update_frame, text="Update Key", command=sync_key_usb)
     sync_key_button.pack(side="left", padx=(10, 0))
 

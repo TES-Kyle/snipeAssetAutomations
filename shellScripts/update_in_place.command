@@ -30,6 +30,24 @@ APPLESCRIPT
 q() { /usr/bin/python3 -c 'import shlex,sys;print(shlex.quote(sys.argv[1]))' "$1"; }
 
 ###############################################################################
+# BLOCK A2 — Detect a partial install
+###############################################################################
+# A partial install (utilities/partialInstallBuilder.py) has an
+# intentionally trimmed Key.py and intentionally cut-down routing tables.
+# Block F below copies every git-tracked file from a fresh clone straight
+# over the existing install, which would restore every routing entry
+# regardless of what was originally selected -- Block C2/F2 further down
+# re-derive and re-apply the same trim against the fresh code so that
+# temporary un-trimming never becomes visible, and Block H/H2 are adjusted
+# so they don't fight with or bypass that. PARTIAL_MANIFEST is read again
+# (unchanged throughout, since it's gitignored and Block F never touches
+# gitignored files) after Block F for the actual selection/regeneration.
+PARTIAL_MANIFEST="$APP_DIR/utilities/partialInstallManifest.json"
+IS_PARTIAL=0
+[ -f "$PARTIAL_MANIFEST" ] && IS_PARTIAL=1
+echo "IS_PARTIAL: $IS_PARTIAL"
+
+###############################################################################
 # BLOCK B — Read repo + branch from meta (require or reconstruct minimal)
 ###############################################################################
 if [ ! -f "$META" ]; then
@@ -59,6 +77,67 @@ note '"Downloading update...\n\nThis may take a minute."'
 git clone --branch "$BRANCH" --depth 1 "$REPO_URL" "$TMPDIR/repo"
 NEW_SHA="$(git -C "$TMPDIR/repo" rev-parse HEAD || echo unknown)"
 echo "NEW_SHA: $NEW_SHA"
+
+###############################################################################
+# BLOCK C2 — Partial install: re-derive the same trim against the fresh
+#            code BEFORE touching APP_DIR at all
+###############################################################################
+# Checked here, before Block D/E/F ever modify anything, so a failure
+# (fresh code needs a secret this machine doesn't have) leaves APP_DIR
+# completely untouched instead of half-updated with routing tables
+# temporarily restored to full. REGEN_DIR's contents get moved into place
+# in Block F2, after Block F's full-tree copy has landed.
+REGEN_DIR="$TMPDIR/regenerated"
+if [ "$IS_PARTIAL" -eq 1 ]; then
+  REGEN_DRIVER="$TMPDIR/regenerate_partial.py"
+  cat > "$REGEN_DRIVER" <<'PYEOF'
+import json
+import sys
+
+fresh_repo_root, existing_key_py, manifest_path, output_dir = sys.argv[1:5]
+sys.path.insert(0, fresh_repo_root)
+from utilities import partialInstallBuilder as pib
+
+selection_labels = json.load(open(manifest_path)).get("selection", {})
+try:
+    result = pib.update_selection_in_place(fresh_repo_root, existing_key_py, selection_labels, output_dir)
+except pib.UpdateNeedsRebuild as exc:
+    print(str(exc), file=sys.stderr)
+    sys.exit(3)
+
+if result["missing_labels"]:
+    print(
+        "Note: no longer found upstream, dropped from this update: "
+        + ", ".join(result["missing_labels"]),
+        file=sys.stderr,
+    )
+print(json.dumps({
+    "included_key_names": sorted(result["included_key_names"]),
+    "excluded_key_names": sorted(result["excluded_key_names"]),
+}))
+PYEOF
+
+  set +e
+  REGEN_OUT="$("$PY" "$REGEN_DRIVER" "$TMPDIR/repo" "$APP_DIR/utilities/Key.py" "$PARTIAL_MANIFEST" "$REGEN_DIR" 2>"$TMPDIR/regen_err.log")"
+  REGEN_STATUS=$?
+  set -e
+  echo "REGEN_STATUS: $REGEN_STATUS"
+  echo "--- regen stderr ---"
+  cat "$TMPDIR/regen_err.log" || true
+  echo "--- regen stdout ---"
+  echo "$REGEN_OUT"
+
+  if [ "$REGEN_STATUS" -eq 3 ]; then
+    /usr/bin/osascript <<APPLESCRIPT >/dev/null
+set errText to do shell script "cat " & quoted form of "$TMPDIR/regen_err.log"
+display dialog "This update needs new credentials that are not on this installation:" & return & return & errText & return & return & "Rebuild and reinstall from a fresh Partial-Install USB with the same selection instead. No changes have been made." buttons {"OK"} default button 1
+APPLESCRIPT
+    exit 0
+  elif [ "$REGEN_STATUS" -ne 0 ]; then
+    alert '"Update failed while checking this partial install against the new code. No changes have been made. See ~/Library/Logs/Snipe Asset GUI/update.log for details."'
+    exit 1
+  fi
+fi
 
 ###############################################################################
 # BLOCK D — Preserve org files + meta before copy
@@ -139,6 +218,29 @@ do
 done
 
 ###############################################################################
+# BLOCK F2 — Partial install: re-apply the trim Block F just un-trimmed
+###############################################################################
+# Block F copied the fresh clone's full, untrimmed routing tables straight
+# over the ones this install was built with. Put back the versions
+# Block C2 already regenerated for the same selection, before anything
+# else (including this app's own next launch) can see the untrimmed state.
+if [ "$IS_PARTIAL" -eq 1 ]; then
+  for relpath in \
+    utilities/Key.py \
+    utilities/partialInstallManifest.json \
+    assetManagementFunctions/assetFunctionsRouting.py \
+    otherManagementFunctions/otherFunctionsRouting.py \
+    consisterizer/consisterizerScriptsRouting.py
+  do
+    src="$REGEN_DIR/$relpath"
+    [ -f "$src" ] || continue
+    mkdirp "$(dirname "$APP_DIR/$relpath")"
+    cp_file "$src" "$APP_DIR/$relpath"
+  done
+  echo "Partial-install trim re-applied from $REGEN_DIR"
+fi
+
+###############################################################################
 # BLOCK G — Remove files that were tracked before but are not tracked now
 #            (ignores untracked/ignored files: they are left alone)
 ###############################################################################
@@ -177,31 +279,42 @@ fi
 ###############################################################################
 mkdirp "$BUILD_DIR"
 for f in Key.py settings.json; do
+  if [ "$f" = "Key.py" ] && [ "$IS_PARTIAL" -eq 1 ]; then
+    continue  # Block F2 already put the freshly regenerated trimmed Key.py in place
+  fi
   [ -f "$PRESERVE_DIR/utilities/$f" ] || continue
   cp_file "$PRESERVE_DIR/utilities/$f" "$APP_DIR/utilities/$f"
 done
 [ -f "$PRESERVE_DIR/.build/meta.json" ] && cp_file "$PRESERVE_DIR/.build/meta.json" "$META"
 
 ###############################################################################
-# BLOCK H2 — Override Key.py from external drive (optional)
+# BLOCK H2 — Override Key.py from external drive (optional, FULL INSTALLS ONLY)
 ###############################################################################
-EXT_KEY=""
-for vol in /Volumes/*; do
-  [ -d "$vol" ] || continue
-  if [ -f "$vol/Key.py" ]; then
-    EXT_KEY="$vol/Key.py"
-    break
-  fi
-  if [ -f "$vol/utilities/Key.py" ]; then
-    EXT_KEY="$vol/utilities/Key.py"
-    break
-  fi
-done
-if [ -n "$EXT_KEY" ]; then
-  echo "External Key.py found: $EXT_KEY"
-  cp_file "$EXT_KEY" "$APP_DIR/utilities/Key.py"
+# Never for a partial install: this machine's Key.py is deliberately
+# trimmed, and silently replacing it from whatever Key.py happens to be on
+# any mounted volume (e.g. a full-install USB left plugged in) would
+# defeat that without any confirmation.
+if [ "$IS_PARTIAL" -eq 1 ]; then
+  echo "Partial install: skipping external-drive Key.py override."
 else
-  echo "External Key.py not found in /Volumes/*"
+  EXT_KEY=""
+  for vol in /Volumes/*; do
+    [ -d "$vol" ] || continue
+    if [ -f "$vol/Key.py" ]; then
+      EXT_KEY="$vol/Key.py"
+      break
+    fi
+    if [ -f "$vol/utilities/Key.py" ]; then
+      EXT_KEY="$vol/utilities/Key.py"
+      break
+    fi
+  done
+  if [ -n "$EXT_KEY" ]; then
+    echo "External Key.py found: $EXT_KEY"
+    cp_file "$EXT_KEY" "$APP_DIR/utilities/Key.py"
+  else
+    echo "External Key.py not found in /Volumes/*"
+  fi
 fi
 
 ###############################################################################
