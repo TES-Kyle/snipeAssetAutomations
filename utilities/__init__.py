@@ -1,6 +1,7 @@
 """Intercept utilities.Key import to fail gracefully if Key.py is missing or broken."""
 
 import importlib.util
+import json
 import logging
 import os
 import sys
@@ -61,6 +62,23 @@ except Exception as exc:
     logger.error(_key_module.SECRETS_LOAD_ERROR)
     logger.debug("__init__: unexpected error loading Key.py: %s; safe defaults remain active", exc)
 
+# --- Partial installs intentionally ship a Key.py with some names blank ---
+# A trimmed Key.py (see utilities/keyDependencyGraph.py / partialInstallBuilder.py)
+# omits secrets the selected modules don't need. Without this, the validation
+# below would flag every one of those as "missing" and show a scary
+# Configuration Error dialog on every launch of an intentionally partial
+# install. Normal installs never have this file, so their behavior here is
+# unchanged.
+_manifest_path = os.path.join(_dir, 'partialInstallManifest.json')
+_intentionally_excluded = set()
+if os.path.isfile(_manifest_path):
+    try:
+        with open(_manifest_path, 'r', encoding='utf-8') as _mf:
+            _intentionally_excluded = set(json.load(_mf).get('excluded', []))
+        logger.debug("__init__: partialInstallManifest.json found, %s intentionally excluded vars", len(_intentionally_excluded))
+    except Exception as _exc:
+        logger.warning("Could not read partialInstallManifest.json: %s", _exc)
+
 # --- Compare Key.py variables against keyExample.py ---
 # Only run when the file loaded without errors and we have an example to compare against.
 logger.debug("__init__: SECRETS_LOAD_ERROR=%s, will validate=%s",
@@ -71,7 +89,8 @@ if not _key_module.SECRETS_LOAD_ERROR and _example_vars:
     logger.debug("__init__: expected vars=%s, actual vars=%s", len(_expected), len(_actual))
 
     # In example but missing or empty in Key.py — credentials need to be filled in.
-    _missing = sorted(k for k in _expected if not getattr(_key_module, k, None))
+    # Vars intentionally left blank for a partial install don't count.
+    _missing = sorted(k for k in _expected if not getattr(_key_module, k, None) and k not in _intentionally_excluded)
     # In Key.py but not in example — keyExample.py needs to be updated.
     _undocumented = sorted(_actual - _expected)
     logger.debug("__init__: missing vars=%s, undocumented vars=%s", _missing, _undocumented)

@@ -63,24 +63,43 @@ APPLESCRIPT
 #############################
 # [CLONE & COPY CODE BLOCK]
 #############################
-TMPDIR="$(mktemp -d)"; trap 'rm -rf "$TMPDIR"' EXIT
-/usr/bin/osascript -e 'display dialog "Cloning repository...\n\nThis may take a moment." buttons {"OK"} giving up after 1' >/dev/null || true
-git clone "$REPO_URL" "$TMPDIR/repo"
-
 mkdir -p "$EMBED_APP_DIR"
-rsync -a --delete --exclude ".git" --exclude "__pycache__" --exclude ".DS_Store" "$TMPDIR/repo"/ "$EMBED_APP_DIR"/
 
-# [USB SETTINGS COPY — optional]
-# settings.py expects settings.json alongside it in utilities/
-if [ -f "$SETTINGS_SRC_JSON" ]; then
-  mkdir -p "$EMBED_APP_DIR/utilities"
-  cp "$SETTINGS_SRC_JSON" "$EMBED_APP_DIR/utilities/settings.json"
-fi
+# A partial-install USB (built by utilities/partialInstallBuilder.py) carries
+# a pre-trimmed app copy -- Key.py already cut down to only the secrets the
+# selected functions need, routing tables already cut down to only those
+# functions. Use it directly and skip the clone entirely. Deliberately does
+# NOT apply KEY_SRC_PY/SETTINGS_SRC_JSON below even if present at the USB
+# root -- a leftover full Key.py there must never be able to silently
+# overwrite the trimmed one partial_app/ already carries.
+PARTIAL_APP_SRC="$USB_DIR/partial_app"
+if [ -d "$PARTIAL_APP_SRC" ]; then
+  /usr/bin/osascript -e 'display dialog "Installing from USB (partial install)...\n\nThis may take a moment." buttons {"OK"} giving up after 1' >/dev/null || true
+  rsync -a --delete --exclude ".git" --exclude "__pycache__" --exclude ".DS_Store" "$PARTIAL_APP_SRC"/ "$EMBED_APP_DIR"/
+  # No INSTALLED_SHA here -- partial_app/.build/meta.json (copied above)
+  # already has the admin's real HEAD sha from USB-build time, and the
+  # BUILD META BLOCK below leaves that file alone when it already exists.
+else
+  TMPDIR="$(mktemp -d)"; trap 'rm -rf "$TMPDIR"' EXIT
+  /usr/bin/osascript -e 'display dialog "Cloning repository...\n\nThis may take a moment." buttons {"OK"} giving up after 1' >/dev/null || true
+  git clone "$REPO_URL" "$TMPDIR/repo"
 
-# Optional Key.py into utilities/
-if [ -f "$KEY_SRC_PY" ]; then
-  mkdir -p "$EMBED_APP_DIR/utilities"
-  cp "$KEY_SRC_PY" "$EMBED_APP_DIR/utilities/Key.py"
+  rsync -a --delete --exclude ".git" --exclude "__pycache__" --exclude ".DS_Store" "$TMPDIR/repo"/ "$EMBED_APP_DIR"/
+
+  # [USB SETTINGS COPY — optional]
+  # settings.py expects settings.json alongside it in utilities/
+  if [ -f "$SETTINGS_SRC_JSON" ]; then
+    mkdir -p "$EMBED_APP_DIR/utilities"
+    cp "$SETTINGS_SRC_JSON" "$EMBED_APP_DIR/utilities/settings.json"
+  fi
+
+  # Optional Key.py into utilities/
+  if [ -f "$KEY_SRC_PY" ]; then
+    mkdir -p "$EMBED_APP_DIR/utilities"
+    cp "$KEY_SRC_PY" "$EMBED_APP_DIR/utilities/Key.py"
+  fi
+
+  INSTALLED_SHA="$(git -C "$TMPDIR/repo" rev-parse HEAD || echo unknown)"
 fi
 #############################
 # [END CLONE & COPY CODE BLOCK]
@@ -89,11 +108,17 @@ fi
 #################################
 # [BUILD META BLOCK — NEW]
 #################################
-# Record repo URL, branch and commit sha we installed
+# Record repo URL, branch and commit sha we installed. A partial install's
+# partial_app/.build/meta.json was already copied in by the rsync above,
+# with the admin's real HEAD sha at USB-build time (not a placeholder) --
+# keep that as-is so checkUpdate() on the target machine can tell whether a
+# real update is available, instead of generating a fresh one here.
 mkdir -p "$EMBED_APP_DIR/.build"
-REPO_BRANCH="${REPO_BRANCH:-main}"
-INSTALLED_SHA="$(git -C "$TMPDIR/repo" rev-parse HEAD || echo unknown)"
-cat > "$EMBED_APP_DIR/.build/meta.json" <<META
+if [ -f "$EMBED_APP_DIR/.build/meta.json" ]; then
+  echo "Using pre-built .build/meta.json from partial_app (partial install)."
+else
+  REPO_BRANCH="${REPO_BRANCH:-main}"
+  cat > "$EMBED_APP_DIR/.build/meta.json" <<META
 {
   "repo_url": "$(printf %s "$REPO_URL")",
   "branch": "$(printf %s "$REPO_BRANCH")",
@@ -101,6 +126,7 @@ cat > "$EMBED_APP_DIR/.build/meta.json" <<META
   "last_checked": ""
 }
 META
+fi
 #################################
 # [END BUILD META BLOCK]
 #################################
