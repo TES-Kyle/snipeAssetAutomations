@@ -1,5 +1,7 @@
 """Back-from-Apple workflow for repair completion and messaging."""
 
+from __future__ import annotations
+
 import logging
 import re  # added for flag normalization
 from datetime import date, datetime, timedelta

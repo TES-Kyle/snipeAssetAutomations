@@ -15,6 +15,8 @@ open in the background doesn't spend API calls refreshing something
 nobody's looking at. The loop stops itself once the window is destroyed.
 """
 
+from __future__ import annotations
+
 import logging
 import threading
 import time

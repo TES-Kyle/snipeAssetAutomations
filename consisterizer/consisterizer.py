@@ -20,6 +20,8 @@ Notes
 - Defaults comparison highlights both Result and Updates controls when mismatched
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import os

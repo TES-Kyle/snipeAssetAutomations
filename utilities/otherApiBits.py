@@ -7,6 +7,8 @@ This module provides:
 All requests use the dynamic API user header helper.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 

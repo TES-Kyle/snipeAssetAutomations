@@ -1,5 +1,7 @@
 """Create charger assets via Snipe-IT with optional checkout."""
 
+from __future__ import annotations
+
 # makeCharger.py (full-width layout + YYYY-MM-DD entry + inline "loading…" placeholders)
 import logging
 from utilities.otherApiBits import getAssetInfo
