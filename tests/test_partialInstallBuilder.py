@@ -104,6 +104,34 @@ def test_copy_full_repo_excludes_git(fake_repo, tmp_path):
     assert not (dest / ".git").exists()
 
 
+def test_copy_full_repo_works_from_a_plain_directory_with_no_git_repo(tmp_path):
+    # A normal (full) install has no .git at all -- installer.command
+    # deliberately strips it (`rsync --exclude ".git"`) when copying a
+    # fresh clone into place. Building a partial-install USB from within
+    # such an installed app must still work, using the .gitignore that IS
+    # still present to decide what to copy.
+    root = tmp_path / "installed_app"
+    root.mkdir()
+    _write(root / ".gitignore", "utilities/Key.py\nutilities/settings.json\nlogs/\n")
+    _write(root / "utilities" / "Key.py", "API_Key = 'real-secret'\n")
+    _write(root / "utilities" / "keyExample.py", "API_Key = ''\n")
+    _write(root / "featureA" / "safe.py", "x = 1\n")
+    _write(root / "logs" / "automations.log", "a-real-token-must-not-leak\n")
+    assert not (root / ".git").exists()
+
+    dest = tmp_path / "dest"
+    pib.copy_full_repo(str(root), str(dest))
+
+    assert (dest / "featureA" / "safe.py").exists()
+    assert (dest / "utilities" / "keyExample.py").exists()
+    assert not (dest / "utilities" / "Key.py").exists()
+    assert not (dest / "logs").exists()
+    # The temporary git repo used to interpret .gitignore must be cleaned
+    # up afterward -- it must not become a permanent side effect of running
+    # this from an installed (non-dev) app.
+    assert not (root / ".git").exists()
+
+
 def test_copy_full_repo_honors_gitignore_for_untracked_cruft(fake_repo, tmp_path):
     """Regression test for the real leak this replaced: a hand-rolled
     directory-name exclusion list didn't know about logs/, so real API
@@ -139,6 +167,19 @@ def test_render_trimmed_key_py_lists_exclusions_in_header(fake_repo):
     rendered = pib.render_trimmed_key_py(str(root), frozenset({"API_URL_Base"}), frozenset({"jamfClientID", "jamfURL"}))
     assert "jamfClientID" in rendered
     assert "jamfURL" in rendered
+
+
+def test_is_partial_install_false_when_no_manifest(tmp_path):
+    root = tmp_path / "app"
+    (root / "utilities").mkdir(parents=True)
+    assert pib.is_partial_install(str(root)) is False
+
+
+def test_is_partial_install_true_when_manifest_present(tmp_path):
+    root = tmp_path / "app"
+    (root / "utilities").mkdir(parents=True)
+    _write(root / "utilities" / "partialInstallManifest.json", "{}")
+    assert pib.is_partial_install(str(root)) is True
 
 
 def test_render_manifest_json_shape():

@@ -418,7 +418,7 @@ class AutoCompleteEntry(ttk.Frame):
         logger.debug("AutoCompleteEntry._commit_selection: selecting index %s (%s)", idx, opt.get("label"))
         # Persist the selected option and reflect it in the entry.
         self._selected = opt
-        self.set(opt["label"])
+        self.set(opt["label"])  # already fires change callbacks -- see below
         self.hide_popup()
 
         try:
@@ -432,7 +432,13 @@ class AutoCompleteEntry(ttk.Frame):
         except Exception:
             pass
 
-        self._fire_change()
+        # No second self._fire_change() here: set() above already fired
+        # change callbacks with the final state (self._selected is set
+        # before set() runs). A second call here doubled every bound
+        # callback's work on every single commit -- e.g. loanCheckout's
+        # on_person_change spawning two redundant background API fetches
+        # per person picked, worsening contention right when the shared
+        # assignee list is also still loading.
 
     def _requery_and_show(self):
         """Recompute matches and render the popup listbox."""

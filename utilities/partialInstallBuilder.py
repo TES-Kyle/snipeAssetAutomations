@@ -38,6 +38,22 @@ logger = logging.getLogger(__name__)
 # copy_full_repo(), in case .gitignore is ever edited to drop that line.
 _NEVER_COPY_REL_FILES = frozenset({"utilities/Key.py", "utilities/settings.json"})
 
+
+def is_partial_install(repo_root: str) -> bool:
+    """Return True if repo_root is a partial (not full) install.
+
+    Same detection utilities/__init__.py and update_in_place.command
+    already use: a partial install carries utilities/partialInstallManifest.json,
+    a normal install never does.
+
+    Args:
+        repo_root: Absolute path to the app's root directory.
+
+    Returns:
+        True if this install is a partial install.
+    """
+    return os.path.isfile(os.path.join(repo_root, "utilities", "partialInstallManifest.json"))
+
 _SELECT_SCRIPT = "shellScripts/select_and_erase_usb.command"
 _FINALIZE_SCRIPT = "shellScripts/finalize_usb.command"
 _OFFER_EJECT_SCRIPT = "shellScripts/offer_eject.command"
@@ -194,8 +210,8 @@ def copy_full_repo(repo_root: str, dest_root: str):
     this, so this matches that instead of re-solving it a different way.
 
     Args:
-        repo_root: Absolute path to the repository root (source). Must be
-            a git working tree.
+        repo_root: Absolute path to the repository root (source). Does not
+            need to already be a git working tree -- see below.
         dest_root: Absolute path to copy into (e.g. the mounted USB volume).
 
     Raises:
@@ -203,15 +219,38 @@ def copy_full_repo(repo_root: str, dest_root: str):
     """
     os.makedirs(dest_root, exist_ok=True)
 
-    git_proc = subprocess.run(
-        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
-        cwd=repo_root, capture_output=True,
-    )
-    if git_proc.returncode != 0:
-        raise RuntimeError(
-            f"git ls-files failed in {repo_root} (is it a git working tree?): "
-            f"{git_proc.stderr.decode(errors='replace').strip()}"
+    # installer.command deliberately strips .git out of a normal (full)
+    # install (`rsync --exclude ".git"`), so an app running from an
+    # ordinary installed copy has no working tree here at all -- only a dev
+    # checkout does. git ls-files needs SOME working tree to interpret
+    # .gitignore against, so temporarily init one in place (repo_root's own
+    # .gitignore is still present -- only .git itself was stripped) and
+    # remove it again immediately after. Purely local and reversible: no
+    # commit, no remote, nothing written outside repo_root/.git, and it's
+    # torn down in the same call before this function returns.
+    made_temp_git_dir = False
+    if not os.path.isdir(os.path.join(repo_root, ".git")):
+        init_proc = subprocess.run(["git", "init", "-q"], cwd=repo_root, capture_output=True)
+        if init_proc.returncode != 0:
+            raise RuntimeError(
+                f"git init failed in {repo_root}: {init_proc.stderr.decode(errors='replace').strip()}"
+            )
+        made_temp_git_dir = True
+
+    try:
+        git_proc = subprocess.run(
+            ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+            cwd=repo_root, capture_output=True,
         )
+        if git_proc.returncode != 0:
+            raise RuntimeError(
+                f"git ls-files failed in {repo_root} (is it a git working tree?): "
+                f"{git_proc.stderr.decode(errors='replace').strip()}"
+            )
+    finally:
+        if made_temp_git_dir:
+            import shutil
+            shutil.rmtree(os.path.join(repo_root, ".git"), ignore_errors=True)
 
     exclude_args = []
     for rel_file in sorted(_NEVER_COPY_REL_FILES):

@@ -22,6 +22,7 @@ import csv
 import logging
 import re
 import smtplib
+import socket
 from email.message import EmailMessage
 from tkinter import messagebox
 
@@ -47,6 +48,12 @@ from utilities.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
+# paramiko.Transport((host, port)) has no connect timeout of its own -- see
+# _open_sftp() below. Matches paramiko's own banner_timeout default (15s)
+# for the phase right after this one, so a totally unreachable host fails
+# in a consistent, bounded amount of time end to end.
+_SFTP_CONNECT_TIMEOUT_SECONDS = 15
+
 # ---------------------------------------------------------------------
 # Helper: SFTP open + CSV reader
 # ---------------------------------------------------------------------
@@ -62,7 +69,9 @@ def _open_sftp():
                 sftp.close(); transport.close()
 
     Raises:
-        Exception on failure to connect or change directory.
+        Exception on failure to connect or change directory (including a
+        socket.timeout if the host doesn't respond within
+        _SFTP_CONNECT_TIMEOUT_SECONDS).
     """
     configure_logging()
     logger.debug("_open_sftp: connecting to %s:22", ruvna_hostname)
@@ -70,7 +79,13 @@ def _open_sftp():
     transport = None
     sftp = None
     try:
-        transport = paramiko.Transport((ruvna_hostname, 22))
+        # paramiko.Transport((host, port)) opens the raw TCP socket itself,
+        # internally, with no timeout at all -- a network that silently
+        # drops the connection attempt (e.g. an outbound-port-22 firewall
+        # rule on a new deployment site) hangs here indefinitely rather
+        # than failing. Building the socket ourselves bounds that.
+        sock = socket.create_connection((ruvna_hostname, 22), timeout=_SFTP_CONNECT_TIMEOUT_SECONDS)
+        transport = paramiko.Transport(sock)
         logger.debug("_open_sftp: transport created; authenticating as %s", ruvna_username)
         transport.connect(username=ruvna_username, password=ruvna_password)
         logger.debug("_open_sftp: authenticated; opening SFTPClient")

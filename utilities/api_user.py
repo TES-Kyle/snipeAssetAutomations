@@ -35,10 +35,12 @@ def _clean_name(value) -> str:
     Returns:
         Cleaned string representation (always safe to compare).
     """
-    logger.debug("_clean_name: value=%s", value)
-    result = str(value or "").strip()
-    logger.debug("_clean_name: result=%s", result)
-    return result
+    # Deliberately no value-logging here, even at DEBUG: callers pass this
+    # both display names (safe) and raw API tokens/keys (not safe) -- this
+    # helper can't tell which, so it must never log either. Every real
+    # caller already has its own safe, contextual logging around the
+    # cleaned result (e.g. "API_Key present=%s", not the key itself).
+    return str(value or "").strip()
 
 
 def _load_key_map() -> dict:

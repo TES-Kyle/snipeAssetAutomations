@@ -672,7 +672,20 @@ def loanCheckout(asset_tag):
         selected_user.update({"id": sel["id"], "email": sel.get("email", ""), "name": sel.get("label", "")})
 
         def worker():
-            """Fetch the user's notes and parent emails (background thread) and tally history."""
+            """Fetch the user's notes (background thread) and tally history.
+
+            The checkout count/history (below) is fully derived from
+            Snipe-IT alone and is the whole point of this screen -- it must
+            never wait on the separate parent-email lookup that follows,
+            which goes over an unrelated SFTP connection
+            (utilities.messaging.get_parents) that has no bounded connect
+            timeout at the TCP level. A silently-dropped connection to that
+            host (e.g. a school network that blocks outbound port 22) can
+            hang for minutes; previously that hang blocked this entire
+            apply() from ever running, so the window stayed on "Loading
+            checkout history..." forever even though everything needed to
+            show it had already been fetched.
+            """
             fresh = _fetch_user_by_id(sel["id"])
             entries = _parse_loan_note_lines(fresh.get("notes") or "")
             cutoff = _get_last_cutoff(cutoff_dates_raw)
@@ -682,17 +695,10 @@ def loanCheckout(asset_tag):
                 sel.get("label"), cutoff, count,
             )
 
-            parents = []
-            try:
-                parents = get_parents(fresh.get("email") or sel.get("email", "")) or []
-            except Exception:
-                logger.exception("on_person_change: failed to look up parent emails for %s", sel.get("label"))
-
-            def apply():
-                """Apply fetched results to widgets on the Tk thread."""
+            def apply_history():
+                """Apply the checkout count/history to widgets on the Tk thread."""
                 current_count_holder["count"] = count
                 current_count_holder["cutoff"] = cutoff
-                parents_holder["emails"] = parents
                 since_txt = cutoff.isoformat() if cutoff else "the start (no cutoff configured yet)"
                 count_prefix_var.set(f"Qualifying loaner checkouts since {since_txt}:")
                 count_number_var.set(str(count))
@@ -705,7 +711,23 @@ def loanCheckout(asset_tag):
 
                 _refresh_warning_controls()
 
-            checkout_window.after(0, apply)
+            checkout_window.after(0, apply_history)
+
+            # Parent-email lookup for the CC-parent preview only -- fetched
+            # separately so its own success/failure/hang can never block the
+            # count/history above. Nothing functionally required for
+            # checking a device out depends on this finishing.
+            parents = []
+            try:
+                parents = get_parents(fresh.get("email") or sel.get("email", "")) or []
+            except Exception:
+                logger.exception("on_person_change: failed to look up parent emails for %s", sel.get("label"))
+
+            def apply_parents():
+                parents_holder["emails"] = parents
+                _update_recipients_display()
+
+            checkout_window.after(0, apply_parents)
 
         threading.Thread(target=worker, daemon=True).start()
 

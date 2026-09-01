@@ -13,7 +13,7 @@ from tkinter import font as tkfont
 from tkinter import messagebox
 
 from utilities.logging_utils import configure_logging
-from utilities.partialInstallBuilder import open_partial_install_builder
+from utilities.partialInstallBuilder import is_partial_install, open_partial_install_builder
 from utilities.settings import safe_read_json, UTILITIES_DIR, SETTINGS_PATH, DEFAULTS_PATH
 from utilities.theme import get_ui_colors
 from utilities.tk_geometry import center_window
@@ -368,10 +368,15 @@ def settingsMenu():
     update_label.pack(side="left")
     update_button = tk.Button(update_frame, text="⬆", command=checkUpdate)
     update_button.pack(side="left")
-    usb_button = tk.Button(update_frame, text="Make Installer USB", command=make_installer_usb)
-    usb_button.pack(side="left", padx=(10, 0))
-    partial_usb_button = tk.Button(update_frame, text="Build Partial-Install USB…", command=build_partial_install_usb)
-    partial_usb_button.pack(side="left", padx=(10, 0))
+    # Both USB-building tools assume a full app copy (a dev checkout, or at
+    # least a real git working tree) to build FROM -- a partial install is
+    # deliberately missing most of the app, so offering to build a full
+    # installer or another partial-install USB from one doesn't make sense.
+    if not is_partial_install(os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))):
+        usb_button = tk.Button(update_frame, text="Make Installer USB", command=make_installer_usb)
+        usb_button.pack(side="left", padx=(10, 0))
+        partial_usb_button = tk.Button(update_frame, text="Build Partial-Install USB…", command=build_partial_install_usb)
+        partial_usb_button.pack(side="left", padx=(10, 0))
     sync_key_button = tk.Button(update_frame, text="Update Key", command=sync_key_usb)
     sync_key_button.pack(side="left", padx=(10, 0))
 
