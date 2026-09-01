@@ -12,6 +12,11 @@ _IGNORE_KEYS = {
     "Up", "Down", "Left", "Right", "Home", "End", "Prior", "Next", "Insert",
 }
 
+# Grace period between the cursor leaving the entry/popup and the popup
+# actually hiding -- long enough for real mouse transit between the entry
+# and the separate popup Toplevel below it (see _maybe_hide_later).
+_HIDE_DELAY_MS = 400
+
 
 def _label_matches_any_option(text, options):
     """Return True if text exactly matches some option's label.
@@ -350,9 +355,21 @@ class AutoCompleteEntry(ttk.Frame):
         self._maybe_hide_later()
 
     def _maybe_hide_later(self, _e=None):
-        """Delay popup hide to allow focus changes."""
-        logger.debug("AutoCompleteEntry._maybe_hide_later: scheduling hide in 120ms")
-        self.after(120, self._maybe_hide_now)
+        """Delay popup hide to allow focus changes.
+
+        The popup is a separate Toplevel positioned below the entry (see
+        _place_popup), so moving the mouse from the entry down into it
+        always crosses a moment where the cursor is over neither widget --
+        <Leave> fires on the entry before <Enter> fires on the popup. 120ms
+        was too tight a window for that real mouse transit on at least one
+        deployed machine: the popup hid itself before the click landed,
+        repeatedly, which is exactly what made picking a person look like
+        it was stuck for tens of seconds (confirmed via debug-log
+        timestamps -- _on_click_select simply never fired across several
+        hover/hide cycles).
+        """
+        logger.debug("AutoCompleteEntry._maybe_hide_later: scheduling hide in %sms", _HIDE_DELAY_MS)
+        self.after(_HIDE_DELAY_MS, self._maybe_hide_now)
 
     def _maybe_hide_now(self):
         """Hide the popup if neither entry nor popup has focus."""
