@@ -60,6 +60,7 @@ from utilities.api_user import get_api_key
 from utilities.api_retry import call_with_retry
 from utilities.autocomplete import AutoCompleteEntry
 from utilities.tk_geometry import center_window
+from utilities.tk_thread import ensure_tk_thread_pump, run_on_tk_thread
 from utilities.tk_date_entry import build_date_entry_frame
 from utilities.checkInOutCommon import build_soft_message_frame
 from utilities.messaging import (
@@ -726,9 +727,9 @@ def loanCheckout(asset_tag):
                 _refresh_warning_controls()
                 logger.debug("on_person_change: apply_history COMPLETED for user=%s", sel.get("label"))
 
-            logger.debug("on_person_change: scheduling apply_history via .after(0, ...) for user=%s", sel.get("label"))
-            checkout_window.after(0, apply_history)
-            logger.debug("on_person_change: apply_history SCHEDULED (after() call returned) for user=%s", sel.get("label"))
+            logger.debug("on_person_change: queuing apply_history for user=%s", sel.get("label"))
+            run_on_tk_thread(checkout_window, apply_history)
+            logger.debug("on_person_change: apply_history QUEUED for user=%s", sel.get("label"))
 
             # Parent-email lookup for the CC-parent preview only -- fetched
             # separately so its own success/failure/hang can never block the
@@ -752,9 +753,9 @@ def loanCheckout(asset_tag):
                 _update_recipients_display()
                 logger.debug("on_person_change: apply_parents COMPLETED for user=%s", sel.get("label"))
 
-            logger.debug("on_person_change: scheduling apply_parents via .after(0, ...) for user=%s", sel.get("label"))
-            checkout_window.after(0, apply_parents)
-            logger.debug("on_person_change: apply_parents SCHEDULED (after() call returned) for user=%s", sel.get("label"))
+            logger.debug("on_person_change: queuing apply_parents for user=%s", sel.get("label"))
+            run_on_tk_thread(checkout_window, apply_parents)
+            logger.debug("on_person_change: apply_parents QUEUED for user=%s", sel.get("label"))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -1004,6 +1005,7 @@ def loanCheckout(asset_tag):
     logger.debug("loanCheckout: creating checkout window for %s", asset_tag)
     checkout_window = tk.Toplevel()
     checkout_window.title(f"Loan Checkout — {asset_tag}")
+    ensure_tk_thread_pump(checkout_window)
 
     # Top row: device info and this semester's history side by side, each in
     # a LabelFrame (same style as the "Asset Functions" box on the main

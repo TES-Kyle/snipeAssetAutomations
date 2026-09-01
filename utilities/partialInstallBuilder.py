@@ -30,6 +30,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from utilities import keyDependencyGraph, routingCatalog
+from utilities.tk_thread import ensure_tk_thread_pump, run_on_tk_thread
 
 logger = logging.getLogger(__name__)
 
@@ -571,6 +572,7 @@ def open_partial_install_builder(parent, repo_root: str = None):
     win = tk.Toplevel(parent)
     win.title("Build Partial-Install USB")
     win.geometry("640x640")
+    ensure_tk_thread_pump(win)
 
     check_vars = {}  # (group, index) -> tk.BooleanVar
     consisterizer_selected = tk.BooleanVar(value=False)
@@ -711,15 +713,16 @@ def open_partial_install_builder(parent, repo_root: str = None):
             usb_mount = run_select_and_erase(repo_root)
         except BuildCancelled:
             logger.info("on_build: disk selection cancelled by admin")
-            win.after(0, lambda: _set_building(False, "Build cancelled."))
+            run_on_tk_thread(win, lambda: _set_building(False, "Build cancelled."))
             return
         except RuntimeError as exc:
             # `except ... as exc` deletes `exc` from scope once this block
             # ends, and the lambda below isn't called until later (via
-            # .after()) -- bind the message now via a default argument
-            # rather than closing over a name that won't exist by then.
+            # run_on_tk_thread()) -- bind the message now via a default
+            # argument rather than closing over a name that won't exist by
+            # then.
             logger.error("on_build: select_and_erase_usb.command failed: %s", exc)
-            win.after(0, lambda msg=str(exc): _on_build_failed(msg))
+            run_on_tk_thread(win, lambda msg=str(exc): _on_build_failed(msg))
             return
         logger.info("on_build: disk select/erase reported mount path=%s", usb_mount)
 
@@ -728,10 +731,10 @@ def open_partial_install_builder(parent, repo_root: str = None):
             run_finalize(repo_root, usb_mount)
         except Exception as exc:
             logger.exception("on_build: failed while populating/finalizing USB")
-            win.after(0, lambda msg=f"Failed while writing to the USB:\n\n{exc}": _on_build_failed(msg))
+            run_on_tk_thread(win, lambda msg=f"Failed while writing to the USB:\n\n{exc}": _on_build_failed(msg))
             return
 
-        win.after(0, lambda: _on_build_succeeded(usb_mount, summary))
+        run_on_tk_thread(win, lambda: _on_build_succeeded(usb_mount, summary))
 
     def _on_build_failed(message):
         logger.error("on_build: build failed: %s", message)

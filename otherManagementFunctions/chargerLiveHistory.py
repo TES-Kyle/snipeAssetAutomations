@@ -18,6 +18,7 @@ if REPO_ROOT not in sys.path:
 from assetManagementFunctions.chargerSerial import get_computer_inventory_results, build_charger_history
 from utilities.logging_utils import configure_logging
 from utilities.api_user import get_api_key
+from utilities.tk_thread import ensure_tk_thread_pump, run_on_tk_thread
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,7 @@ def show_connected_charger_history():
     logger.info("show_connected_charger_history: opening window, serial=%s", serial_var.get())
     charger_window = tk.Toplevel()
     charger_window.title("Connected Charger History")
+    ensure_tk_thread_pump(charger_window)
 
     # Serial row (copyable).
     serial_frame = ttk.Frame(charger_window)
@@ -105,7 +107,7 @@ def show_connected_charger_history():
         logger.debug("_refresh_history: serial=%s", serial)
         if not serial:
             logger.debug("_refresh_history: no serial, showing default message")
-            charger_window.after(0, lambda: _set_history("No charger serial detected."))
+            run_on_tk_thread(charger_window, lambda: _set_history("No charger serial detected."))
             return
         # Ensure API prompt (if needed) happens on the UI thread.
         logger.debug("_refresh_history: ensuring API key is available")
@@ -119,17 +121,21 @@ def show_connected_charger_history():
             """
             logger.debug("worker: starting background history fetch for serial=%s", target_serial)
             configure_logging()
-            status_var.set("Loading charger history...")
+            run_on_tk_thread(charger_window, lambda: status_var.set("Loading charger history..."))
             logger.info("worker: fetching Jamf computer inventory for charger serial=%s", target_serial)
             try:
                 computers = get_computer_inventory_results()
             except Exception as exc:
                 logger.exception("worker: failed to load Jamf inventory")
                 # Capture the message now: Python deletes `exc` when the except
-                # block exits, but this lambda runs later via charger_window.after().
+                # block exits, but this lambda runs later via run_on_tk_thread().
                 error_msg = str(exc)
-                charger_window.after(0, lambda m=error_msg: _set_history(f"Failed to load Jamf inventory:\n{m}"))
-                status_var.set("")
+
+                def _apply_failure(m=error_msg):
+                    _set_history(f"Failed to load Jamf inventory:\n{m}")
+                    status_var.set("")
+
+                run_on_tk_thread(charger_window, _apply_failure)
                 return
 
             logger.debug("worker: building history for serial=%s", target_serial)
@@ -146,7 +152,7 @@ def show_connected_charger_history():
                 _set_history(history)
                 status_var.set("")
 
-            charger_window.after(0, apply)
+            run_on_tk_thread(charger_window, apply)
 
         logger.debug("_refresh_history: spawning worker thread for serial=%s", serial)
         threading.Thread(target=worker, args=(serial,), daemon=True).start()
@@ -164,8 +170,8 @@ def show_connected_charger_history():
                 if current != last_serial["value"]:
                     logger.info("_poll_serial: charger serial changed from %s to %s", last_serial["value"], current)
                     last_serial["value"] = current
-                    charger_window.after(0, lambda s=current: serial_var.set(s))
-                    charger_window.after(0, lambda s=current: _refresh_history(s))
+                    run_on_tk_thread(charger_window, lambda s=current: serial_var.set(s))
+                    run_on_tk_thread(charger_window, lambda s=current: _refresh_history(s))
             time.sleep(0.5)
 
     # Ensure API prompt happens on main thread if needed.

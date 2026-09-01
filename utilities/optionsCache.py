@@ -23,6 +23,7 @@ import time
 
 from utilities.otherApiBits import getAllStatusOptions, getAllModelOptions, getAllAssigneeOptions
 from utilities.settings import get_settings
+from utilities.tk_thread import ensure_tk_thread_pump, run_on_tk_thread
 
 logger = logging.getLogger(__name__)
 
@@ -166,6 +167,8 @@ def load_widget(window, kind: str, widget, transform=None):
             the options before they're set on the widget (e.g. filtering
             assignees down to just users, or models down to just chargers).
     """
+    ensure_tk_thread_pump(window)
+
     def _apply(options):
         widget.set_options(transform(options) if transform else options)
 
@@ -205,10 +208,10 @@ def load_widget(window, kind: str, widget, transform=None):
                 _apply(fresh)
             logger.debug("load_widget: on_tk_thread COMPLETED for kind=%s", kind)
 
-        logger.debug("load_widget: scheduling on_tk_thread via .after(0, ...) for kind=%s", kind)
+        logger.debug("load_widget: queuing on_tk_thread for kind=%s", kind)
         try:
-            window.after(0, on_tk_thread)
-            logger.debug("load_widget: on_tk_thread SCHEDULED (after() call returned) for kind=%s", kind)
+            run_on_tk_thread(window, on_tk_thread)
+            logger.debug("load_widget: on_tk_thread QUEUED for kind=%s", kind)
         except Exception:
             logger.debug("load_widget: window gone before applying kind=%s", kind)
 
@@ -283,6 +286,8 @@ def start_live_refresh(window, kind: str, on_update, interval_seconds: float | N
             TTL so refreshes line up with when the cache would go stale
             anyway. Floored at _MIN_LIVE_REFRESH_INTERVAL_SECONDS.
     """
+    ensure_tk_thread_pump(window)
+
     interval_seconds = interval_seconds if interval_seconds is not None else _get_ttl_seconds()
     interval_ms = int(max(interval_seconds, _MIN_LIVE_REFRESH_INTERVAL_SECONDS) * 1000)
 
@@ -332,10 +337,10 @@ def start_live_refresh(window, kind: str, on_update, interval_seconds: float | N
             _schedule_next()
             logger.debug("start_live_refresh: _apply_and_reschedule COMPLETED for kind=%s", kind)
 
-        logger.debug("start_live_refresh: scheduling _apply_and_reschedule via .after(0, ...) for kind=%s", kind)
+        logger.debug("start_live_refresh: queuing _apply_and_reschedule for kind=%s", kind)
         try:
-            window.after(0, _apply_and_reschedule)
-            logger.debug("start_live_refresh: _apply_and_reschedule SCHEDULED (after() call returned) for kind=%s", kind)
+            run_on_tk_thread(window, _apply_and_reschedule)
+            logger.debug("start_live_refresh: _apply_and_reschedule QUEUED for kind=%s", kind)
         except Exception:
             logger.debug("start_live_refresh: window gone before applying update for kind=%s", kind)
 

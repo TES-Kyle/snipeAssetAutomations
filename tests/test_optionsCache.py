@@ -172,16 +172,27 @@ class _FakeWidget:
 
 
 class _FakeWindow:
-    """Stand-in for a Tk widget's .after() -- runs the callback immediately
-    (load_widget's background thread calls this from off the Tk thread, so
-    real Tk isn't needed to observe the result) and signals completion."""
+    """Stand-in for a Tk widget's .after() -- runs the callback after a
+    real (short) delay on its own timer, like actual Tk does, rather than
+    synchronously inline. load_widget's tk_thread pump reschedules itself
+    via .after() forever (see utilities.tk_thread), so a synchronous fake
+    would recurse infinitely; a real delay lets the background worker
+    thread's queue.put() land before some later drain cycle picks it up,
+    same as it would against a real Tk mainloop."""
 
     def __init__(self):
         self.done = threading.Event()
 
-    def after(self, _delay, fn):
-        fn()
-        self.done.set()
+    def after(self, delay_ms, fn):
+        def _run():
+            fn()
+            self.done.set()
+        # daemon=True: the pump reschedules itself forever (matching real
+        # Tk usage), so a non-daemon Timer would keep the process (and
+        # pytest) alive indefinitely after the test itself finishes.
+        timer = threading.Timer(max(delay_ms, 1) / 1000, _run)
+        timer.daemon = True
+        timer.start()
 
     def winfo_exists(self):
         return True
