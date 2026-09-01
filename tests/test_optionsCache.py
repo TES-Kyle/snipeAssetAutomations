@@ -183,6 +183,19 @@ class _FakeWindow:
         fn()
         self.done.set()
 
+    def winfo_exists(self):
+        return True
+
+
+class _FakeDestroyedWindow(_FakeWindow):
+    """Same as _FakeWindow, but simulates the window having been closed
+    before the deferred callback runs -- the exact race a real macOS crash
+    report traced to a segfault in Tcl's SetCmdNameFromAny (a .after()
+    callback touching an already-destroyed widget)."""
+
+    def winfo_exists(self):
+        return False
+
 
 def test_load_widget_shows_loading_only_when_nothing_cached_yet(monkeypatch):
     monkeypatch.setattr(options_cache, "_get_ttl_seconds", lambda: 300)
@@ -234,6 +247,24 @@ def test_load_widget_applies_transform_to_both_stale_and_fresh_values(monkeypatc
 
     assert widget.options_history[0] == [{"type": "user", "label": "u1"}]
     assert widget.options_history[-1] == [{"type": "user", "label": "u2"}]
+
+
+def test_load_widget_skips_applying_if_window_destroyed_before_callback_runs(monkeypatch):
+    monkeypatch.setattr(options_cache, "_get_ttl_seconds", lambda: 300)
+    monkeypatch.setattr(options_cache, "_GETTERS", {"status": lambda: [{"label": "A"}]})
+
+    widget = _FakeWidget()
+    window = _FakeDestroyedWindow()
+    options_cache.load_widget(window, "status", widget)
+    assert window.done.wait(timeout=2), "load_widget's background thread never completed"
+
+    # Only the synchronous initial set_loading(True) (cache-miss path, run
+    # before the background thread even starts) should have happened -- the
+    # deferred on_tk_thread callback must bail out without touching the
+    # widget once the window is gone, rather than touching a destroyed
+    # widget.
+    assert widget.loading_history == [True]
+    assert widget.options_history == []
 
 
 class _FakeAutoComplete:

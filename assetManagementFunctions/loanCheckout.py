@@ -697,6 +697,20 @@ def loanCheckout(asset_tag):
 
             def apply_history():
                 """Apply the checkout count/history to widgets on the Tk thread."""
+                logger.debug(
+                    "on_person_change: apply_history INVOKED for user=%s (window_exists=%s)",
+                    sel.get("label"), checkout_window.winfo_exists(),
+                )
+                if not checkout_window.winfo_exists():
+                    # The window closed in the gap between this background
+                    # fetch finishing and Tk actually running this callback.
+                    # Touching any widget below unconditionally is what
+                    # produced a real SIGSEGV crash (Tcl segfaulting inside
+                    # SetCmdNameFromAny resolving a destroyed widget's
+                    # command) -- confirmed via a macOS crash report landing
+                    # ~8ms after this exact worker's own log line.
+                    logger.debug("on_person_change: window closed before apply_history ran; skipping")
+                    return
                 current_count_holder["count"] = count
                 current_count_holder["cutoff"] = cutoff
                 since_txt = cutoff.isoformat() if cutoff else "the start (no cutoff configured yet)"
@@ -710,8 +724,11 @@ def loanCheckout(asset_tag):
                 _render_history(since_cutoff)
 
                 _refresh_warning_controls()
+                logger.debug("on_person_change: apply_history COMPLETED for user=%s", sel.get("label"))
 
+            logger.debug("on_person_change: scheduling apply_history via .after(0, ...) for user=%s", sel.get("label"))
             checkout_window.after(0, apply_history)
+            logger.debug("on_person_change: apply_history SCHEDULED (after() call returned) for user=%s", sel.get("label"))
 
             # Parent-email lookup for the CC-parent preview only -- fetched
             # separately so its own success/failure/hang can never block the
@@ -724,10 +741,20 @@ def loanCheckout(asset_tag):
                 logger.exception("on_person_change: failed to look up parent emails for %s", sel.get("label"))
 
             def apply_parents():
+                logger.debug(
+                    "on_person_change: apply_parents INVOKED for user=%s (window_exists=%s)",
+                    sel.get("label"), checkout_window.winfo_exists(),
+                )
+                if not checkout_window.winfo_exists():
+                    logger.debug("on_person_change: window closed before apply_parents ran; skipping")
+                    return
                 parents_holder["emails"] = parents
                 _update_recipients_display()
+                logger.debug("on_person_change: apply_parents COMPLETED for user=%s", sel.get("label"))
 
+            logger.debug("on_person_change: scheduling apply_parents via .after(0, ...) for user=%s", sel.get("label"))
             checkout_window.after(0, apply_parents)
+            logger.debug("on_person_change: apply_parents SCHEDULED (after() call returned) for user=%s", sel.get("label"))
 
         threading.Thread(target=worker, daemon=True).start()
 

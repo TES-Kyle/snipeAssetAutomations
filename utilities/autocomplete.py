@@ -373,6 +373,14 @@ class AutoCompleteEntry(ttk.Frame):
 
     def _maybe_hide_now(self):
         """Hide the popup if neither entry nor popup has focus."""
+        if not self.winfo_exists():
+            # The whole widget (and its window) can be destroyed in the gap
+            # between _maybe_hide_later scheduling this and it actually
+            # running -- touching self.entry/self.listbox unconditionally
+            # in that case is a real, confirmed SIGSEGV (Tcl segfaulting
+            # resolving a destroyed widget's command from a stale .after()
+            # callback), not just a catchable Python exception.
+            return
         has_focus = (self.focus_get() in (self.entry, self.listbox))
         logger.debug("AutoCompleteEntry._maybe_hide_now: has_focus=%s, hover_open=%s", has_focus, self._hover_open)
         if not has_focus and not self._hover_open:

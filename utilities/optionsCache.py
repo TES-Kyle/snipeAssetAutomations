@@ -188,12 +188,27 @@ def load_widget(window, kind: str, widget, transform=None):
 
         def on_tk_thread():
             """Clear any loading state and apply fresh data, on the Tk thread."""
+            logger.debug("load_widget: on_tk_thread INVOKED for kind=%s (window_exists=%s)", kind, window.winfo_exists())
+            if not window.winfo_exists():
+                # window.after() below only guards against the window
+                # already being gone at scheduling time -- it can still be
+                # destroyed in the gap between that and Tk actually running
+                # this callback. Touching a destroyed widget unconditionally
+                # here is confirmed (via a real macOS crash report, same
+                # AfterProc/Tkapp_Call/SetCmdNameFromAny signature) to be
+                # able to segfault the whole process, not just raise a
+                # catchable Python exception.
+                logger.debug("load_widget: window gone before applying kind=%s", kind)
+                return
             widget.set_loading(False)
             if fresh is not None:
                 _apply(fresh)
+            logger.debug("load_widget: on_tk_thread COMPLETED for kind=%s", kind)
 
+        logger.debug("load_widget: scheduling on_tk_thread via .after(0, ...) for kind=%s", kind)
         try:
             window.after(0, on_tk_thread)
+            logger.debug("load_widget: on_tk_thread SCHEDULED (after() call returned) for kind=%s", kind)
         except Exception:
             logger.debug("load_widget: window gone before applying kind=%s", kind)
 
@@ -295,15 +310,32 @@ def start_live_refresh(window, kind: str, on_update, interval_seconds: float | N
 
         def _apply_and_reschedule():
             """Push fresh data into the caller's callback and queue the next tick."""
+            logger.debug(
+                "start_live_refresh: _apply_and_reschedule INVOKED for kind=%s (window_exists=%s)",
+                kind, window.winfo_exists(),
+            )
+            if not window.winfo_exists():
+                # See load_widget's on_tk_thread for why this check exists:
+                # window.after() below only catches the window already
+                # being gone at scheduling time, not destroyed in the gap
+                # before Tk runs this callback -- and on_update() touches
+                # widgets (e.g. person_ac.set_options(...)), which can
+                # segfault the process on a destroyed widget rather than
+                # just raising.
+                logger.debug("start_live_refresh: window gone before applying update for kind=%s", kind)
+                return
             if data is not None:
                 try:
                     on_update(data)
                 except Exception:
                     logger.exception("start_live_refresh: on_update callback failed for kind=%s", kind)
             _schedule_next()
+            logger.debug("start_live_refresh: _apply_and_reschedule COMPLETED for kind=%s", kind)
 
+        logger.debug("start_live_refresh: scheduling _apply_and_reschedule via .after(0, ...) for kind=%s", kind)
         try:
             window.after(0, _apply_and_reschedule)
+            logger.debug("start_live_refresh: _apply_and_reschedule SCHEDULED (after() call returned) for kind=%s", kind)
         except Exception:
             logger.debug("start_live_refresh: window gone before applying update for kind=%s", kind)
 
