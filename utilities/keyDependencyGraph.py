@@ -98,7 +98,9 @@ def load_known_key_names(repo_root: str) -> frozenset:
     return frozenset(names)
 
 
-def trace_module(entry_rel_path: str, repo_root: str, known_key_names: frozenset = None) -> ModuleTrace:
+def trace_module(
+    entry_rel_path: str, repo_root: str, known_key_names: frozenset = None, stop_at_files: frozenset = frozenset(),
+) -> ModuleTrace:
     """Trace one entry point's transitive local-import closure.
 
     Args:
@@ -108,6 +110,18 @@ def trace_module(entry_rel_path: str, repo_root: str, known_key_names: frozenset
         known_key_names: Result of load_known_key_names(repo_root); loaded
             automatically if not supplied (callers tracing many entries in
             one build should load it once and pass it in).
+        stop_at_files: Repo-relative paths to never recurse into, even if
+            imported. For routing-table files specifically: e.g.
+            consisterizer.py unconditionally imports
+            consisterizerScriptsRouting.py (to build its "run on submit"
+            checkbox list) which in turn imports every one of THOSE
+            entries' own targets, including a Jamf one -- so without this,
+            selecting "Consisterizer" alone would always drag in Jamf
+            secrets, regardless of whether that specific submit-script is
+            selected. A routing-table file's own entries are meant to be
+            traced independently, per whatever was actually selected for
+            that group (see partialInstallBuilder.compute_selection_trace)
+            -- not swept in wholesale via an unrelated entry's import edge.
 
     Returns:
         ModuleTrace of every local file reached and every Key.py name
@@ -137,9 +151,9 @@ def trace_module(entry_rel_path: str, repo_root: str, known_key_names: frozenset
         key_aliases = set()
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom):
-                _handle_import_from(node, rel_path, repo_root, queue, key_names, key_aliases, known_key_names)
+                _handle_import_from(node, rel_path, repo_root, queue, key_names, key_aliases, known_key_names, stop_at_files)
             elif isinstance(node, ast.Import):
-                _handle_import(node, rel_path, repo_root, queue, known_key_names)
+                _handle_import(node, rel_path, repo_root, queue, known_key_names, stop_at_files)
 
         if key_aliases:
             _scan_key_attribute_accesses(tree, key_aliases, rel_path, key_names, known_key_names)
@@ -148,12 +162,14 @@ def trace_module(entry_rel_path: str, repo_root: str, known_key_names: frozenset
     return ModuleTrace(seen_files, key_names)
 
 
-def trace_selection(entry_rel_paths, repo_root: str) -> ModuleTrace:
+def trace_selection(entry_rel_paths, repo_root: str, stop_at_files: frozenset = frozenset()) -> ModuleTrace:
     """Trace a set of selected routing entries plus the always-included baseline.
 
     Args:
         entry_rel_paths: Iterable of entry file paths relative to repo_root.
         repo_root: Absolute path to the repository root.
+        stop_at_files: See trace_module -- forwarded to every trace_module()
+            call made here.
 
     Returns:
         Union ModuleTrace across every selected entry and BASELINE_INFRA_FILES.
@@ -161,7 +177,7 @@ def trace_selection(entry_rel_paths, repo_root: str) -> ModuleTrace:
     known_key_names = load_known_key_names(repo_root)
     result = ModuleTrace(set(), set())
     for rel_path in (*entry_rel_paths, *BASELINE_INFRA_FILES):
-        result = result.union(trace_module(rel_path, repo_root, known_key_names))
+        result = result.union(trace_module(rel_path, repo_root, known_key_names, stop_at_files))
     return result
 
 
@@ -214,7 +230,7 @@ def _dotted_for_importfrom(node, current_rel_path, repo_root):
     return base
 
 
-def _handle_import_from(node, current_rel_path, repo_root, queue, key_names, key_aliases, known_key_names):
+def _handle_import_from(node, current_rel_path, repo_root, queue, key_names, key_aliases, known_key_names, stop_at_files=frozenset()):
     module_dotted = _dotted_for_importfrom(node, current_rel_path, repo_root)
 
     if module_dotted == "utilities.Key":
@@ -230,7 +246,8 @@ def _handle_import_from(node, current_rel_path, repo_root, queue, key_names, key
         sub_dotted = f"{module_dotted}.{alias.name}" if module_dotted else alias.name
         resolved = resolve_local_module(sub_dotted, repo_root)
         if resolved:
-            queue.append(resolved)
+            if resolved not in stop_at_files:
+                queue.append(resolved)
             continue
 
         # A single-component module (e.g. "from utilities import X") that
@@ -248,7 +265,8 @@ def _handle_import_from(node, current_rel_path, repo_root, queue, key_names, key
         if first_component_is_local(module_dotted, repo_root):
             resolved_module = resolve_local_module(module_dotted, repo_root)
             if resolved_module:
-                queue.append(resolved_module)
+                if resolved_module not in stop_at_files:
+                    queue.append(resolved_module)
             else:
                 raise UnresolvedImportError(
                     f"{current_rel_path}: cannot resolve local import "
@@ -256,7 +274,7 @@ def _handle_import_from(node, current_rel_path, repo_root, queue, key_names, key
                 )
 
 
-def _handle_import(node, current_rel_path, repo_root, queue, known_key_names):
+def _handle_import(node, current_rel_path, repo_root, queue, known_key_names, stop_at_files=frozenset()):
     for alias in node.names:
         dotted = alias.name
         if dotted == "utilities.Key" or dotted.startswith("utilities.Key."):
@@ -266,7 +284,8 @@ def _handle_import(node, current_rel_path, repo_root, queue, known_key_names):
             )
         resolved = resolve_local_module(dotted, repo_root)
         if resolved:
-            queue.append(resolved)
+            if resolved not in stop_at_files:
+                queue.append(resolved)
         elif first_component_is_local(dotted, repo_root):
             raise UnresolvedImportError(f"{current_rel_path}: cannot resolve local import 'import {dotted}'")
         # else: stdlib/third-party -- ignore.

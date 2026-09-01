@@ -220,6 +220,31 @@ def test_populate_usb_end_to_end_only_writes_selected_secrets(fake_repo, tmp_pat
     assert not (usb / "utilities").exists()
 
 
+def test_populate_usb_carries_settings_json_wholesale(fake_repo, tmp_path):
+    # settings.json holds low-stakes-but-not-for-public-repo values (e.g.
+    # the label printer's IP) -- unlike Key.py it isn't secret-gated by
+    # selection, so it must be copied over in full, unconditionally.
+    root, spec = fake_repo
+    from utilities import routingCatalog
+    catalog = list(routingCatalog._load_entries_for_spec(spec, str(root)))
+    safe_entry = next(e for e in catalog if e.label == "Safe Action")
+
+    usb = tmp_path / "usb"
+    usb.mkdir()
+    selection = {"asset": {safe_entry.index}}
+
+    orig_specs = routingCatalog.ROUTING_SPECS
+    routingCatalog.ROUTING_SPECS = (spec,)
+    try:
+        pib.populate_usb(selection, str(root), str(usb))
+    finally:
+        routingCatalog.ROUTING_SPECS = orig_specs
+
+    settings_path = usb / "partial_app" / "utilities" / "settings.json"
+    assert settings_path.exists()
+    assert json.loads(settings_path.read_text()) == {"leftover": True}
+
+
 def test_populate_usb_writes_real_git_sha_to_meta_json(fake_repo, tmp_path):
     root, spec = fake_repo
     subprocess.run(["git", "add", "-A"], cwd=root, check=True)

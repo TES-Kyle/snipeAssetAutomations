@@ -117,3 +117,35 @@ def test_trace_selection_always_includes_baseline_infra():
     assert {"API_URL_Base", "API_Key", "API_KEYS"} <= trace.key_names
     for baseline_file in kdg.BASELINE_INFRA_FILES:
         assert baseline_file in trace.files
+
+
+def test_stop_at_files_prevents_recursing_into_a_boundary_file(tmp_path):
+    # Synthetic version of the real bug: entry.py imports pkg/routing.py (a
+    # "routing table" that should be treated as a selection boundary of its
+    # own) via a dotted package-relative import -- the same import shape
+    # consisterizer.py actually uses for consisterizerScriptsRouting.py --
+    # which in turn imports risky.py (touches a secret). Without
+    # stop_at_files, tracing entry.py alone would incorrectly pull in
+    # risky.py's secret.
+    _write(tmp_path, "entry.py", "from pkg.routing import ROUTES\n")
+    _write(tmp_path, "pkg/__init__.py", "")
+    _write(tmp_path, "pkg/routing.py", "from pkg.risky import risky_action\nROUTES = [risky_action]\n")
+    _write(tmp_path, "pkg/risky.py", "from utilities.Key import jamfURL\n\ndef risky_action():\n    return jamfURL\n")
+
+    without_boundary = kdg.trace_module("entry.py", str(tmp_path), known_key_names=_KNOWN)
+    assert "jamfURL" in without_boundary.key_names  # confirms the bug is real without the fix
+
+    with_boundary = kdg.trace_module(
+        "entry.py", str(tmp_path), known_key_names=_KNOWN, stop_at_files=frozenset({"pkg/routing.py"}),
+    )
+    assert "jamfURL" not in with_boundary.key_names
+    assert "pkg/routing.py" not in with_boundary.files
+    assert "pkg/risky.py" not in with_boundary.files
+
+
+def test_stop_at_files_does_not_affect_the_entry_point_itself(tmp_path):
+    # A file in stop_at_files can still be traced directly as an entry --
+    # the boundary only blocks *importing into* it from elsewhere.
+    _write(tmp_path, "routing.py", "from utilities.Key import jamfURL\n\nx = jamfURL\n")
+    trace = kdg.trace_module("routing.py", str(tmp_path), known_key_names=_KNOWN, stop_at_files=frozenset({"routing.py"}))
+    assert "jamfURL" in trace.key_names

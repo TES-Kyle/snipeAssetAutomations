@@ -200,7 +200,7 @@ git -C "$TMPDIR/repo" ls-files > "$TMPDIR/new_manifest.txt"
 while IFS= read -r relpath; do
   # Skip safety exclusions even if accidentally tracked
   case "$relpath" in
-    .venv/*|.build/*|.git/*) continue ;;
+    .venv/*|.build/*|.git/*|.python-runtime/*) continue ;;
   esac
   src="$TMPDIR/repo/$relpath"
   dst="$APP_DIR/$relpath"
@@ -260,7 +260,7 @@ PY
     [ -z "$relpath" ] && continue
     # Safety exclusions
     case "$relpath" in
-      .venv/*|.build/*|.git/*) continue ;;
+      .venv/*|.build/*|.git/*|.python-runtime/*) continue ;;
     esac
     rm_file "$APP_DIR/$relpath"
   done < <(/usr/bin/python3 - "$PRESERVE_DIR/.build/manifest.txt" "$TMPDIR/new_manifest.txt" <<'PY'

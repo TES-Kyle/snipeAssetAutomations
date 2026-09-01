@@ -78,7 +78,17 @@ def compute_selection_trace(selection: dict, catalog: list, repo_root: str):
     for entry in catalog:
         if entry.index in selection.get(entry.group, set()):
             defining_files |= entry.defining_files
-    return keyDependencyGraph.trace_selection(defining_files, repo_root)
+    # Routing-table files are selection boundaries, not just files to walk
+    # through: consisterizer.py unconditionally imports
+    # consisterizerScriptsRouting.py (to build its own submit-checkbox
+    # list), which in turn imports every one of THOSE entries' targets --
+    # without this, selecting "Consisterizer" alone would always drag in
+    # whatever consisterizer_submit's entries need (including Jamf),
+    # regardless of whether that specific submit-script was selected. Each
+    # routing table's own entries are already traced independently via the
+    # defining_files loop above, driven by their own group's selection.
+    stop_at_files = frozenset(spec.rel_path for spec in routingCatalog.ROUTING_SPECS)
+    return keyDependencyGraph.trace_selection(defining_files, repo_root, stop_at_files=stop_at_files)
 
 
 def render_trimmed_key_py(
@@ -258,6 +268,20 @@ def populate_usb(selection: dict, repo_root: str, usb_mount: str) -> dict:
            render_trimmed_key_py(repo_root, trace.key_names, excluded_names))
     _write(os.path.join(app_dest, "utilities", "partialInstallManifest.json"),
            render_manifest_json(excluded_names, _selection_labels(selection, catalog)))
+
+    # settings.json isn't secret-gated like Key.py -- it's low-stakes values
+    # (e.g. the label printer's IP) the admin just doesn't want in the
+    # public repo. copy_full_repo() above never carries it (it's gitignored,
+    # and also redundantly listed in _NEVER_COPY_REL_FILES), so it has to be
+    # copied wholesale here, same as a full install's optional
+    # SETTINGS_SRC_JSON step in make_installer_usb.command/installer.command.
+    # Read+write manually rather than shutil.copy2 -- copy2's macOS
+    # fast-copy syscall path is what caused the [Errno 22] failure writing
+    # to this same JHFS+ USB earlier (see copy_full_repo's rsync switch).
+    settings_src = os.path.join(repo_root, "utilities", "settings.json")
+    if os.path.isfile(settings_src):
+        with open(settings_src, "r", encoding="utf-8") as f:
+            _write(os.path.join(app_dest, "utilities", "settings.json"), f.read())
 
     for spec in routingCatalog.ROUTING_SPECS:
         indices = selection.get(spec.group, set())

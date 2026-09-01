@@ -160,10 +160,85 @@ chmod +x "$RUNNER"
 ############################
 
 ############################
+# [PROVISION PYTHON RUNTIME BLOCK]
+############################
+# macOS's system python3 (/usr/bin/python3, what "need python3" above just
+# confirmed exists) is stuck on Tcl/Tk 8.5 -- Apple has shipped that same
+# ancient, deprecated version for over a decade. A venv built from it
+# installs fine, but the GUI renders badly: flat buttons, missing
+# LabelFrame borders, generally broken Aqua theming (confirmed side by
+# side against a modern Tcl/Tk -- this isn't a guess). Rather than
+# requiring the admin to have already installed a newer Python -- exactly
+# the "extra setup on a fresh Mac" this deployment path exists to avoid --
+# download a small self-contained Python build (python-build-standalone,
+# the same project `uv` uses under the hood) with a real, modern, working
+# Tcl/Tk, and use that for the venv instead. Extracted into the app's own
+# directory, already chown'd to this user above, so this needs no
+# additional admin privileges beyond what was already required.
+#
+# Falls back to system python3 on any failure (network blocked, download
+# corrupted, unsupported architecture) rather than failing the whole
+# install -- a worse-looking GUI beats no app at all -- but says so
+# clearly rather than silently degrading.
+PYSTANDALONE_RELEASE="20260825"
+PYSTANDALONE_PYVER="3.12.14"
+PYRUNTIME_DIR="$EMBED_APP_DIR/.python-runtime"
+PYBIN="python3"   # falls back to this (system PATH) unless bundling succeeds below
+
+case "$(uname -m)" in
+  arm64)   PYSTANDALONE_ARCH="aarch64" ;;
+  x86_64)  PYSTANDALONE_ARCH="x86_64" ;;
+  *)       PYSTANDALONE_ARCH="" ;;
+esac
+
+if [ -n "$PYSTANDALONE_ARCH" ]; then
+  PYSTANDALONE_ASSET="cpython-${PYSTANDALONE_PYVER}+${PYSTANDALONE_RELEASE}-${PYSTANDALONE_ARCH}-apple-darwin-install_only.tar.gz"
+  PYSTANDALONE_URL="https://github.com/astral-sh/python-build-standalone/releases/download/${PYSTANDALONE_RELEASE}/${PYSTANDALONE_ASSET}"
+
+  if [ -x "$PYRUNTIME_DIR/python/bin/python3" ]; then
+    # Already provisioned (e.g. re-running the installer over an existing
+    # copy) -- reuse it rather than re-downloading.
+    PYBIN="$PYRUNTIME_DIR/python/bin/python3"
+  else
+    /usr/bin/osascript -e 'display dialog "Downloading a Python runtime with proper macOS support...\n\nThis may take a moment." buttons {"OK"} giving up after 1' >/dev/null || true
+    PYTMP="$(mktemp -d)"
+    PY_OK=0
+    for attempt in 1 2 3; do
+      if curl -fsSL "$PYSTANDALONE_URL" -o "$PYTMP/python.tar.gz" 2>"$PYTMP/curl_err.log" \
+         && tar -tzf "$PYTMP/python.tar.gz" >/dev/null 2>"$PYTMP/tar_err.log"; then
+        PY_OK=1
+        break
+      fi
+      /bin/sleep 2
+    done
+
+    if [ "$PY_OK" -eq 1 ]; then
+      mkdir -p "$PYRUNTIME_DIR"
+      tar -xzf "$PYTMP/python.tar.gz" -C "$PYRUNTIME_DIR"
+      xattr -dr com.apple.quarantine "$PYRUNTIME_DIR" >/dev/null 2>&1 || true
+      if [ -x "$PYRUNTIME_DIR/python/bin/python3" ] && "$PYRUNTIME_DIR/python/bin/python3" -c "import tkinter" >/dev/null 2>&1; then
+        PYBIN="$PYRUNTIME_DIR/python/bin/python3"
+      else
+        echo "Bundled Python extracted but failed a basic tkinter check; falling back to system python3."
+        rm -rf "$PYRUNTIME_DIR"
+      fi
+    fi
+    rm -rf "$PYTMP"
+  fi
+fi
+
+if [ "$PYBIN" = "python3" ]; then
+  /usr/bin/osascript -e 'display dialog "Could not set up a modern Python runtime (network issue or unsupported Mac).\n\nContinuing with the built-in Python on this Mac instead -- the app will still work, but menus and buttons may look visually different than expected. If this keeps happening, let the department know." buttons {"OK"} default button 1' >/dev/null
+fi
+############################
+# [END PROVISION PYTHON RUNTIME BLOCK]
+############################
+
+############################
 # [CREATE VENV BLOCK]
 ############################
 cd "$EMBED_APP_DIR"
-python3 -m venv ".venv"
+"$PYBIN" -m venv ".venv"
 "./.venv/bin/python" -m pip install --upgrade pip setuptools wheel >/dev/null
 if [ -f "requirements.txt" ]; then
   /usr/bin/osascript -e 'display dialog "Installing Python dependencies..." buttons {"OK"} giving up after 1' >/dev/null || true
