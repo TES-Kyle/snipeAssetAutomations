@@ -63,6 +63,7 @@ from utilities.tk_geometry import center_window
 from utilities.tk_thread import ensure_tk_thread_pump, run_on_tk_thread
 from utilities.tk_date_entry import build_date_entry_frame
 from utilities.checkInOutCommon import build_soft_message_frame
+from utilities.theme import get_ui_colors
 from utilities.messaging import (
     message,
     get_parents,
@@ -642,7 +643,7 @@ def loanCheckout(asset_tag):
         """Clear the placeholder guidance when the Notes box receives focus."""
         if notes_placeholder_holder["active"]:
             notes_text_widget.delete("1.0", "end")
-            notes_text_widget.configure(fg="black")
+            notes_text_widget.configure(fg=theme["entry_fg"])
             notes_placeholder_holder["active"] = False
 
     def _on_notes_focus_out(_e):
@@ -651,7 +652,7 @@ def loanCheckout(asset_tag):
             notes_placeholder_holder["active"] = True
             notes_text_widget.delete("1.0", "end")
             notes_text_widget.insert("1.0", _NOTES_PLACEHOLDER_TEXT)
-            notes_text_widget.configure(fg="grey")
+            notes_text_widget.configure(fg=theme["muted_fg"])
 
     def on_person_change():
         """Recompute the live checkout-count display when the person selection changes."""
@@ -1006,6 +1007,7 @@ def loanCheckout(asset_tag):
     checkout_window = tk.Toplevel()
     checkout_window.title(f"Loan Checkout — {asset_tag}")
     ensure_tk_thread_pump(checkout_window)
+    theme = get_ui_colors()
 
     # Top row: device info and this semester's history side by side, each in
     # a LabelFrame (same style as the "Asset Functions" box on the main
@@ -1124,7 +1126,7 @@ def loanCheckout(asset_tag):
     cc_parent_checkbox.pack(side="left", padx=(10, 0))
 
     recipients_var = tk.StringVar(value="")
-    recipients_label = tk.Label(checkout_window, textvariable=recipients_var, wraplength=420, justify="left", fg="#555")
+    recipients_label = tk.Label(checkout_window, textvariable=recipients_var, wraplength=420, justify="left", fg=theme["muted_fg"])
     # Not packed here -- _update_recipients_display() packs/unpacks it as
     # there is/isn't something to show, so it takes up no space when blank.
 
@@ -1139,7 +1141,7 @@ def loanCheckout(asset_tag):
     notes_text_widget = tk.Text(notes_field_frame, height=3, width=40, wrap="word", relief="solid", borderwidth=1)
     notes_text_widget.pack(fill="x")
     notes_text_widget.insert("1.0", _NOTES_PLACEHOLDER_TEXT)
-    notes_text_widget.configure(fg="grey")
+    notes_text_widget.configure(fg=theme["muted_fg"])
     notes_text_widget.bind("<FocusIn>", _on_notes_focus_in)
     notes_text_widget.bind("<FocusOut>", _on_notes_focus_out)
 

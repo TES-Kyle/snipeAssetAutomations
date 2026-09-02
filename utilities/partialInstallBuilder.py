@@ -626,6 +626,9 @@ def open_partial_install_builder(parent, repo_root: str = None):
     summary_var = tk.StringVar(value="Nothing selected yet.")
     tk.Label(summary_frame, textvariable=summary_var, justify="left", anchor="w", wraplength=600).pack(fill="x")
 
+    # Hardcoded (not theme-sourced) intentionally: a fixed dark-red/white
+    # alert pair reads fine under either OS theme, and staying fixed makes
+    # it visually distinct from the rest of the window regardless of mode.
     jamf_banner = tk.Label(
         win, text="⚠ This selection includes Jamf Pro credentials.",
         bg="#a3341c", fg="white", font=("", 12, "bold"), pady=6,

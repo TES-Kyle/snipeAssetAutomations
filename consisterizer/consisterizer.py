@@ -279,6 +279,8 @@ def attach_placeholder(widget: tk.Widget, text: str):
         logger.debug("attach_placeholder: unsupported widget type, skipping")
         return
 
+    muted_fg = get_ui_colors()["muted_fg"]
+
     # Capture the widget's configured text colour BEFORE applying placeholder
     # styling so we can restore it faithfully on focus-in.  This avoids
     # hardcoding "black" which would be invisible in dark mode.
@@ -294,7 +296,7 @@ def attach_placeholder(widget: tk.Widget, text: str):
     widget.placeholder_active = True
     _widget_set_text(widget, text)
     try:
-        widget.config(fg="grey")
+        widget.config(fg=muted_fg)
     except Exception:
         pass
 
@@ -319,7 +321,7 @@ def attach_placeholder(widget: tk.Widget, text: str):
             widget.placeholder_active = True
             _widget_set_text(widget, widget.placeholder_text)
             try:
-                widget.config(fg="grey")
+                widget.config(fg=muted_fg)
             except Exception:
                 pass
 
@@ -477,6 +479,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     ROW_BG_1      = _theme["row_bg_1"]
     ROW_BG_2      = _theme["row_bg_2"]
     ROW_FG        = _theme["fg"]
+    MUTED_FG      = _theme["muted_fg"]
     ENTRY_BG      = _theme["entry_bg"]
     ENTRY_FG      = _theme["entry_fg"]
     ERROR_BG      = _theme["error_bg"]
@@ -2110,23 +2113,22 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                 except Exception:
                     pass
                 try:
-                    t.configure(state="disabled", fg="grey")
+                    t.configure(state="disabled", fg=MUTED_FG)
                 except Exception:
                     pass
 
-        grey = "grey"
         for lbl_key in ("field_lbl", "curr_lbl"):
             lbl = bn_row.get(lbl_key)
             if lbl:
                 try:
-                    lbl.configure(fg=ROW_FG if has_field else grey)
+                    lbl.configure(fg=ROW_FG if has_field else MUTED_FG)
                 except Exception:
                     pass
 
         res_lbl = bn_row.get("res_lbl")
         if res_lbl:
             try:
-                res_lbl.configure(fg=(bn_row.get("res_lbl_fg_default", ROW_FG) if has_field else grey))
+                res_lbl.configure(fg=(bn_row.get("res_lbl_fg_default", ROW_FG) if has_field else MUTED_FG))
             except Exception:
                 pass
 

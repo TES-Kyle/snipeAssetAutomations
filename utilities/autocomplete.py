@@ -4,6 +4,8 @@ import logging
 import tkinter as tk
 from tkinter import ttk
 
+from utilities.theme import get_ui_colors
+
 logger = logging.getLogger(__name__)
 
 _IGNORE_KEYS = {
@@ -77,6 +79,11 @@ class AutoCompleteEntry(ttk.Frame):
         """
         logger.debug("AutoCompleteEntry.__init__: parent=%s, width=%s, require_match=%s", parent, width, require_match)
         super().__init__(parent)
+
+        # Read once per widget (not per call) -- get_ui_colors() shells out
+        # to `defaults read` on macOS, and this widget is created many
+        # times per window.
+        self._theme = get_ui_colors()
 
         # Classic tk.Frame (not ttk) wrapping just the Entry, so the
         # invalid-value indicator is a colored highlight border rather than
@@ -210,14 +217,14 @@ class AutoCompleteEntry(ttk.Frame):
         self._loading = is_loading
         try:
             if is_loading:
-                self.entry.configure(foreground="#666")
+                self.entry.configure(foreground=self._theme["muted_fg"])
                 self.entry.delete(0, tk.END)
                 self.entry.insert(0, text)
                 self.entry.state(["disabled"])
             else:
                 self.entry.state(["!disabled"])
                 self.entry.delete(0, tk.END)
-                self.entry.configure(foreground="black")
+                self.entry.configure(foreground=self._theme["entry_fg"])
         except Exception:
             pass
 
@@ -313,7 +320,7 @@ class AutoCompleteEntry(ttk.Frame):
         # Thickness is never touched here (fixed at construction) so the
         # widget never changes size when this toggles -- only the color
         # does, blending into the background when valid.
-        border_color = "red" if is_invalid else self._valid_border_color
+        border_color = self._theme["error_fg"] if is_invalid else self._valid_border_color
         try:
             self._entry_wrap.configure(highlightbackground=border_color, highlightcolor=border_color)
         except Exception:

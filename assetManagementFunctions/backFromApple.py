@@ -18,6 +18,7 @@ from utilities.Key import operations_email, support_email
 from utilities.messaging import is_email, message, ready_fine, ready_no_fine, remove_fine_warning
 from utilities.otherApiBits import build_asset_info_frame, getAssetInfo, getLatestCheckinName, get_headers
 from utilities.tk_geometry import center_window
+from utilities.theme import get_ui_colors
 
 logger = logging.getLogger(__name__)
 
@@ -302,6 +303,7 @@ def backFromApple(asset_tag):
     # Create a new top-level window.
     logger.debug("backFromApple: creating repair window for %s", asset_tag)
     repair_window = tk.Toplevel()
+    theme = get_ui_colors()
 
     # Asset info panel (helps validate the correct asset tag).
     logger.debug("backFromApple: fetching asset info for %s", asset_tag)
@@ -429,7 +431,7 @@ def backFromApple(asset_tag):
     # Primary email label
     primary_email_frame = tk.Frame(repair_window)
     primary_email_frame.pack(fill='x', padx=10, pady=2)
-    primary_email_label = tk.Label(primary_email_frame, textvariable=primary_email_var, anchor='w', fg="gray20", justify='left')
+    primary_email_label = tk.Label(primary_email_frame, textvariable=primary_email_var, anchor='w', fg=theme["muted_fg"], justify='left')
     primary_email_label.pack(side='left')
 
     # Hook updates when toggles change
