@@ -130,7 +130,7 @@ def checkIn(asset_tag, checkOutOrigin=None):
 
     if checkOutOrigin is not None:
         logger.debug("checkIn: checkOutOrigin set, showing already-checked-in warning")
-        w = tk.Label(checkin_window, text="THIS ASSET IS STILL CHECKED IN.\nClick Check In below to check it in first.")
+        w = tk.Label(checkin_window, text="THIS ASSET IS STILL CHECKED OUT.\nClick Check In below to check it in first.")
         w.pack()
 
 
