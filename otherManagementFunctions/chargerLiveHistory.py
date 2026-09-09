@@ -77,7 +77,7 @@ def show_connected_charger_history():
     # History output.
     history_frame = ttk.Frame(charger_window)
     history_frame.pack(fill="both", expand=True, padx=10, pady=6)
-    history_text = tk.Text(history_frame, wrap="word", width=90, height=18)
+    history_text = tk.Text(history_frame, wrap="word", width=90, height=18, relief="solid", borderwidth=1)
     history_text.pack(fill="both", expand=True)
 
     status_var = tk.StringVar(value="")

@@ -64,15 +64,62 @@ def get_settings() -> dict:
     return settings
 
 
+def _should_drop_key(key, value, defaults: dict) -> bool:
+    """Return True if key should be omitted from settings.json rather than written.
+
+    Two cases:
+    - value matches key's entry in defaults (defaultSettings.json) -- no
+      need to pin today's value when it's already the default.
+    - key has no entry in defaults at all (a leftover/orphaned setting from
+      a removed or renamed feature) and value is blank -- nothing meaningful
+      to preserve, so it's dropped instead of living forever. A non-blank
+      orphaned key is always kept, since there's no default to fall back to
+      and dropping it would lose its value outright.
+    """
+    if key in defaults:
+        return str(value) == str(defaults[key])
+    return str(value) == ""
+
+
+def _write_settings_file(data: dict) -> bool:
+    """Atomically replace settings.json's contents with data.
+
+    Writes to a temp file followed by os.replace() so a crash mid-write
+    can't corrupt the settings.json the app reads on every launch.
+
+    Args:
+        data: Complete dict to persist (already prepared by the caller).
+
+    Returns:
+        True on success, False if the write failed (logged, not raised).
+    """
+    tmp_path = SETTINGS_PATH + ".tmp"
+    try:
+        with open(tmp_path, "w") as fh:
+            json.dump(data, fh)
+        os.replace(tmp_path, SETTINGS_PATH)
+        logger.info("_write_settings_file: wrote %s keys to %s", len(data), SETTINGS_PATH)
+        return True
+    except Exception as exc:
+        logger.exception("_write_settings_file: failed to write %s: %s", SETTINGS_PATH, exc)
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except Exception:
+            pass
+        return False
+
+
 def update_settings(updates: dict) -> bool:
     """Merge `updates` into settings.json and write it back atomically.
 
     Reads the current settings.json only (not the merged defaults+overrides
     view from get_settings()), applies `updates` on top, and writes the
-    result to a temp file followed by os.replace() so a crash mid-write
-    can't corrupt the settings.json the app reads on every launch. Writing
-    only settings.json (not the merged view) keeps default values out of
-    the user's override file.
+    result. Any key in `updates` whose value matches its defaultSettings.json
+    entry is dropped from settings.json instead of written -- so a setting
+    that's set back to (or left at) default keeps tracking future changes to
+    that default, rather than getting permanently pinned to today's value.
+    Pre-existing keys not part of this call are left untouched either way.
 
     Args:
         updates: Dict of key/value pairs to merge into settings.json.
@@ -82,22 +129,13 @@ def update_settings(updates: dict) -> bool:
     """
     logger.debug("update_settings: merging %s keys into settings.json", len(updates))
     current = safe_read_json(SETTINGS_PATH)
-    current.update(updates)
-    tmp_path = SETTINGS_PATH + ".tmp"
-    try:
-        with open(tmp_path, "w") as fh:
-            json.dump(current, fh)
-        os.replace(tmp_path, SETTINGS_PATH)
-        logger.info("update_settings: wrote %s keys to %s", len(current), SETTINGS_PATH)
-        return True
-    except Exception as exc:
-        logger.exception("update_settings: failed to write %s: %s", SETTINGS_PATH, exc)
-        try:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
-        except Exception:
-            pass
-        return False
+    defaults = safe_read_json(DEFAULTS_PATH)
+    for key, value in updates.items():
+        if _should_drop_key(key, value, defaults):
+            current.pop(key, None)
+        else:
+            current[key] = value
+    return _write_settings_file(current)
 
 
 def set_setting(key, value) -> bool:
@@ -111,3 +149,28 @@ def set_setting(key, value) -> bool:
         True on success, False if the write failed.
     """
     return update_settings({key: value})
+
+
+def replace_settings(values: dict) -> bool:
+    """Replace settings.json wholesale with values, dropping keys that don't need saving.
+
+    Unlike update_settings() (an incremental merge), this replaces the whole
+    file -- for a caller like the Settings window that always submits its
+    complete currently-displayed state rather than a partial change. See
+    _should_drop_key() for exactly which keys get omitted: default-equal
+    keys, plus blank orphaned keys (no schema/default entry at all) -- so
+    resetting the whole "Other" group to blank and hitting Apply is enough
+    to clean out dead/leftover settings, without touching anything with a
+    real value.
+
+    Args:
+        values: Complete dict of key/value pairs representing the desired
+            settings state.
+
+    Returns:
+        True on success, False if the write failed.
+    """
+    defaults = safe_read_json(DEFAULTS_PATH)
+    pruned = {k: v for k, v in values.items() if not _should_drop_key(k, v, defaults)}
+    logger.info("replace_settings: %s of %s keys kept (others matched default or were blank/orphaned)", len(pruned), len(values))
+    return _write_settings_file(pruned)

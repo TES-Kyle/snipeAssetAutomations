@@ -9,6 +9,7 @@ from utilities.api_user import get_api_key
 from utilities.autocomplete import AutoCompleteEntry
 from utilities.tk_geometry import center_window
 from utilities.tk_date_entry import build_date_entry_frame
+from utilities.expectedCheckin import with_checkin_time
 from utilities.checkInOutCommon import (
     resolve_status_id,
     build_asset_tag_frame,
@@ -89,7 +90,7 @@ def checkoutTo(asset_tag):
             "checkout_to_type": "user",
             "assigned_user": userID,
             "status_id": statusID,
-            "expected_checkin": expectedCheckIn if expectedCheckIn else None
+            "expected_checkin": with_checkin_time(expectedCheckIn)
         }
         logger.debug("Checkout payload for %s: %s", asset_tag, payload)
 

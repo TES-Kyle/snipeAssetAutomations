@@ -62,6 +62,7 @@ from utilities.autocomplete import AutoCompleteEntry
 from utilities.tk_geometry import center_window
 from utilities.tk_thread import ensure_tk_thread_pump, run_on_tk_thread
 from utilities.tk_date_entry import build_date_entry_frame
+from utilities.expectedCheckin import with_checkin_time
 from utilities.checkInOutCommon import build_soft_message_frame
 from utilities.theme import get_ui_colors
 from utilities.messaging import (
@@ -934,7 +935,7 @@ def loanCheckout(asset_tag):
         payload = {
             "checkout_to_type": "user",
             "assigned_user": selected_user["id"],
-            "expected_checkin": expected_checkin if expected_checkin else None,
+            "expected_checkin": with_checkin_time(expected_checkin),
             "note": note_line,
         }
         logger.debug("submit: checkout payload for %s: %s", asset_tag, payload)

@@ -123,7 +123,7 @@ def newRepair(asset_tag):
     issue_frame.pack(fill='x', padx=10, pady=5)
     issue_label = tk.Label(issue_frame, text="Please describe the issue:")
     issue_label.pack(side='left')
-    issue_entry = tk.Text(issue_frame, height=5, width=40)
+    issue_entry = tk.Text(issue_frame, height=5, width=40, relief="solid", borderwidth=1)
     issue_entry.pack(side='left', expand=True, fill='x')
     issue_entry.bind('<Return>', on_enter_pressed_in_issue_entry)
 

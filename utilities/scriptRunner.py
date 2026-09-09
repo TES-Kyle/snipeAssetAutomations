@@ -96,7 +96,7 @@ def handler(func, autoclose_delay=120):
     # Center on screen.
     center_window(win, width=600, height=400)
 
-    log_box = ScrolledText(win, height=20, width=80, state="normal")
+    log_box = ScrolledText(win, height=20, width=80, state="normal", relief="solid", borderwidth=1)
     log_box.pack(padx=10, pady=10, fill="both", expand=True)
 
     button_frame = tk.Frame(win)

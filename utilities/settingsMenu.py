@@ -14,7 +14,8 @@ from tkinter import messagebox
 
 from utilities.logging_utils import configure_logging
 from utilities.partialInstallBuilder import is_partial_install, open_partial_install_builder
-from utilities.settings import safe_read_json, UTILITIES_DIR, SETTINGS_PATH, DEFAULTS_PATH
+from utilities.scroll_support import bind_canvas_scroll
+from utilities.settings import safe_read_json, replace_settings, UTILITIES_DIR, SETTINGS_PATH, DEFAULTS_PATH
 from utilities.theme import get_ui_colors
 from utilities.tk_geometry import center_window
 
@@ -305,7 +306,14 @@ def settingsMenu():
             )
 
     def apply():
-        """Persist settings, refresh logging config, and close the window."""
+        """Persist settings (dropping keys that match default), refresh logging, and close.
+
+        A key equal to its defaultSettings.json value is dropped instead of
+        written, so settings.json only ever holds the diff from default --
+        a setting left at default keeps tracking future default changes, and
+        a dead/orphaned "Other" setting can be permanently cleared just by
+        resetting it to blank and hitting Apply.
+        """
         logger.debug("apply: collecting %s settings keys", len(keys))
         output = dict()
         # Gather all known keys, preserving existing values for non-editable fields.
@@ -315,9 +323,9 @@ def settingsMenu():
             else:
                 output[key] = settingsDict.get(key, defaultsDict.get(key, ""))
 
-        logger.info("apply: saving %s settings to settings.json", len(output))
+        logger.info("apply: submitting %s settings keys", len(output))
         # Persist settings and refresh logging without restart.
-        open(SETTINGS_PATH, "w").write(json.dumps(output))
+        replace_settings(output)
         logger.debug("apply: settings written; reconfiguring logging")
         configure_logging()
 
@@ -406,32 +414,6 @@ def settingsMenu():
     inner.bind("<Configure>", _on_inner_configure)
     canvas.bind("<Configure>", _on_canvas_configure)
 
-    def _on_mousewheel(event):
-        """Scroll the canvas with the mouse wheel."""
-        logger.debug("_on_mousewheel: num=%s, delta=%s", event.num, event.delta)
-        # Normalize scroll direction for platform differences.
-        if event.num == 4 or event.delta > 0:
-            canvas.yview_scroll(-1, "units")
-        elif event.num == 5 or event.delta < 0:
-            canvas.yview_scroll(1, "units")
-
-    def _bind_mousewheel(_event=None):
-        """Bind mouse wheel events to the settings window."""
-        logger.debug("_bind_mousewheel: binding mouse wheel events")
-        settings_window.bind_all("<MouseWheel>", _on_mousewheel)
-        settings_window.bind_all("<Button-4>", _on_mousewheel)
-        settings_window.bind_all("<Button-5>", _on_mousewheel)
-
-    def _unbind_mousewheel(_event=None):
-        """Unbind mouse wheel events when focus leaves the window."""
-        logger.debug("_unbind_mousewheel: unbinding mouse wheel events")
-        settings_window.unbind_all("<MouseWheel>")
-        settings_window.unbind_all("<Button-4>")
-        settings_window.unbind_all("<Button-5>")
-
-    settings_window.bind("<Enter>", _bind_mousewheel)
-    settings_window.bind("<Leave>", _unbind_mousewheel)
-
     labels = []
     entries = []
     entry_vars = []
@@ -499,7 +481,8 @@ def settingsMenu():
             collapsed: Whether to start in collapsed state.
 
         Returns:
-            Tk Frame for adding child setting rows.
+            Tuple of (content Frame for adding child setting rows, header Frame
+            for adding controls like a per-group reset button).
         """
         logger.debug("_make_group: name=%s, collapsed=%s", name, collapsed)
         container = tk.Frame(parent, bd=1, relief="groove")
@@ -556,7 +539,27 @@ def settingsMenu():
         title.bind("<Button-1>", lambda _e: _toggle())
 
         logger.debug("_make_group: group=%s frame created", name)
-        return content
+        return content, header
+
+    def _add_reset_group_button(header, group_name, group_keys):
+        """Add a button to header that resets every key in group_keys to default.
+
+        Args:
+            header: The group's header Frame (from _make_group) to attach the button to.
+            group_name: Group display name, used only for logging.
+            group_keys: List of settings keys belonging to this group.
+        """
+        if not group_keys:
+            return
+
+        def _reset_group():
+            logger.debug("_reset_group: resetting %s keys in group=%s", len(group_keys), group_name)
+            for key in group_keys:
+                if key in entry_by_key:
+                    entry_by_key[key].set(defaultsDict.get(key, ""))
+
+        reset_group_btn = tk.Button(header, text="Reset Group", command=_reset_group)
+        reset_group_btn.pack(side="right", padx=(6, 0))
 
     logger.debug("settingsMenu: building UI groups from schema, groups count=%s", len(groups) if groups else 0)
     if groups:
@@ -564,25 +567,35 @@ def settingsMenu():
             group_name = group.get("name") or "Settings"
             group_desc = group.get("description") or ""
             logger.debug("settingsMenu: creating group=%s with %s items", group_name, len(group.get("items", [])))
-            group_frame = _make_group(inner, group_name, group_desc, group.get("collapsed", False))
+            group_frame, group_header = _make_group(inner, group_name, group_desc, group.get("collapsed", False))
 
+            group_keys = []
             for item in group.get("items", []):
                 # Skip malformed items without keys.
                 key = item.get("key")
                 if not key:
                     continue
                 used_keys.add(key)
+                group_keys.append(key)
                 label_text = item.get("label") or key
                 description = item.get("description") or ""
                 _add_setting_row(group_frame, key, label_text, description)
+            _add_reset_group_button(group_header, group_name, group_keys)
 
     # Add any keys not in schema under "Other"
     missing = [k for k in keys if k not in used_keys]
     logger.debug("settingsMenu: %s keys not in schema, adding to Other group", len(missing))
     if missing:
-        other_frame = _make_group(inner, "Other", "Settings not yet categorized.", False)
+        other_frame, other_header = _make_group(
+            inner, "Other",
+            "Present in your settings.json but not in the current schema/defaults -- "
+            "usually leftovers from a removed or renamed setting rather than something "
+            "new to categorize. Safe to reset to blank if you don't recognize a name.",
+            False,
+        )
         for key in missing:
             _add_setting_row(other_frame, key, key, "")
+        _add_reset_group_button(other_header, "Other", missing)
 
     # End Frame (Apply/Reset/Cancel).
     end_frame = tk.Frame(settings_window)
@@ -594,29 +607,13 @@ def settingsMenu():
     end_button = tk.Button(end_frame, text="Cancel", command=cancel)
     end_button.pack(side="right", fill="x", expand=True)
 
+    # Wire mousewheel/trackpad scrolling now that every row/group widget has
+    # been created (bind_canvas_scroll walks the tree at call time).
+    bind_canvas_scroll(canvas)
+
     logger.debug("settingsMenu: waiting for window dimensions to settle")
     # Keep the window fully visible and clear of the macOS Dock: reserve
     # space at the bottom, plus a little breathing room on the sides.
     # Shrinks the window first if it doesn't fit that usable area.
     center_window(settings_window, margin_left=20, margin_right=20, margin_top=0, margin_bottom=120)
     logger.info("settingsMenu: settings window displayed")
-
-
-# Get or make setting dictionary
-if os.path.isfile(SETTINGS_PATH):
-    settings = json.loads(open(SETTINGS_PATH).read())
-else:
-    settings = dict()
-
-# get default settings
-defaults = json.loads(open(DEFAULTS_PATH).read())
-
-# fill missing settings from defaults
-for key in defaults.keys():
-    if key not in settings.keys():
-        settings[key] = defaults[key]
-
-# Write settings to json file
-open(SETTINGS_PATH, "w").write(json.dumps(settings))
-logger.debug("settingsMenu module initialized: %s settings keys", len(settings))
-logger.info("Settings initialized on module load")

@@ -25,7 +25,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import platform
 import re
 from datetime import datetime, timedelta
 
@@ -38,12 +37,14 @@ from utilities.autocomplete import AutoCompleteEntry
 from utilities import optionsCache
 from utilities.otherApiBits import getAssetInfo
 from utilities.logging_utils import configure_logging
+from utilities.scroll_support import bind_canvas_scroll
 from utilities.settings import get_settings
 from utilities.Key import API_URL_Base  # API creds
 from utilities.api_user import get_api_headers, get_api_key
 from utilities.theme import get_ui_colors
 from utilities.tk_geometry import center_window
 from utilities.validation import valid_asset_tag
+from utilities.expectedCheckin import with_checkin_time
 from utilities.api_retry import call_with_retry
 
 from consisterizer.consisterizerScriptsRouting import (
@@ -75,7 +76,7 @@ FIELD_ORDER = [
 DATE_FIELDS = {"expected_checkin", "purchase_date"}
 PLACEHOLDERS = {
     "asset_tag": "4–5 digits (e.g., 12345)",
-    "expected_checkin": "YYYY-MM-DD",
+    "expected_checkin": "YYYY-MM-DD (defaults 3PM)",
     "purchase_date": "YYYY-MM-DD",
 }
 
@@ -125,7 +126,8 @@ RESULT & HIGHLIGHTING
 
 VALIDATION / CLEARING
 - Asset Tag must be 4–5 digits when you change it.
-- Dates must be YYYY-MM-DD ({empty} clears).
+- Dates must be YYYY-MM-DD ({empty} clears). expected_checkin also accepts
+  YYYY-MM-DD HH:MM:SS for an exact time; a bare date defaults to 3:00 PM.
 - Clear rules:
   • Text fields (name, serial, order_number, notes): {empty} string clears
   • Date fields (purchase_date, expected_checkin): {empty} clears
@@ -228,6 +230,29 @@ def valid_date(value: str) -> bool:
     except Exception:
         logger.debug("valid_date: %s is not a valid YYYY-MM-DD date", value)
         return False
+
+
+def valid_date_or_datetime(value: str) -> bool:
+    """Validate a string is YYYY-MM-DD or YYYY-MM-DD HH:MM:SS.
+
+    expected_checkin accepts an explicit time (Snipe-IT's checkin field is a
+    datetime, and consisterizer lets someone set an exact time rather than
+    always defaulting to end-of-day) in addition to a bare date.
+
+    Args:
+        value: String to test.
+
+    Returns:
+        True if value parses as either format, False otherwise.
+    """
+    logger.debug("valid_date_or_datetime: value=%s", value)
+    try:
+        datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+        logger.debug("valid_date_or_datetime: %s is a valid datetime", value)
+        return True
+    except Exception:
+        pass
+    return valid_date(value)
 
 
 def _widget_get_text(widget: tk.Widget) -> str:
@@ -377,7 +402,13 @@ def extract_current_values(assetData: dict) -> dict:
             assigned_username = email.split("@", 1)[0]
     # Date fields are returned as {"date": "YYYY-MM-DD", ...}; extract just the date string.
     purchase_date = (assetData.get("purchase_date") or {}).get("date") or ""
-    expected_checkin = (assetData.get("expected_checkin") or {}).get("date") or ""
+    # expected_checkin is a datetime field (Snipe-IT dropped its "date" key
+    # entirely once it added a time component) -- show the full
+    # "YYYY-MM-DD HH:MM:SS" so Current matches what a full-datetime Updates
+    # value would compare against. Falls back to "date" just in case an
+    # older/never-set asset still returns the plain-date shape.
+    _expected_checkin_obj = assetData.get("expected_checkin") or {}
+    expected_checkin = _expected_checkin_obj.get("datetime") or _expected_checkin_obj.get("date") or ""
     # Custom field: Box Number lives under custom_fields["Box Number"]["value"].
     custom_fields = assetData.get("custom_fields") or {}
     box_number = (custom_fields.get("Box Number") or {}).get("value") or ""
@@ -429,7 +460,7 @@ def _open_help(parent):
     frm.grid_rowconfigure(0, weight=1)
 
     # Text + scrollbar
-    txt = tk.Text(frm, wrap="word")
+    txt = tk.Text(frm, wrap="word", relief="solid", borderwidth=1)
     vsb = ttk.Scrollbar(frm, orient="vertical", command=txt.yview)
     txt.configure(yscrollcommand=vsb.set)
     txt.grid(row=0, column=0, sticky="nsew")
@@ -803,66 +834,6 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     grid_inner.bind("<Configure>", lambda e: _sync_layout(), add="+")
     grid_canvas.bind("<Configure>", _sync_layout, add="+")
 
-    # Smooth, pointer-gated wheel scrolling
-    _IS_MAC = platform.system() == "Darwin"
-    _SC_UNITS = 1  # slow & steady
-
-    def _pointer_over_canvas():
-        """Return True if the pointer is currently over the scrollable grid canvas.
-
-        Used to gate wheel-scroll events so the grid only scrolls when the
-        cursor is actually hovering over it.
-
-        Returns:
-            True if the pointer is over grid_canvas or grid_inner, False otherwise.
-        """
-        try:
-            x, y = win.winfo_pointerx(), win.winfo_pointery()
-            w = win.winfo_containing(x, y)
-            while w is not None:
-                if w is grid_canvas or w is grid_inner:
-                    return True
-                w = w.master
-        except Exception:
-            pass
-        return False
-
-    def _on_mousewheel(event):
-        """Handle mousewheel scrolling with pointer gating.
-
-        Scrolls the grid canvas only when the pointer is over it and the
-        content is taller than the visible area.  Handles macOS delta events,
-        Linux Button-4/5 events, and Windows delta events uniformly.
-
-        Args:
-            event: Tk event with .delta and/or .num attributes.
-        """
-        bbox = grid_canvas.bbox("all") or (0, 0, 0, 0)
-        content_h = bbox[3] - bbox[1]
-        over_canvas = _pointer_over_canvas()
-        logger.debug("_on_mousewheel: over_canvas=%s content_h=%s", over_canvas, content_h)
-        if not over_canvas or content_h <= max(1, grid_canvas.winfo_height()):
-            return
-        if _IS_MAC:
-            step = -_SC_UNITS if event.delta > 0 else _SC_UNITS
-            logger.debug("_on_mousewheel: mac scroll step=%s", step)
-            grid_canvas.yview_scroll(step, "units")
-        else:
-            if getattr(event, "num", None) == 4:
-                logger.debug("_on_mousewheel: linux scroll up")
-                grid_canvas.yview_scroll(-_SC_UNITS, "units")
-            elif getattr(event, "num", None) == 5:
-                logger.debug("_on_mousewheel: linux scroll down")
-                grid_canvas.yview_scroll(_SC_UNITS, "units")
-            else:
-                steps = int(-event.delta / 120) if event.delta else 0
-                if steps:
-                    logger.debug("_on_mousewheel: windows scroll steps=%s", steps)
-                    grid_canvas.yview_scroll(steps * _SC_UNITS, "units")
-
-    win.bind_all("<MouseWheel>", _on_mousewheel)
-    win.bind_all("<Button-4>", _on_mousewheel)
-    win.bind_all("<Button-5>", _on_mousewheel)
 
     def _safe_get_fg(widget, default):
         """Return a widget's foreground colour, or a fallback if unavailable."""
@@ -1016,7 +987,8 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             row_record.update({"text_widget_type": "ac", "ac": ac, "ac_fg_default": ac_fg_default})
 
         else:
-            text = tk.Text(grid_inner, height=1, width=1, wrap="word", font=default_font, bg=ENTRY_BG, fg=ENTRY_FG)
+            text = tk.Text(grid_inner, height=1, width=1, wrap="word", font=default_font, bg=ENTRY_BG, fg=ENTRY_FG,
+                            relief="solid", borderwidth=1)
             text.grid(row=i + 1, column=1, sticky="nsew", padx=6, pady=3)
             if key in PLACEHOLDERS:
                 attach_placeholder(text, PLACEHOLDERS[key])
@@ -1039,6 +1011,10 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             row_record.update({"text_widget_type": "text", "text": text})
 
         rows_by_key[key] = row_record
+
+    # Wire mousewheel/trackpad scrolling now that every field row has been
+    # created (bind_canvas_scroll walks the tree at call time).
+    bind_canvas_scroll(grid_canvas)
 
     # Fields whose Updates widget is disabled (e.g. custom fields absent on this asset model).
     _disabled_rows: set = set()
@@ -1649,6 +1625,12 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                 logger.debug("_build_patch_payload: box_number db_col=%s value=%s", _box_db_col, new)
                 payload[_box_db_col] = new
 
+            elif key == "expected_checkin":
+                # A bare date defaults to end-of-school-day (3PM); an explicit
+                # time (e.g. "2026-09-15 09:30:00") is left as typed.
+                logger.debug("_build_patch_payload: expected_checkin raw value=%s", new)
+                payload[key] = with_checkin_time(new)
+
             else:
                 # Any future fields default to pass-through
                 logger.debug("_build_patch_payload: passthrough field=%s value=%s", key, new)
@@ -2056,7 +2038,11 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             if key in DATE_FIELDS:
                 if final_val == "":  # allow clearing dates with {empty}
                     continue
-                if not valid_date(final_val):
+                if key == "expected_checkin":
+                    if not valid_date_or_datetime(final_val):
+                        logger.debug("_collect_validation_errors: invalid datetime key=%s value=%s", key, final_val)
+                        errors.append(f"[{key}] must be YYYY-MM-DD or YYYY-MM-DD HH:MM:SS (got '{final_val}')")
+                elif not valid_date(final_val):
                     logger.debug("_collect_validation_errors: invalid date key=%s value=%s", key, final_val)
                     errors.append(f"[{key}] must be YYYY-MM-DD (got '{final_val}')")
         logger.debug("_collect_validation_errors: found %s errors", len(errors))

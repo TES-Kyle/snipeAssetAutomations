@@ -127,6 +127,14 @@ def getAssetInfo(assetTag, allow_missing: bool = False):
     if purchase_date.get("date"):
         var_list.append(("Purchase Date", purchase_date["date"]))
 
+    # Expected Check-in -- "formatted" (rather than "date"/"datetime") since
+    # it reads correctly regardless of whether Snipe-IT returns the older
+    # date-only shape or the current date+time shape (e.g. "2026-09-09 03:00 PM"),
+    # and is friendlier for non-technical staff than a raw 24-hour timestamp.
+    expected_checkin = assetData.get("expected_checkin") or {}
+    if expected_checkin.get("formatted"):
+        var_list.append(("Expected Check-in", expected_checkin["formatted"]))
+
     # Custom Fields
     custom_fields = assetData.get("custom_fields", {})
 

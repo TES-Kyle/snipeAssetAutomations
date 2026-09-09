@@ -17,6 +17,7 @@ from utilities import Key
 from utilities.Key import operations_email, support_email
 from utilities.messaging import is_email, message, ready_fine, ready_no_fine, remove_fine_warning
 from utilities.otherApiBits import build_asset_info_frame, getAssetInfo, getLatestCheckinName, get_headers
+from utilities.expectedCheckin import with_checkin_time
 from utilities.tk_geometry import center_window
 from utilities.theme import get_ui_colors
 
@@ -182,7 +183,7 @@ def set_loan_checkin(username, maintenance_start_date: date | None = None):
                 new_checkin = (date.today() + timedelta(days=1)).isoformat()
                 logger.info("set_loan_checkin: setting expected_checkin=%s for asset %s", new_checkin, asset_id[0])
                 payload = {
-                    "expected_checkin": new_checkin
+                    "expected_checkin": with_checkin_time(new_checkin)
                 }
                 _ = requests.patch(
                     Key.API_URL_Base + f"hardware/{asset_id[0]}",
@@ -447,7 +448,7 @@ def backFromApple(asset_tag):
     repair_notes_frame.pack(fill='x', padx=10, pady=5)
     repair_notes_label = tk.Label(repair_notes_frame, text="Repair Notes:")
     repair_notes_label.pack(side='left')
-    repair_notes_entry = tk.Text(repair_notes_frame, height=10, width=40)  # Text widget for multiline input
+    repair_notes_entry = tk.Text(repair_notes_frame, height=10, width=40, relief="solid", borderwidth=1)  # Text widget for multiline input
     repair_notes_entry.pack(side='left', expand=True, fill='x')
     repair_notes_entry.bind('<Return>', on_enter_pressed_in_repair_notes)
 

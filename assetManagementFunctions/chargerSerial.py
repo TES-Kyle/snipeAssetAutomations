@@ -208,7 +208,7 @@ def show_charger_results_tk(assetTag):
     logger.debug("show_charger_results_tk: results length=%s", len(results))
 
     # Use a Text widget to display results.
-    text_widget = tk.Text(top, wrap="word", width=80, height=20)
+    text_widget = tk.Text(top, wrap="word", width=80, height=20, relief="solid", borderwidth=1)
     text_widget.insert("1.0", results)
     text_widget.config(state="disabled")  # make read-only
     text_widget.pack(padx=10, pady=10)
