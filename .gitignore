@@ -11,3 +11,4 @@ venv/
 .venv/
 icon.icns
 logs/
+.claude/
