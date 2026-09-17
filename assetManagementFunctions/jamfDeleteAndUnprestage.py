@@ -20,7 +20,7 @@ from utilities.jamfPrestageCommon import (
 logger = logging.getLogger(__name__)
 
 
-def jamf_remove_prestage_and_delete(asset_tag: str) -> str:
+def jamf_remove_prestage_and_delete(asset_tag: str, safety=True) -> str:
     """Remove a device from all PreStage scopes and delete its Jamf record.
 
     Args:
@@ -37,12 +37,15 @@ def jamf_remove_prestage_and_delete(asset_tag: str) -> str:
     settings = get_prestage_settings()
     logger.debug("jamf_remove_prestage_and_delete: settings loaded dry_run=%s delete_after_remove=%s", settings.get("dry_run"), settings.get("delete_after_remove"))
 
-    if not _confirm_action(
-        "Confirm Jamf Delete",
-        "This will remove the device from all Jamf PreStages and delete its Jamf record.\n\nContinue?",
-    ):
-        logger.info("jamf_remove_prestage_and_delete: user cancelled for %s", asset_tag)
-        return "Cancelled."
+    if safety:
+        if not _confirm_action(
+            "Confirm Jamf Delete",
+            "This will remove the device from all Jamf PreStages and delete its Jamf record.\n\nContinue?",
+        ):
+            logger.info("jamf_remove_prestage_and_delete: user cancelled for %s", asset_tag)
+            return "Cancelled."
+    else:
+        logger.info("jamf_remove_prestage_and_delete: safety warning bypassed for %s", asset_tag)
 
     logger.info("=== Jamf Remove-from-PreStage + Delete ===")
     logger.info("Asset Tag: %s", asset_tag)

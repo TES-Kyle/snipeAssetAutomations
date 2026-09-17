@@ -13,7 +13,7 @@ from assetManagementFunctions.printSelected import printSelected
 
 # Callable scripts in display order (must align with labels below).
 submit_func_list = [
-    jamf_remove_prestage_and_delete,
+    lambda x: jamf_remove_prestage_and_delete(x, safety=False),
     printSelected,
 ]
 
