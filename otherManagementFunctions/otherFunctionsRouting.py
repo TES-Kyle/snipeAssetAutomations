@@ -21,8 +21,8 @@ from utilities.windmill import run_windmill_job
 # Callable functions in display order (wrapped for log streaming).
 other_func_list = [
     # Wrap each long-running script in the log window handler.
-    lambda: run_windmill_job("https://app.windmill.dev/api/w/trinity-it-dept-test-space/jobs/run/f/u/john/asset_tag_sync"),
-    lambda: run_windmill_job("https://app.windmill.dev/api/w/trinity-it-dept-test-space/jobs/run/f/u/john/sync_battery_data_from_jamf_to_snipe_it"),
+    lambda: run_windmill_job("https://app.windmill.dev/api/w/trinity-it-dept-test-space/jobs/run/f/f/Asset_Automations/asset_tag_sync"),
+    lambda: run_windmill_job("https://app.windmill.dev/api/w/trinity-it-dept-test-space/jobs/run/f/f/Asset_Automations/sync_battery_data_from_jamf_to_snipe_it"),
     show_connected_charger_history,
 ]
 logger.info("otherFunctionsRouting: %s functions registered", len(other_func_list))
