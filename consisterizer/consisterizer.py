@@ -2182,11 +2182,16 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
         logger.info("_refresh_current_after_save: reloading asset tag=%s", new_tag)
         _switch_asset_in_place(new_tag)
 
-    def _submit_current_asset(prompt_on_warnings: bool = True) -> tuple[bool, str, dict]:
+    def _submit_current_asset(prompt_on_warnings: bool = True, refresh_after_save: bool = True) -> tuple[bool, str, dict]:
         """Validate, warn on default mismatches, push to Snipe-IT (PATCH), optionally CHECKIN to unassign, refresh, and update the status line.
 
         Args:
             prompt_on_warnings: Whether to show a dialog for default mismatches.
+            refresh_after_save: Whether to reload the just-saved asset and
+                rebuild its UI rows on success. Pass False when the caller
+                is about to switch to a *different* asset right after
+                (batch mode) -- that reload's GET + full row rebuild would
+                just get thrown away the moment the next asset loads.
 
         Returns:
             Tuple of (ok, tag_for_scripts, snapshot) where ok is True on success.
@@ -2208,25 +2213,29 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
             messagebox.showerror("Validation Errors", "Please fix the following:\n\n" + "\n".join(errors))
             return False, (current_map.get("asset_tag") or ""), {}
 
-        # Confirm any changed status/model/assigned_to selection is still
-        # valid before _build_patch_payload() resolves it to an ID -- catches
-        # a value picked before a live-refresh silently dropped it. Only
-        # fields that actually changed are checked, since _build_patch_payload
-        # skips unchanged fields entirely (revalidating an untouched field
-        # could block a save over a value the user never intended to submit).
-        for field_key, kind, transform in (
-            ("status", "status", _status_options_transform),
-            ("model", "model", _model_options_transform),
-            ("assigned_to", "assignee", _assignee_options_transform),
-        ):
+        # Confirm any changed status/model/assigned_to selection still
+        # matches an already-loaded option before _build_patch_payload()
+        # resolves it to an ID. This is a cheap in-memory check (whatever
+        # the initial load + background live-refresh have landed so far)
+        # rather than a forced fresh fetch -- consisterizer's bulk submit
+        # loop runs this on every asset, and forcing a blocking paginated
+        # re-fetch of statuses/models/assignees on every single submit was
+        # a major chunk of what made batch runs slow, for a case (a value
+        # deleted from Snipe-IT in the last few seconds) that's rare and
+        # already caught by the PATCH call itself if it does happen -- see
+        # _api_patch_with_retry's error dialog. Only fields that actually
+        # changed are checked, since _build_patch_payload skips unchanged
+        # fields entirely (checking an untouched field could block a save
+        # over a value the user never intended to submit).
+        for field_key in ("status", "model", "assigned_to"):
             if str(snapshot.get(field_key, "")) == str(rows_by_key[field_key]["current"]):
                 continue
             ac = rows_by_key[field_key]["ac"]
-            if not optionsCache.revalidate_for_submit(kind, ac, transform=transform):
-                logger.warning("_submit_current_asset: stale selection for field=%s", field_key)
+            if not ac.is_valid():
+                logger.warning("_submit_current_asset: invalid selection for field=%s", field_key)
                 messagebox.showerror(
-                    "Outdated Selection",
-                    f"The selected {field_key.replace('_', ' ').title()} is no longer available. Please pick again.",
+                    "Invalid Selection",
+                    f"The selected {field_key.replace('_', ' ').title()} doesn't match anything in the list. Please pick again.",
                 )
                 return False, (current_map.get("asset_tag") or ""), {}
 
@@ -2284,7 +2293,7 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                                             note="Consisterizer: assign"):
                 return False, (current_map.get("asset_tag") or ""), {}
 
-        if any_changes or need_checkin or to_user_id is not None or to_loc_id is not None:
+        if refresh_after_save and (any_changes or need_checkin or to_user_id is not None or to_loc_id is not None):
             logger.debug("_submit_current_asset: refreshing UI after save")
             _refresh_current_after_save(snapshot)
 
@@ -2554,8 +2563,16 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
                 return False
 
         # --- 2) Save/update current asset in Snipe-IT ---
+        # In batch mode, step 4 below immediately switches to new_tag, which
+        # reloads+rebuilds the UI from scratch anyway -- so skip
+        # _submit_current_asset's own post-save reload of the asset we're
+        # about to navigate away from; it'd just be a wasted GET + row
+        # rebuild for state nobody sees.
         logger.info("_submit_and_maybe_switch: submitting current asset")
-        ok, tag_for_scripts, snapshot = _submit_current_asset(prompt_on_warnings=not bypass_warnings_var.get())
+        ok, tag_for_scripts, snapshot = _submit_current_asset(
+            prompt_on_warnings=not bypass_warnings_var.get(),
+            refresh_after_save=not batch_mode_var.get(),
+        )
         if not ok:
             logger.debug("_submit_and_maybe_switch: submit failed, aborting")
             return False

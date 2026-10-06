@@ -9,6 +9,8 @@ editor) can still do so; a value that already has a time component is left
 alone.
 """
 
+from __future__ import annotations
+
 import logging
 
 logger = logging.getLogger(__name__)

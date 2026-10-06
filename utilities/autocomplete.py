@@ -20,6 +20,28 @@ _IGNORE_KEYS = {
 _HIDE_DELAY_MS = 400
 
 
+def _option_identity(opt):
+    """Return a stable identity key for an option dict.
+
+    Used to tell "still the same option" apart from "byte-for-byte equal
+    dict", since an option's "meta" sub-dict is the raw Snipe-IT API
+    payload and can carry fields that change on their own (e.g. a status
+    label's live asset count) without the option itself -- id, label,
+    type -- having changed at all. Comparing full dicts for that (as
+    set_options() used to) meant a status like "In Storage" got treated
+    as newly-invalid every time any asset's count for it ticked, even
+    though the exact same status was still right there in the list.
+
+    Args:
+        opt: Option dict (expected to have "id"/"type"/"label" keys, per
+            the shapes returned by otherApiBits.py's getAll*Options()).
+
+    Returns:
+        Hashable tuple identifying the option, stable across refetches.
+    """
+    return (opt.get("id"), opt.get("type"), opt.get("label"))
+
+
 def _label_matches_any_option(text, options):
     """Return True if text exactly matches some option's label.
 
@@ -155,17 +177,43 @@ class AutoCompleteEntry(ttk.Frame):
         If the currently selected option is no longer present in the new
         list (e.g. a live-refresh dropped it), the selection is cleared --
         get_selected() should never keep returning something that's not
-        actually in the current option list.
+        actually in the current option list. "Present" is judged by
+        _option_identity() (id/type/label), not full dict equality -- an
+        option's "meta" sub-dict is the raw API payload and can carry
+        fields (e.g. a status's live asset count) that change between
+        fetches without the option itself having changed. When the
+        identity is still found, self._selected is updated to point at
+        the fresh dict, so it doesn't keep pinning stale meta forever.
 
         Args:
             options: Iterable of dicts with a "label" key.
         """
         self._all_options = list(options or [])
         logger.debug("AutoCompleteEntry.set_options: %s options loaded", len(self._all_options))
-        if self._selected is not None and self._selected not in self._all_options:
-            logger.debug("AutoCompleteEntry.set_options: previously selected option no longer present; clearing")
-            self._selected = None
+        if self._selected is not None:
+            sel_key = _option_identity(self._selected)
+            match = next((o for o in self._all_options if _option_identity(o) == sel_key), None)
+            if match is None:
+                logger.debug("AutoCompleteEntry.set_options: previously selected option no longer present; clearing")
+            self._selected = match
         self._update_validity_style()
+
+    def is_valid(self) -> bool:
+        """Return True if the current text is blank or matches a loaded option.
+
+        Cheap, in-memory check (no network call) against whatever options
+        are already loaded -- the initial load plus however many
+        background live-refresh ticks have landed since. Used as a fast
+        pre-submit sanity check where forcing a fresh fetch on every
+        submit would be too slow (see consisterizer.py's bulk submit
+        loop); the API call itself is still the final authority and will
+        reject a genuinely-invalid id.
+
+        Returns:
+            Same semantics as _label_matches_any_option: True if blank or
+            matched, False if non-blank text matches no current option.
+        """
+        return _label_matches_any_option(self.get().strip(), self._all_options)
 
     def get(self) -> str:
         """Return the current entry text."""
