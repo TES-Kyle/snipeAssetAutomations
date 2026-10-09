@@ -23,62 +23,8 @@ from utilities.jamfPrestageCommon import (
 logger = logging.getLogger(__name__)
 
 
-def jamf_delete_and_set_prestage(asset_tag: str) -> str:
-    """Remove from other PreStages, add to selected PreStage, and delete record.
-
-    Args:
-        asset_tag: Snipe-IT asset tag to process.
-
-    Returns:
-        Status message string describing the outcome.
-    """
-    logger.debug("jamf_delete_and_set_prestage: asset_tag=%s", asset_tag)
-    if not asset_tag:
-        return "[ERROR] No asset tag provided."
-
-    configure_logging()
-    settings = get_prestage_settings()
-    logger.debug("jamf_delete_and_set_prestage: settings loaded dry_run=%s", settings.get("dry_run"))
-
-    if not _confirm_action(
-        "Confirm Jamf Delete",
-        "This will update PreStage assignments and delete the Jamf record.\n\nContinue?",
-    ):
-        logger.info("jamf_delete_and_set_prestage: user cancelled action for %s", asset_tag)
-        return "Cancelled."
-
-    logger.info("=== Jamf Delete + Set PreStage ===")
-    logger.info("Asset Tag: %s", asset_tag)
-    logger.info("Mode: %s", "DRY RUN" if settings["dry_run"] else "LIVE")
-
-    serial = _get_serial_from_snipe(asset_tag)
-    if not serial:
-        return f"[ERROR] SNIPE: No serial for asset {asset_tag}."
-    logger.info("Serial: %s", serial)
-
-    try:
-        logger.info("Initializing Jamf Pro client...")
-        jamf_client = create_jamf_client(settings)
-        logger.info("Jamf client ready.")
-    except Exception as e:
-        return f"[ERROR] JAMF: Client init failed: {e}"
-
-    logger.debug("jamf_delete_and_set_prestage: fetching prestage list")
-    prestages = _get_prestage_list(jamf_client, settings)
-    if not prestages:
-        logger.error("jamf_delete_and_set_prestage: no prestages returned for %s", asset_tag)
-        return "[ERROR] JAMF: No PreStages returned."
-    logger.debug("jamf_delete_and_set_prestage: %s prestages available", len(prestages))
-
-    choice = _prompt_prestage_choice(prestages)
-    if not choice:
-        logger.info("jamf_delete_and_set_prestage: prestage selection cancelled for %s", asset_tag)
-        return "PreStage selection cancelled."
-
-    target_id = int(choice["id"])
-    target_name = choice.get("name") or f"PreStage {target_id}"
-    logger.info("Target PreStage: %s (ID %s)", target_name, target_id)
-
+def _set_prestage_and_delete(jamf_client, settings, serial: str, target_id: int, target_name: str) -> str:
+    """Remove serial from other PreStages, add to target, delete the Jamf record."""
     logger.debug("jamf_delete_and_set_prestage: searching for Jamf computer by serial=%s", serial)
     comp = _find_jamf_computer_by_serial(jamf_client, serial, settings)
     cid = comp["id"] if comp else None
@@ -127,6 +73,84 @@ def jamf_delete_and_set_prestage(asset_tag: str) -> str:
                           f"deleted Jamf computer-inventory ID {cid}."),
         failure_warn_message=f"PreStage set succeeded, but deletion failed for ID {cid}.",
     )
+
+
+def jamf_delete_and_set_prestage(asset_tag: str) -> str:
+    """Remove from other PreStages, add to selected PreStage, and delete record.
+
+    Args:
+        asset_tag: Snipe-IT asset tag to process.
+
+    Returns:
+        Status message string describing the outcome.
+    """
+    logger.debug("jamf_delete_and_set_prestage: asset_tag=%s", asset_tag)
+    if not asset_tag:
+        return "[ERROR] No asset tag provided."
+
+    configure_logging()
+    settings = get_prestage_settings()
+    logger.debug("jamf_delete_and_set_prestage: settings loaded dry_run=%s", settings.get("dry_run"))
+
+    if not _confirm_action(
+        "Confirm Jamf Delete",
+        "This will update PreStage assignments and delete the Jamf record.\n\nContinue?",
+    ):
+        logger.info("jamf_delete_and_set_prestage: user cancelled action for %s", asset_tag)
+        return "Cancelled."
+
+    logger.info("=== Jamf Delete + Set PreStage ===")
+    logger.info("Asset Tag: %s", asset_tag)
+    logger.info("Mode: %s", "DRY RUN" if settings["dry_run"] else "LIVE")
+
+    serial = _get_serial_from_snipe(asset_tag)
+    if not serial:
+        return f"[ERROR] SNIPE: No serial for asset {asset_tag}."
+    logger.info("Serial: %s", serial)
+
+    try:
+        logger.info("Initializing Jamf Pro client...")
+        jamf_client = create_jamf_client(settings)
+        logger.info("Jamf client ready.")
+    except Exception as e:
+        return f"[ERROR] JAMF: Client init failed: {e}"
+
+    logger.debug("jamf_delete_and_set_prestage: fetching prestage list")
+    prestages = _get_prestage_list(jamf_client, settings)
+    if not prestages:
+        logger.error("jamf_delete_and_set_prestage: no prestages returned for %s", asset_tag)
+        return "[ERROR] JAMF: No PreStages returned."
+    logger.debug("jamf_delete_and_set_prestage: %s prestages available", len(prestages))
+
+    batch_results = []
+
+    def _scan_one(tag, prestage):
+        """Batch-mode callback: same delete + set PreStage for one more asset tag."""
+        batch_serial = _get_serial_from_snipe(tag)
+        if not batch_serial:
+            msg = f"[ERROR] SNIPE: No serial for asset {tag}."
+        else:
+            pid = int(prestage["id"])
+            msg = _set_prestage_and_delete(
+                jamf_client, settings, batch_serial, pid,
+                prestage.get("name") or f"PreStage {pid}",
+            )
+        logger.info("Batch %s: %s", tag, msg)
+        batch_results.append(f"{tag}: {msg}")
+        return msg
+
+    choice = _prompt_prestage_choice(prestages, on_scan=_scan_one, initial_tag=asset_tag)
+    if not choice and batch_results:
+        return "\n".join(batch_results)
+    if not choice:
+        logger.info("jamf_delete_and_set_prestage: prestage selection cancelled for %s", asset_tag)
+        return "PreStage selection cancelled."
+
+    target_id = int(choice["id"])
+    target_name = choice.get("name") or f"PreStage {target_id}"
+    logger.info("Target PreStage: %s (ID %s)", target_name, target_id)
+
+    return _set_prestage_and_delete(jamf_client, settings, serial, target_id, target_name)
 
 
 if __name__ == "__main__":

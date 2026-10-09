@@ -838,14 +838,24 @@ def _get_prestage_list(
     return out
 
 
-def _prompt_prestage_choice(prestages: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+def _prompt_prestage_choice(
+    prestages: List[Dict[str, Any]],
+    on_scan=None,
+    initial_tag: str = "",
+) -> Optional[Dict[str, Any]]:
     """Show a modal dialog for the user to choose a PreStage from a dropdown.
 
     Args:
         prestages: List of {'id': int, 'name': str} dicts to populate the combo.
+        on_scan: Optional ``callback(asset_tag, prestage_dict) -> str``. When given,
+            the dialog offers a Batch Mode checkbox; with it ticked, an asset-tag
+            entry appears and each Enter/OK runs the callback (dialog stays open,
+            PreStage locked) until the user clicks Cancel/Done.
+        initial_tag: Pre-fills the batch asset-tag entry.
 
     Returns:
-        The selected prestage dict, or None if the user cancels or Tk is unavailable.
+        The selected prestage dict (non-batch OK), or None if the user cancels,
+        finishes a batch, or Tk is unavailable.
     """
     if not _TK_OK:
         logger.error("Tk not available; cannot prompt for PreStage selection.")
@@ -879,8 +889,54 @@ def _prompt_prestage_choice(prestages: List[Dict[str, Any]]) -> Optional[Dict[st
 
     result = {"choice": None}
 
+    batch_var = _tk.BooleanVar(value=False)
+    tag_var = _tk.StringVar(value=initial_tag)
+    status_var = _tk.StringVar(value="")
+    tag_row = _tk.Frame(win)
+    _tk.Label(tag_row, text="Asset Tag:").pack(side="left")
+    tag_entry = _ttk.Entry(tag_row, textvariable=tag_var)
+    tag_entry.pack(side="left", fill="x", expand=True, padx=(6, 0))
+    status_label = _tk.Label(win, textvariable=status_var, wraplength=380, justify="left")
+
+    def _toggle_batch():
+        """Show/hide the asset-tag entry and lock the PreStage while batching."""
+        if batch_var.get():
+            combo.configure(state="disabled")
+            tag_row.pack(fill="x", padx=10, pady=4, before=btn_row)
+            status_label.pack(anchor="w", padx=10, before=btn_row)
+            tag_entry.focus_set()
+            tag_entry.selection_range(0, "end")
+        else:
+            combo.configure(state="readonly")
+            tag_row.pack_forget()
+            status_label.pack_forget()
+
+    def _scan(_event=None):
+        """Run the callback for the entered tag with the chosen PreStage."""
+        tag = tag_var.get().strip()
+        if not tag:
+            return
+        tag_entry.configure(state="disabled")
+        status_var.set(f"Processing {tag}...")
+        win.update_idletasks()
+        try:
+            status_var.set(f"{tag}: {on_scan(tag, display_map.get(selection_var.get().strip()))}")
+        finally:
+            tag_entry.configure(state="normal")
+            tag_var.set("")
+            tag_entry.focus_set()
+
+    tag_entry.bind("<Return>", _scan)
+
+    if on_scan:
+        _ttk.Checkbutton(win, text="Batch Mode", variable=batch_var, command=_toggle_batch)\
+            .pack(anchor="w", padx=10, pady=(4, 0))
+
     def _confirm():
         """Capture the selected PreStage and close the dialog."""
+        if batch_var.get():
+            _scan()
+            return
         label = selection_var.get().strip()
         logger.debug("_confirm: selected label=%s", label)
         result["choice"] = display_map.get(label)
