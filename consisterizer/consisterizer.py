@@ -30,9 +30,10 @@ from datetime import datetime, timedelta
 
 import requests
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox, simpledialog, ttk
 from tkinter import font as tkfont
 
+from consisterizer import saveStates
 from utilities.autocomplete import AutoCompleteEntry
 from utilities import optionsCache
 from utilities.otherApiBits import getAssetInfo
@@ -143,20 +144,15 @@ KEYBOARD
 - Enter in the top asset-tag box = Submit (+ switch in batch mode).
 - F1 = Help.
 
-ALIASES (Optional)
-- You can open Consisterizer with alias payloads to pre-fill Updates, toggle batch mode, select scripts, and set/reset rows. Example:
-  {
-    "title": "Check-in",
-    "batch_mode": false,
-    "maintain_defaults": true,
-    "reset": ["status", "assigned_to", "notes"],
-    "set": {
-      "status": "In Storage",
-      "assigned_to": "{empty}",
-      "notes": "Checked in on {today} by {username}"
-    },
-    "scripts": "all"
-  }
+SAVE STATES (top left: Save / Load)
+- Save stores the whole setup as it is right now — every Updates entry and
+  autocomplete, every Reset box, Batch mode / Maintain / Bypass, and the ticked
+  On Submit scripts — under a name you choose. Saving a name that already exists
+  asks before overwriting it.
+- Load lists your saves (sort by newest, oldest or alphabetical); click one to
+  apply it immediately, even mid-session (no restart). It replaces the current setup entirely and leaves the loaded
+  asset and Current column alone. The trash icon deletes a save (with a prompt).
+- Saves are kept per computer and survive app updates.
 
 Troubleshooting
 - If API calls fail, you’ll see a retry/cancel prompt (PATCH) or error dialogs.
@@ -486,7 +482,7 @@ def _open_help(parent):
 # Main Entry
 # =============================================================================
 
-def consisterizer(asset_tag, alias=None, _checked_values=None):
+def consisterizer(asset_tag, _checked_values=None):
     """Open the Consisterizer window for a given asset tag.
 
     This editor allows batch updates to Snipe-IT assets, highlights
@@ -494,7 +490,6 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
 
     Args:
         asset_tag: Asset tag to load on startup.
-        alias: Optional alias payload to prefill fields or toggle options.
         _checked_values: Legacy placeholder (unused).
     """
     configure_logging()
@@ -656,9 +651,11 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     # -------------------------------------------------------------------------
     top = ttk.Frame(win)
     top.pack(fill="x", padx=12, pady=(12, 6))
-    top.grid_columnconfigure(0, weight=1)
-    top.grid_columnconfigure(1, weight=1)
-    top.grid_columnconfigure(2, weight=1)
+    # uniform= forces equal side columns even though the left (Save/Load) and
+    # right (Batch/Help) groups differ in width, keeping the asset tag centred.
+    top.grid_columnconfigure(0, weight=1, uniform="topbar")
+    top.grid_columnconfigure(1, weight=1, uniform="topbar")
+    top.grid_columnconfigure(2, weight=1, uniform="topbar")
 
     center = ttk.Frame(top)
     center.grid(row=0, column=1, sticky="n")
@@ -697,6 +694,16 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
 
     batch_mode_var = tk.BooleanVar(value=False)
     ttk.Checkbutton(right, text="Batch mode", variable=batch_mode_var).pack(side="right")
+
+    # Save/Load save-state buttons on the left, mirroring the right-hand group
+    # so the asset tag stays centred. Commands are attached after the helpers
+    # they call are defined (same stub pattern as the Submit/Clear buttons below).
+    left = ttk.Frame(top)
+    left.grid(row=0, column=0, sticky="w")
+    save_state_btn = ttk.Button(left, text="Save")
+    save_state_btn.pack(side="left")
+    load_state_btn = ttk.Button(left, text="Load")
+    load_state_btn.pack(side="left", padx=(6, 0))
 
     def _clear_entry_style_if_valid(*_):
         """Clear error styling when the asset tag looks valid."""
@@ -1220,6 +1227,9 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     active_defaults_templ: dict[str, str] = {}
     active_defaults_eval: dict[str, str] = {}
     _applying_maintained_defaults = False
+    # True while a save state is being applied: the many widget writes would
+    # each trigger a full recompute, so they're skipped and one runs at the end.
+    _bulk_loading = False
 
     def recompute_defaults(result_snapshot: dict):
         """Compute active defaults based on template rules.
@@ -1344,6 +1354,8 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
           4. Highlights Result labels and Updates widgets red where values differ
              from their active defaults.
         """
+        if _bulk_loading:
+            return
         logger.debug("recompute_all_results: starting full recompute")
         nonlocal _applying_maintained_defaults
 
@@ -1789,218 +1801,274 @@ def consisterizer(asset_tag, alias=None, _checked_values=None):
     submit_btn.pack(side="left")
     ttk.Button(footer, text="Close", command=win.destroy).grid(row=1, column=2, sticky="e")
 
-    # --- Alias support -------------------------------------------------------
-    def _to_alias_obj(a):
-        """Accept dict or JSON string; return dict or {}.
-
-        Args:
-            a: Dict, JSON string, or None.
-
-        Returns:
-            Dict representation of the alias, or empty dict.
-        """
-        logger.debug("_to_alias_obj: input type=%s", type(a).__name__)
-        if not a:
-            return {}
-        if isinstance(a, dict):
-            return a
-        if isinstance(a, str):
-            try:
-                result = json.loads(a)
-                logger.debug("_to_alias_obj: parsed JSON string successfully")
-                return result
-            except Exception:
-                logger.debug("_to_alias_obj: failed to parse JSON string")
-                return {}
-        return {}
-
-    def _norm_alias_key(k: str) -> str:
-        """Normalize alias keys for lookup."""
-        logger.debug("_norm_alias_key: k=%s", k)
-        return (k or "").strip().lower().replace(" ", "_")
-
-    # reverse lookups in case alias specifies IDs
-    def _label_from_id(label_to_id: dict, wanted_id):
-        """Return the label matching a given ID from a lookup map.
-
-        Args:
-            label_to_id: Dict mapping label strings to IDs.
-            wanted_id: The ID to search for.
-
-        Returns:
-            The matching label string, or None.
-        """
-        logger.debug("_label_from_id: searching for id=%s in map of size=%s", wanted_id, len(label_to_id) if label_to_id else 0)
-        for lbl, _id in (label_to_id or {}).items():
-            if _id == wanted_id:
-                logger.debug("_label_from_id: found label=%s for id=%s", lbl, wanted_id)
-                return lbl
-        logger.debug("_label_from_id: no label found for id=%s", wanted_id)
-        return None
-
-    def _apply_alias(a):
-        """Apply an alias payload to prefill fields and set options.
-
-        Alias schema (all optional):
-        {
-          "title": "Check-in",
-          "batch_mode": true/false,
-          "maintain_defaults": true/false,
-          "set": {
-            "<field>": "<value or {empty} or template>",
-            "status": "<label or {‘id’: 12} or {‘label’: ‘...’}>",
-            "model":  "<label or {‘id’: 34}>",
-            "assigned_to": "<label | {empty} | {‘id’: 7}>"
-          },
-          "reset": true | false | {"field": true/false, ...} | ["field1","field2"],
-          "scripts": "all" | [0, 2, "Script Name", ...]
+    # --- Save states ---------------------------------------------------------
+    def _capture_state() -> dict:
+        """Snapshot every input on screen into a save-state dict (see saveStates.py)."""
+        set_vals = {}
+        for key, row in rows_by_key.items():
+            if row.get("text_widget_type") == "ac":
+                ac = row["ac"]
+                txt = "" if ac.is_loading() else ac.get().strip()
+            elif key in _disabled_rows or is_effective_empty(row["text"]):
+                txt = ""
+            else:
+                txt = _widget_get_text(row["text"])
+            if txt:
+                set_vals[key] = txt
+        return {
+            "batch_mode": bool(batch_mode_var.get()),
+            "maintain_defaults": bool(maintain_defaults_var.get()),
+            "bypass_warnings": bool(bypass_warnings_var.get()),
+            "scripts": [lbl for lbl, v in zip(submit_func_listTXT, script_vars) if v.get()],
+            "reset": [k for k, r in rows_by_key.items() if r["reset_var"].get()],
+            "set": set_vals,
         }
 
-        Args:
-            a: Alias dict or JSON string.
+    def _set_updates_text(key: str, row: dict, txt: str):
+        """Write a text-field Updates cell, keeping placeholder state and colour consistent."""
+        t = row["text"]
+        placeholder = getattr(t, "placeholder_text", None) if key in PLACEHOLDERS else None
+        if txt:
+            _widget_set_text(t, txt)
+            t.placeholder_active = False
+            fg = ENTRY_FG
+        elif placeholder:
+            _widget_set_text(t, placeholder)
+            t.placeholder_active = True
+            fg = MUTED_FG
+        else:
+            _widget_set_text(t, "")
+            t.placeholder_active = False
+            fg = ENTRY_FG
+        try:
+            t.configure(fg=fg, bg=ENTRY_BG)
+        except Exception:
+            pass
+        try:
+            dl = int(t.count("1.0", "end-1c", "displaylines")[0])
+        except Exception:
+            dl = 1
+        t.configure(height=max(1, min(2, dl)))
+
+    def _apply_state(state: dict) -> bool:
+        """Replace the whole on-screen setup with a save state, live.
+
+        Fields the state doesn't mention are cleared/unticked, so the result
+        matches what was saved exactly. The loaded asset and Current column
+        are untouched.
+
+        Returns:
+            True if applied; False if refused (option lists still loading).
         """
-        logger.debug("_apply_alias: applying alias")
-        a = _to_alias_obj(a)
-        if not a:
-            logger.debug("_apply_alias: alias is empty, skipping")
+        nonlocal _bulk_loading
+        if any(r["ac"].is_loading() for r in rows_by_key.values() if r.get("text_widget_type") == "ac"):
+            messagebox.showinfo("Still Loading", "Status / model / user lists are still loading. Try again in a moment.", parent=win)
+            return False
+
+        want_reset = set(state.get("reset") or [])
+        want_scripts = set(state.get("scripts") or [])
+        values = state.get("set") or {}
+
+        _bulk_loading = True
+        try:
+            batch_mode_var.set(bool(state.get("batch_mode")))
+            maintain_defaults_var.set(bool(state.get("maintain_defaults")))
+            bypass_warnings_var.set(bool(state.get("bypass_warnings")))
+            for lbl, var in zip(submit_func_listTXT, script_vars):
+                var.set(lbl in want_scripts)
+            for key, row in rows_by_key.items():
+                if key in _disabled_rows:
+                    continue  # greyed-out custom field absent on this asset
+                row["reset_var"].set(key in want_reset)
+                txt = str(values.get(key) or "")
+                if row.get("text_widget_type") == "ac":
+                    row["ac"].set_selected_by_label(txt)
+                    row["ac_selected"] = row["ac"].get_selected()
+                else:
+                    _set_updates_text(key, row, txt)
+        finally:
+            _bulk_loading = False
+        recompute_all_results()
+        return True
+
+    def _save_click():
+        """Prompt for a name and store the current setup, confirming overwrites."""
+        name = ""
+        while True:
+            name = simpledialog.askstring("Save Setup", "Name for this save state:", initialvalue=name, parent=win)
+            if name is None:
+                return  # cancelled
+            name = saveStates.normalize_name(name)
+            if not name:
+                messagebox.showerror("Save Setup", "Please enter a name.", parent=win)
+                continue
+            if saveStates.name_exists(name):
+                if not messagebox.askyesno(
+                    "Already Exists",
+                    f"A save named '{name}' already exists.\n\nOverwrite it?",
+                    icon="warning", parent=win,
+                ):
+                    continue  # back to the name prompt
+            break
+        try:
+            saved_as = saveStates.save_state(name, _capture_state())
+        except OSError as e:
+            logger.exception("_save_click: could not write save state")
+            messagebox.showerror("Save Setup", f"Could not save:\n{e}", parent=win)
+            return
+        status_var.set(f"Saved setup '{saved_as}'.")
+
+    load_dialog = None
+    load_sort = saveStates.SORT_NEWEST  # remembered for the life of this window
+    _SORT_CHOICES = [
+        ("Newest first", saveStates.SORT_NEWEST),
+        ("Oldest first", saveStates.SORT_OLDEST),
+        ("Alphabetical", saveStates.SORT_ALPHA),
+    ]
+    _LOAD_LIST_MAX_H = 300
+    _LOAD_LIST_W = 340
+
+    def _make_trash_image():
+        """Flat, theme-coloured trash-can icon (Tk 9 renders SVG natively); None if unsupported."""
+        stroke = _theme["fg"]
+        if not (isinstance(stroke, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", stroke)):
+            stroke = "#808080"
+        svg = (
+            '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" '
+            f'fill="none" stroke="{stroke}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+            '<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M5 6l1 14h12l1-14"/><path d="M10 10v6M14 10v6"/></svg>'
+        )
+        try:
+            return tk.PhotoImage(data=svg, format="svg")
+        except Exception:
+            logger.debug("_make_trash_image: SVG images unsupported, using text label")
+            return None
+
+    def _format_saved_at(saved_at: str) -> str:
+        """'2026-10-16T10:36:00' -> 'Oct 16, 10:36 AM'; '' for legacy saves without a timestamp."""
+        try:
+            d = datetime.fromisoformat(saved_at)
+        except ValueError:
+            return ""
+        return d.strftime("%b %-d, %-I:%M %p")
+
+    def _load_click():
+        """Open the list of saves: click a name to load it, trash icon to delete."""
+        nonlocal load_dialog, load_sort
+        if load_dialog is not None and load_dialog.winfo_exists():
+            load_dialog.lift()
+            load_dialog.focus_force()
             return
 
-        # 2.1 Title suffix
-        title_suffix = a.get("title")
-        if title_suffix:
-            logger.debug("_apply_alias: setting title suffix=%s", title_suffix)
-            try:
-                win.title(f"{win.title()} • {title_suffix}")
-            except Exception:
-                pass
+        dlg = tk.Toplevel(win)
+        load_dialog = dlg
+        dlg.title("Load Setup")
+        dlg.transient(win)
+        dlg.minsize(_LOAD_LIST_W + 40, 160)
+        dlg.bind("<Escape>", lambda e: dlg.destroy())
+        # Keep a reference so the icon isn't garbage-collected while the dialog is open.
+        trash_img = _make_trash_image()
+        dlg._trash_img = trash_img
 
-        # 2.2 Top-level toggles
-        if "batch_mode" in a:
-            logger.debug("_apply_alias: setting batch_mode=%s", a["batch_mode"])
-            try:
-                batch_mode_var.set(bool(a["batch_mode"]))
-            except Exception:
-                pass
+        header = ttk.Frame(dlg)
+        header.pack(fill="x", padx=12, pady=(12, 6))
+        ttk.Label(header, text="Click a save to load it").pack(side="left")
+        sort_var = tk.StringVar(value=next(lbl for lbl, v in _SORT_CHOICES if v == load_sort))
+        sort_box = ttk.Combobox(header, textvariable=sort_var, values=[lbl for lbl, _ in _SORT_CHOICES],
+                                state="readonly", width=14)
+        sort_box.pack(side="right")
+        ttk.Label(header, text="Sort:").pack(side="right", padx=(0, 6))
 
-        if "maintain_defaults" in a:
-            logger.debug("_apply_alias: setting maintain_defaults=%s", a["maintain_defaults"])
-            try:
-                maintain_defaults_var.set(bool(a["maintain_defaults"]))
-            except Exception:
-                pass
+        body = ttk.Frame(dlg)
+        body.pack(fill="both", expand=True, padx=12)
+        # Match the ttk surface colour exactly so no differently-shaded canvas shows around the rows.
+        canvas_bg = ttk.Style(dlg).lookup("TFrame", "background") or _theme["bg"]
+        canvas = tk.Canvas(body, highlightthickness=0, borderwidth=0, bg=canvas_bg, width=_LOAD_LIST_W, height=1)
+        canvas.pack(side="left", fill="both", expand=True)
+        sb = ttk.Scrollbar(body, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=sb.set)
+        inner = ttk.Frame(canvas)
+        canvas.create_window((0, 0), window=inner, anchor="nw", width=_LOAD_LIST_W)
+        inner.grid_columnconfigure(0, weight=1)
+        bind_canvas_scroll(canvas)
 
-        # 2.3 Scripts selection (by index or case-insensitive name)
-        scr = a.get("scripts")
-        if scr:
-            logger.debug("_apply_alias: applying scripts=%s", scr)
-            if scr == "all":
-                logger.debug("_apply_alias: enabling all scripts")
-                for v in script_vars:
-                    v.set(True)
+        def _load(name):
+            state = saveStates.get_state(name)
+            if state is None:
+                messagebox.showerror("Load Setup", f"Save '{name}' no longer exists.", parent=dlg)
+                return
+            if _apply_state(state):
+                status_var.set(f"Loaded setup '{name}'.")
+                dlg.destroy()
+
+        def _delete(name):
+            if not messagebox.askyesno(
+                "Delete Save",
+                f"Delete the save '{name}'?\n\nThis can't be undone.",
+                icon="warning", parent=dlg,
+            ):
+                return
+            try:
+                saveStates.delete_state(name)
+            except OSError as e:
+                logger.exception("_delete: could not update save states file")
+                messagebox.showerror("Delete Save", f"Could not delete:\n{e}", parent=dlg)
+                return
+            _populate()
+
+        def _populate():
+            """(Re)build the rows in the chosen order and size the list to fit its content."""
+            for child in inner.winfo_children():
+                child.destroy()
+            entries = saveStates.list_entries(load_sort)
+            if not entries:
+                lbl = ttk.Label(inner, text="No saved setups yet. Use Save to create one.")
+                lbl.grid(row=0, column=0, sticky="w", pady=8)
+                bind_canvas_scroll(canvas, lbl)
+            for i, (name, saved_at) in enumerate(entries):
+                row_frame = ttk.Frame(inner)
+                row_frame.grid(row=i, column=0, sticky="ew", pady=2)
+                row_frame.grid_columnconfigure(0, weight=1)
+                ttk.Button(row_frame, text=name, command=lambda n=name: _load(n)).grid(row=0, column=0, sticky="ew")
+                ttk.Label(row_frame, text=_format_saved_at(saved_at), foreground=MUTED_FG).grid(row=0, column=1, padx=(8, 0))
+                del_kwargs = {"image": trash_img} if trash_img else {"text": "Delete"}
+                ttk.Button(row_frame, command=lambda n=name: _delete(n), **del_kwargs).grid(row=0, column=2, padx=(8, 0))
+                bind_canvas_scroll(canvas, row_frame)
+
+            # Size the viewport to the content (up to a cap) so a short list has no empty
+            # canvas area to scroll into, and only a long one shows the scrollbar.
+            inner.update_idletasks()
+            content_h = inner.winfo_reqheight()
+            canvas.configure(height=min(content_h, _LOAD_LIST_MAX_H),
+                             scrollregion=(0, 0, _LOAD_LIST_W, content_h))
+            canvas.yview_moveto(0)
+            if content_h > _LOAD_LIST_MAX_H:
+                sb.pack(side="right", fill="y")
             else:
-                wanted = set(scr if isinstance(scr, (list, tuple)) else [scr])
-                # pre-normalize names
-                name_to_idx = {s.lower(): i for i, s in enumerate(submit_func_listTXT)}
-                for item in wanted:
-                    if isinstance(item, int) and 0 <= item < len(script_vars):
-                        logger.debug("_apply_alias: enabling script index=%s", item)
-                        script_vars[item].set(True)
-                    elif isinstance(item, str):
-                        idx = name_to_idx.get(item.lower())
-                        if idx is not None:
-                            logger.debug("_apply_alias: enabling script name=%s index=%s", item, idx)
-                            script_vars[idx].set(True)
+                sb.pack_forget()
 
-        # 2.4 Reset checkboxes
-        rst = a.get("reset")
-        logger.debug("_apply_alias: applying reset=%s type=%s", rst, type(rst).__name__)
-        if isinstance(rst, bool):
-            for r in rows_by_key.values():
-                r["reset_var"].set(rst)
-        elif isinstance(rst, dict):
-            for k, flag in rst.items():
-                nk = _norm_alias_key(k)
-                if nk in rows_by_key:
-                    logger.debug("_apply_alias: setting reset key=%s flag=%s", nk, flag)
-                    rows_by_key[nk]["reset_var"].set(bool(flag))
-        elif isinstance(rst, (list, tuple)):
-            want = { _norm_alias_key(x) for x in rst }
-            logger.debug("_apply_alias: reset fields=%s", want)
-            for k, r in rows_by_key.items():
-                r["reset_var"].set(k in want)
+        def _on_sort_change(_e=None):
+            nonlocal load_sort
+            load_sort = next(v for lbl, v in _SORT_CHOICES if lbl == sort_var.get())
+            _populate()
+            sort_box.selection_clear()
 
-        # 2.5 Pre-fill Updates column
-        preset = a.get("set") or {}
-        logger.debug("_apply_alias: prefilling %s fields", len(preset))
-        if isinstance(preset, dict):
-            for k, v in preset.items():
-                fk = _norm_alias_key(k)
-                if fk not in rows_by_key:
-                    logger.debug("_apply_alias: unknown field key=%s, skipping", fk)
-                    continue
-                row = rows_by_key[fk]
-                logger.debug("_apply_alias: setting field=%s value=%s", fk, v)
+        sort_box.bind("<<ComboboxSelected>>", _on_sort_change)
+        _populate()
 
-                # Autocomplete fields
-                if fk in {"status", "assigned_to", "model"} and row.get("text_widget_type") == "ac":
-                    ac = row["ac"]
+        ttk.Button(dlg, text="Close", command=dlg.destroy).pack(anchor="e", padx=12, pady=12)
 
-                    # Accept dicts like {"id": 5} or {"label": "Ready to Deploy"}
-                    if isinstance(v, dict):
-                        vid = v.get("id") or v.get("value")
-                        vlabel = v.get("label") or v.get("name") or v.get("text")
-                        if vid is not None and not vlabel:
-                            # map ID -> label via our cached dictionaries
-                            if fk == "status":
-                                vlabel = _label_from_id(status_label_to_id, vid)
-                            elif fk == "model":
-                                vlabel = _label_from_id(model_label_to_id, vid)
-                            elif fk == "assigned_to":
-                                vlabel = _label_from_id(assignee_label_to_id, vid)
-                        v = vlabel if vlabel is not None else v  # fall back to raw dict if we must
-
-                    v = "" if v is None else str(v)
-                    logger.debug("_apply_alias: ac field=%s resolved_value=%s", fk, v)
-
-                    # For assigned_to we support {empty}
-                    if fk == "assigned_to" and v.strip() == "{empty}":
-                        logger.debug("_apply_alias: setting assigned_to to {empty}")
-                        ac.set("{empty}")
-                        row["ac_selected"] = None
-                    else:
-                        # Prefer exact label selection if supported; otherwise set text
-                        if hasattr(ac, "set_selected_by_label"):
-                            ac.set_selected_by_label(v)
-                            row["ac_selected"] = ac.get_selected()
-                        else:
-                            ac.set(v)
-                            row["ac_selected"] = None  # mapping by label will still work later
-
-                # Text fields
-                elif row.get("text_widget_type") == "text":
-                    if fk in _disabled_rows:
-                        logger.debug("_apply_alias: skipping disabled field=%s", fk)
-                        continue
-                    txt = "" if v is None else str(v)
-                    logger.debug("_apply_alias: setting text field=%s txt=%s", fk, txt)
-                    _widget_set_text(row["text"], txt)
-                    # ensure placeholder is considered inactive if we’ve typed something
-                    try:
-                        row["text"].placeholder_active = (txt == "")
-                    except Exception:
-                        pass
-
-        # Recompute once after all sets
-        logger.debug("_apply_alias: recomputing results after alias application")
+        dlg.update_idletasks()
+        x = win.winfo_rootx() + (win.winfo_width() - dlg.winfo_width()) // 2
+        y = win.winfo_rooty() + 80
+        dlg.geometry(f"+{max(0, x)}+{max(0, y)}")
         try:
-            recompute_all_results()
+            dlg.grab_set()
         except Exception:
             pass
 
-    # Apply alias (if any) after all widgets exist, before first compute
-    if alias:
-        _apply_alias(alias)
-
+    save_state_btn.configure(command=_save_click)
+    load_state_btn.configure(command=_load_click)
 
     # -------------------------------------------------------------------------
     # Submit helpers (validate, warn, save, scripts, maybe switch)

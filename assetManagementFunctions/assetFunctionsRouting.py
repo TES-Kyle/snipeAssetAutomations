@@ -24,7 +24,6 @@ from assetManagementFunctions.jamfRedeployFramework import redeploy_jamf_framewo
 
 # Consisterizer actions.
 from consisterizer.consisterizer import consisterizer
-from consisterizer.aliases import bulkCheckIn
 
 
 # Function callables in display order (must align with labels below).
@@ -39,8 +38,6 @@ func_list = [printSelected,
              checkIn,
              loanCheckout,
              consisterizer,
-             # Consisterizer alias entry for bulk check-in presets.
-             lambda x: consisterizer(x, alias=bulkCheckIn),
              jamf_remove_prestage_and_delete,
              jamf_delete_and_set_prestage,
              redeploy_jamf_framework
@@ -59,7 +56,6 @@ func_listTXT = ["Print Selected",
                 "Check In",
                 "Loan Checkout",
                 "Consisterizer",
-                "Bulk Check-in",
                 "Delete & Un-Prestage",
                 "Delete & Set PreStage",
                 "Holy Hand Grenade"

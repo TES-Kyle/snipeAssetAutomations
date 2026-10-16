@@ -19,6 +19,8 @@ thread bug -- surprising Tk runtime behavior, not application logic):
    binding for trackpad users.
 """
 
+from __future__ import annotations
+
 import logging
 import tkinter as tk
 
@@ -28,7 +30,7 @@ logger = logging.getLogger(__name__)
 PIXELS_PER_WHEEL_NOTCH = 30
 
 
-def bind_canvas_scroll(canvas: tk.Canvas):
+def bind_canvas_scroll(canvas: tk.Canvas, subtree_root: tk.Misc | None = None):
     """Wire mousewheel + trackpad scrolling onto canvas and all its descendants.
 
     Call this once, after the canvas's full widget subtree has been built --
@@ -41,14 +43,23 @@ def bind_canvas_scroll(canvas: tk.Canvas):
     coarser, unset-by-default "unit" size -- that mismatch is what made
     trackpad scrolling feel jerky/chunky before this was set explicitly.
 
+    Scrolling is a no-op while the canvas content already fits entirely in
+    view, so a short list never wobbles or reveals empty canvas.
+
     Args:
         canvas: The scrollable canvas to wire up.
+        subtree_root: Bind only this widget and its descendants instead of the
+            whole canvas. For a canvas whose contents are rebuilt after the
+            first call: bind the canvas once, then call again with each newly
+            created widget so earlier widgets don't get duplicate handlers.
     """
     canvas.configure(yscrollincrement=1)
 
     def _on_mousewheel(event):
         """Scroll from a discrete mouse wheel (<MouseWheel>/Button-4/5)."""
         logger.debug("_on_mousewheel: num=%s, delta=%s", event.num, event.delta)
+        if canvas.yview() == (0.0, 1.0):
+            return
         if event.num == 4 or event.delta > 0:
             canvas.yview_scroll(-PIXELS_PER_WHEEL_NOTCH, "units")
         elif event.num == 5 or event.delta < 0:
@@ -62,6 +73,8 @@ def bind_canvas_scroll(canvas: tk.Canvas):
         directly per-event (no extra accumulation) now that yscrollincrement
         is 1px, so motion tracks the trackpad 1:1 instead of in chunks.
         """
+        if canvas.yview() == (0.0, 1.0):
+            return
         try:
             _dx, dy = canvas.tk.call("tk::PreciseScrollDeltas", event.delta)
             dy = int(dy)
@@ -80,5 +93,5 @@ def bind_canvas_scroll(canvas: tk.Canvas):
         for child in widget.winfo_children():
             _bind_recursive(child)
 
-    _bind_recursive(canvas)
+    _bind_recursive(subtree_root if subtree_root is not None else canvas)
     logger.debug("bind_canvas_scroll: wired scroll handling for canvas=%s", canvas)

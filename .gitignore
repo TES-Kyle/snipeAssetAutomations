@@ -12,3 +12,4 @@ venv/
 icon.icns
 logs/
 .claude/
+consisterizer/userSaveStates.json

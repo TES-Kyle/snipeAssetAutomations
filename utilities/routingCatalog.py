@@ -17,10 +17,9 @@ Entries are matched to their traceable source file(s) statically, by
 reading each routing file's own import statements -- never by importing
 the routing files themselves (that would require live Snipe-IT/Jamf
 credentials just to build a catalog). A list element can reference more
-than one imported name (e.g. "Bulk Check-in" is
-`lambda x: consisterizer(x, alias=bulkCheckIn)`, touching both
-consisterizer.py and aliases.py), so each entry's defining_files is a set,
-not a single path.
+than one imported name (e.g. a lambda wrapping one function and passing
+another as an argument), so each entry's defining_files is a set, not a
+single path.
 """
 
 import ast

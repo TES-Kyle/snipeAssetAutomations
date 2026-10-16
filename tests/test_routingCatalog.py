@@ -29,9 +29,9 @@ def _exec_rendered(rendered, tmp_path, name):
     return mod
 
 
-def test_load_catalog_finds_all_twenty_entries():
+def test_load_catalog_finds_all_nineteen_entries():
     catalog = rc.load_catalog(REPO_ROOT)
-    assert len(catalog) == 20
+    assert len(catalog) == 19
     groups = {e.group for e in catalog}
     assert groups == {"asset", "other", "consisterizer_submit"}
 
@@ -44,15 +44,6 @@ def test_consisterizer_submit_scripts_are_their_own_group_and_require_consisteri
     assert "Print Selected" in labels
     spec = _spec_by_group("consisterizer_submit")
     assert spec.requires_label == "Consisterizer"
-
-
-def test_bulk_checkin_resolves_both_files_it_touches():
-    catalog = rc.load_catalog(REPO_ROOT)
-    entry = next(e for e in catalog if e.label == "Bulk Check-in")
-    assert entry.defining_files == frozenset({
-        "consisterizer/consisterizer.py",
-        "consisterizer/aliases.py",
-    })
 
 
 def test_jamf_submit_script_traces_to_the_unprestage_module():
