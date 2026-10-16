@@ -643,6 +643,7 @@ def open_partial_install_builder(parent, repo_root: str = None):
         return sel
 
     def recompute_summary():
+        """Re-trace which secrets the current selection needs and update the summary and Jamf banner."""
         _debounce_id["id"] = None
         selection = current_selection()
         total_selected = sum(len(v) for v in selection.values())
@@ -664,6 +665,7 @@ def open_partial_install_builder(parent, repo_root: str = None):
             jamf_banner.pack_forget()
 
     def confirm_jamf_inclusion() -> bool:
+        """Ask the admin to confirm shipping Jamf credentials; True if they agree."""
         prompt = tk.Toplevel(win)
         prompt.title("Confirm Jamf Credentials")
         prompt.grab_set()
@@ -746,6 +748,7 @@ def open_partial_install_builder(parent, repo_root: str = None):
         recompute_summary()
 
     def _on_build_succeeded(usb_mount, summary):
+        """Show the build summary, then offer to eject the drive (Tk thread)."""
         # Show the summary and let the admin actually go look at the drive
         # in Finder BEFORE anything offers to eject it -- offer_eject.command
         # is deliberately called after this dialog is dismissed, not before.
@@ -760,6 +763,7 @@ def open_partial_install_builder(parent, repo_root: str = None):
         win.destroy()
 
     def on_build():
+        """Validate the selection, confirm Jamf credentials if needed, pick a drive and start the build."""
         selection = current_selection()
         if sum(len(v) for v in selection.values()) == 0:
             messagebox.showerror("Build Partial-Install USB", "Select at least one function first.")

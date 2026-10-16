@@ -17,6 +17,7 @@ from utilities.api_user import (
     clear_cached_api_user,
     set_api_user_static_name,
 )
+from utilities.callSupport import call_with_optional_second_arg
 from utilities.otherApiBits import getAssetInfo, build_asset_info_frame
 from utilities.settingsMenu import settingsMenu
 from utilities.settings import get_settings
@@ -97,13 +98,9 @@ def open_second_window(parent, asset_tag, main_app_state):
         logger.debug("run_func: checked_values=%s", checked_values)
 
         try:
-            # Prefer the function signature that accepts checked values.
+            # Pass the checked values to functions that accept them (e.g. printSelected).
             logger.info("run_func: invoking %s for asset_tag=%s", func_listTXT[func_index], asset_tag)
-            result = func_list[func_index](asset_tag, checked_values)
-        except TypeError:
-            # Fallback to the basic signature when args aren't supported.
-            logger.debug("run_func: TypeError on full signature, retrying with basic signature")
-            result = func_list[func_index](asset_tag)
+            result = call_with_optional_second_arg(func_list[func_index], asset_tag, checked_values)
         except Exception as exc:
             logger.exception("Asset function failed (%s) for tag %s", func_listTXT[func_index], asset_tag)
             messagebox.showerror(

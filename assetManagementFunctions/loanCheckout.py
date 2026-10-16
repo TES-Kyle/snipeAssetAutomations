@@ -744,6 +744,7 @@ def loanCheckout(asset_tag):
                 logger.exception("on_person_change: failed to look up parent emails for %s", sel.get("label"))
 
             def apply_parents():
+                """Store the looked-up parent emails and refresh the recipients display (Tk thread)."""
                 logger.debug(
                     "on_person_change: apply_parents INVOKED for user=%s (window_exists=%s)",
                     sel.get("label"), checkout_window.winfo_exists(),

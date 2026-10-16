@@ -18,7 +18,7 @@ from tkinter import font as tkfont, messagebox, ttk
 
 from utilities import Key
 from utilities.api_retry import call_with_retry
-from utilities.api_user import get_api_headers
+from utilities.api_user import get_api_headers, get_api_key
 from utilities.logging_utils import configure_logging
 from utilities.settings import get_settings
 
@@ -35,6 +35,25 @@ def get_headers() -> dict:
     result = get_api_headers()
     logger.debug("get_headers: returning %s header keys", len(result))
     return result
+
+
+def require_snipe_config(op_name: str = "") -> bool:
+    """Return True if the Snipe-IT URL and an API key are configured; else show an error dialog.
+
+    Shared guard for flows that talk to Snipe-IT directly (Consisterizer,
+    Make Charger) so a missing Key.py value fails cleanly up front.
+
+    Args:
+        op_name: Optional caller name, used only in the log line.
+
+    Returns:
+        True if usable, False after showing the error.
+    """
+    if not (Key.API_URL_Base or "").strip() or not get_api_key():
+        logger.error("%s: missing API_URL_Base or API key in utilities.Key", op_name or "require_snipe_config")
+        messagebox.showerror("Snipe-IT", "Missing API_URL_Base or API key in utilities.Key.")
+        return False
+    return True
 
 
 def fetch_asset_by_tag(assetTag):

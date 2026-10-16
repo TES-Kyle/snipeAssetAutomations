@@ -534,6 +534,7 @@ def _checkin_asset_with_retry(id, note="Checked in via Drop-Off automation"):
     payload = {"note": note}
 
     def _already_checked_in(resp):
+        """True if the failed response just means the asset was already checked in."""
         try:
             msg = resp.json()
         except Exception:

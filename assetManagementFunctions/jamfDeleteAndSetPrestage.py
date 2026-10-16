@@ -7,17 +7,17 @@ import logging
 
 from utilities.logging_utils import configure_logging
 from utilities.jamfPrestageCommon import (
-    _confirm_action,
-    _add_serial_to_prestage,
-    _find_jamf_computer_by_serial,
-    _get_prestage_list,
-    _get_serial_from_snipe,
-    _prompt_prestage_choice,
-    _remove_from_all_prestages,
-    _warn,
+    add_serial_to_prestage,
+    confirm_action,
     create_jamf_client,
     delete_computer_with_retry,
+    find_jamf_computer_by_serial,
+    get_prestage_list,
     get_prestage_settings,
+    get_serial_from_snipe,
+    prompt_prestage_choice,
+    remove_from_all_prestages,
+    show_warning,
 )
 
 logger = logging.getLogger(__name__)
@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 def _set_prestage_and_delete(jamf_client, settings, serial: str, target_id: int, target_name: str) -> str:
     """Remove serial from other PreStages, add to target, delete the Jamf record."""
     logger.debug("jamf_delete_and_set_prestage: searching for Jamf computer by serial=%s", serial)
-    comp = _find_jamf_computer_by_serial(jamf_client, serial, settings)
+    comp = find_jamf_computer_by_serial(jamf_client, serial, settings)
     cid = comp["id"] if comp else None
     cname = comp["name"] if comp else None
     if comp:
@@ -35,7 +35,7 @@ def _set_prestage_and_delete(jamf_client, settings, serial: str, target_id: int,
         logger.warning("No Jamf computer inventory record found for serial %s.", serial)
 
     logger.info("jamf_delete_and_set_prestage: removing serial=%s from all prestages except target_id=%s", serial, target_id)
-    seen, modified, candidates = _remove_from_all_prestages(
+    seen, modified, candidates = remove_from_all_prestages(
         jamf_client,
         serial,
         settings,
@@ -47,14 +47,14 @@ def _set_prestage_and_delete(jamf_client, settings, serial: str, target_id: int,
         msg = (f"Skipped PreStage set: removal incomplete "
                f"({modified}/{candidates}).\n\n"
                "Fix PreStage scope conflicts first, then retry.")
-        _warn("PreStage removal incomplete", msg)
+        show_warning("PreStage removal incomplete", msg)
         return (f"[SAFEGUARD] Skipped set/delete; PreStage removal incomplete "
                 f"({modified}/{candidates} updated).")
 
     logger.info("jamf_delete_and_set_prestage: adding serial=%s to prestage=%s (ID %s)", serial, target_name, target_id)
-    if not _add_serial_to_prestage(jamf_client, target_id, serial, settings):
+    if not add_serial_to_prestage(jamf_client, target_id, serial, settings):
         logger.error("jamf_delete_and_set_prestage: failed to add serial=%s to prestage ID %s", serial, target_id)
-        _warn("PreStage add failed",
+        show_warning("PreStage add failed",
               f"Could not add serial to PreStage {target_name} (ID {target_id}).")
         return f"[ERROR] JAMF: Failed to add to PreStage {target_name} (ID {target_id})."
 
@@ -92,7 +92,7 @@ def jamf_delete_and_set_prestage(asset_tag: str) -> str:
     settings = get_prestage_settings()
     logger.debug("jamf_delete_and_set_prestage: settings loaded dry_run=%s", settings.get("dry_run"))
 
-    if not _confirm_action(
+    if not confirm_action(
         "Confirm Jamf Delete",
         "This will update PreStage assignments and delete the Jamf record.\n\nContinue?",
     ):
@@ -103,7 +103,7 @@ def jamf_delete_and_set_prestage(asset_tag: str) -> str:
     logger.info("Asset Tag: %s", asset_tag)
     logger.info("Mode: %s", "DRY RUN" if settings["dry_run"] else "LIVE")
 
-    serial = _get_serial_from_snipe(asset_tag)
+    serial = get_serial_from_snipe(asset_tag)
     if not serial:
         return f"[ERROR] SNIPE: No serial for asset {asset_tag}."
     logger.info("Serial: %s", serial)
@@ -116,7 +116,7 @@ def jamf_delete_and_set_prestage(asset_tag: str) -> str:
         return f"[ERROR] JAMF: Client init failed: {e}"
 
     logger.debug("jamf_delete_and_set_prestage: fetching prestage list")
-    prestages = _get_prestage_list(jamf_client, settings)
+    prestages = get_prestage_list(jamf_client, settings)
     if not prestages:
         logger.error("jamf_delete_and_set_prestage: no prestages returned for %s", asset_tag)
         return "[ERROR] JAMF: No PreStages returned."
@@ -126,7 +126,7 @@ def jamf_delete_and_set_prestage(asset_tag: str) -> str:
 
     def _scan_one(tag, prestage):
         """Batch-mode callback: same delete + set PreStage for one more asset tag."""
-        batch_serial = _get_serial_from_snipe(tag)
+        batch_serial = get_serial_from_snipe(tag)
         if not batch_serial:
             msg = f"[ERROR] SNIPE: No serial for asset {tag}."
         else:
@@ -139,7 +139,7 @@ def jamf_delete_and_set_prestage(asset_tag: str) -> str:
         batch_results.append(f"{tag}: {msg}")
         return msg
 
-    choice = _prompt_prestage_choice(prestages, on_scan=_scan_one, initial_tag=asset_tag)
+    choice = prompt_prestage_choice(prestages, on_scan=_scan_one, initial_tag=asset_tag)
     if not choice and batch_results:
         return "\n".join(batch_results)
     if not choice:

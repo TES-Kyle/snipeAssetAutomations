@@ -19,8 +19,8 @@ from tkinter import messagebox
 from utilities.logging_utils import configure_logging
 from utilities.otherApiBits import getAssetInfo
 from utilities.jamfPrestageCommon import (
-    _find_jamf_computer_by_serial,
     create_jamf_client,
+    find_jamf_computer_by_serial,
     get_prestage_settings,
 )
 
@@ -64,7 +64,7 @@ def redeploy_jamf_framework(asset_tag: str) -> str:
         return f"[ERROR] JAMF: Client init failed: {e}"
 
     logger.debug("redeploy_jamf_framework: searching for Jamf computer by serial=%s", serial)
-    comp = _find_jamf_computer_by_serial(jamf_client, serial, settings)
+    comp = find_jamf_computer_by_serial(jamf_client, serial, settings)
     if not comp:
         logger.error("redeploy_jamf_framework: no Jamf computer found for serial=%s", serial)
         messagebox.showerror("Redeploy Failed", f"No Jamf computer found for serial {serial}.")

@@ -34,14 +34,15 @@ from tkinter import messagebox, simpledialog, ttk
 from tkinter import font as tkfont
 
 from consisterizer import saveStates
-from utilities.autocomplete import AutoCompleteEntry
+from utilities.autocomplete import AutoCompleteEntry, option_id
+from utilities.callSupport import call_with_optional_second_arg
 from utilities import optionsCache
-from utilities.otherApiBits import getAssetInfo
+from utilities.otherApiBits import getAssetInfo, require_snipe_config
 from utilities.logging_utils import configure_logging
 from utilities.scroll_support import bind_canvas_scroll
 from utilities.settings import get_settings
 from utilities.Key import API_URL_Base  # API creds
-from utilities.api_user import get_api_headers, get_api_key
+from utilities.api_user import get_api_headers
 from utilities.theme import get_ui_colors
 from utilities.tk_geometry import center_window
 from utilities.validation import valid_asset_tag
@@ -586,13 +587,13 @@ def consisterizer(asset_tag, _checked_values=None):
         opts = _prepend_special_option(opts, "{empty}", "empty")
         return _prepend_special_option(opts, "{blank}", "blank")
 
-    # Preload once (still synchronous/blocking at window-open, same timing
-    # as before -- but now cache-accelerated) for the label->id maps used
-    # to resolve template-expanded/typed values at submit time, further
-    # down. The interactive widgets themselves are loaded separately, async,
-    # via optionsCache.load_widget() below.
+    # Preload once (still synchronous/blocking at window-open, but
+    # cache-accelerated) for the status/model label->id maps used to resolve
+    # template-expanded/typed values at submit time, further down. (Assignees
+    # need no such map: submit uses the picked option's own type/id.) The
+    # interactive widgets themselves are loaded separately, async, via
+    # optionsCache.load_widget() below.
     status_options = _status_options_transform(optionsCache.get_options("status"))
-    assignee_options = _assignee_options_transform(optionsCache.get_options("assignee"))
     model_options = _model_options_transform(optionsCache.get_options("model"))
 
     # live value for {username} token
@@ -857,6 +858,7 @@ def consisterizer(asset_tag, _checked_values=None):
         on_change logic is identical apart from the log label.
         """
         def on_change():
+            """Mirror the picked/typed value into the Result column and recompute."""
             txt = ac_ref.get().strip()
             logger.debug("on_change(%s): txt=%s cur_val=%s", field_name, txt, cur_val)
             rr["ac_selected"] = ac_ref.get_selected()
@@ -1511,36 +1513,10 @@ def consisterizer(asset_tag, _checked_values=None):
         logger.debug("_label_id_map: map has %s entries", len(m))
         return m
 
-    def _id_from_sel(sel):
-        """Extract a selection ID from an autocomplete selection dict.
-
-        Args:
-            sel: Autocomplete selection dict.
-
-        Returns:
-            The ID value, or None if not found.
-        """
-        logger.debug("_id_from_sel: sel_type=%s", type(sel).__name__)
-        if not isinstance(sel, dict):
-            logger.debug("_id_from_sel: not a dict, returning None")
-            return None
-        for k in ("id", "value", "user_id", "model_id", "status_id"):
-            if sel.get(k) is not None:
-                logger.debug("_id_from_sel: found id via key=%s value=%s", k, sel[k])
-                return sel[k]
-        meta = sel.get("meta") or {}
-        for k in ("id", "user_id", "model_id", "status_id"):
-            if meta.get(k) is not None:
-                logger.debug("_id_from_sel: found id in meta via key=%s value=%s", k, meta[k])
-                return meta[k]
-        logger.debug("_id_from_sel: no id found, returning None")
-        return None
-
     # Pre-build reverse-lookup maps so we can resolve label strings to IDs
     # without scanning the full options lists on every submission.
     status_label_to_id = _label_id_map(status_options)
     model_label_to_id = _label_id_map(model_options)
-    assignee_label_to_id = _label_id_map(assignee_options)
 
     def _build_patch_payload(snapshot: dict):
         """Compare snapshot vs current, return (payload, any_changes, need_checkin).
@@ -1591,7 +1567,7 @@ def consisterizer(asset_tag, _checked_values=None):
                     need_checkin = True
 
                 elif sel_type == "user":
-                    checkout_user_id = _id_from_sel(sel)
+                    checkout_user_id = option_id(sel)
                     logger.info("_build_patch_payload: checkout to user_id=%s", checkout_user_id)
                     if checkout_user_id is None:
                         raise ValueError("Pick a *User* from the list (or type {empty} to clear).")
@@ -1601,7 +1577,7 @@ def consisterizer(asset_tag, _checked_values=None):
                         must_checkin_first = True
 
                 elif sel_type == "location":
-                    checkout_location_id = _id_from_sel(sel)
+                    checkout_location_id = option_id(sel)
                     logger.info("_build_patch_payload: checkout to location_id=%s", checkout_location_id)
                     if checkout_location_id is None:
                         raise ValueError("Pick a *Location* from the list.")
@@ -1618,7 +1594,7 @@ def consisterizer(asset_tag, _checked_values=None):
             if key in {"status", "model"}:
                 txt = (new or "").strip()
                 sel = rows_by_key[key].get("ac_selected")
-                sel_id = _id_from_sel(sel)
+                sel_id = option_id(sel)
                 if sel_id is None:
                     label_map = status_label_to_id if key == "status" else model_label_to_id
                     sel_id = label_map.get(txt)
@@ -1652,17 +1628,6 @@ def consisterizer(asset_tag, _checked_values=None):
                      changed, need_checkin, must_checkin_first, list(payload.keys()))
         return payload, changed, need_checkin, must_checkin_first, checkout_user_id, checkout_location_id
 
-    def _require_snipe_config(op_name: str) -> bool:
-        """Return True if SNIPE_BASE/API key are configured; else show an error.
-
-        Shared guard for the PATCH/checkin/checkout helpers below.
-        """
-        if not SNIPE_BASE or not get_api_key():
-            logger.error("%s: missing SNIPE_BASE or API key", op_name)
-            messagebox.showerror("Snipe-IT", "Missing API_URL_Base or API key in utilities.Key.")
-            return False
-        return True
-
     def _snipe_call_with_retry(op_name: str, request_fn) -> bool:
         """Run a Snipe-IT write request through call_with_retry; True on success."""
         result = call_with_retry(op_name, request_fn, busy_widget=win)
@@ -1679,7 +1644,7 @@ def consisterizer(asset_tag, _checked_values=None):
             True if the PATCH succeeded, False if cancelled.
         """
         logger.debug("_api_patch_with_retry: asset_id=%s payload_keys=%s", asset_id, list(payload.keys()))
-        if not _require_snipe_config("_api_patch_with_retry"):
+        if not require_snipe_config("_api_patch_with_retry"):
             return False
 
         url = f"{SNIPE_BASE}/hardware/{asset_id}"
@@ -1703,7 +1668,7 @@ def consisterizer(asset_tag, _checked_values=None):
             True if checkin succeeded, False if cancelled.
         """
         logger.debug("_api_checkin_with_retry: asset_id=%s note=%s location_id=%s", asset_id, note, location_id)
-        if not _require_snipe_config("_api_checkin_with_retry"):
+        if not require_snipe_config("_api_checkin_with_retry"):
             return False
 
         url = f"{SNIPE_BASE}/hardware/{asset_id}/checkin"
@@ -1735,7 +1700,7 @@ def consisterizer(asset_tag, _checked_values=None):
             True if checkout succeeded, False if cancelled.
         """
         logger.debug("_api_checkout_with_retry: asset_id=%s user_id=%s location_id=%s", asset_id, user_id, location_id)
-        if not _require_snipe_config("_api_checkout_with_retry"):
+        if not require_snipe_config("_api_checkout_with_retry"):
             return False
 
         url = f"{SNIPE_BASE}/hardware/{asset_id}/checkout"
@@ -1804,6 +1769,7 @@ def consisterizer(asset_tag, _checked_values=None):
     # --- Save states ---------------------------------------------------------
     def _capture_state() -> dict:
         """Snapshot every input on screen into a save-state dict (see saveStates.py)."""
+        logger.debug("_capture_state: capturing current setup")
         set_vals = {}
         for key, row in rows_by_key.items():
             if row.get("text_widget_type") == "ac":
@@ -1861,6 +1827,8 @@ def consisterizer(asset_tag, _checked_values=None):
             True if applied; False if refused (option lists still loading).
         """
         nonlocal _bulk_loading
+        logger.debug("_apply_state: applying state with %s set fields, reset=%s",
+                     len(state.get("set") or {}), state.get("reset"))
         if any(r["ac"].is_loading() for r in rows_by_key.values() if r.get("text_widget_type") == "ac"):
             messagebox.showinfo("Still Loading", "Status / model / user lists are still loading. Try again in a moment.", parent=win)
             return False
@@ -1916,6 +1884,7 @@ def consisterizer(asset_tag, _checked_values=None):
             logger.exception("_save_click: could not write save state")
             messagebox.showerror("Save Setup", f"Could not save:\n{e}", parent=win)
             return
+        logger.info("_save_click: saved setup %r", saved_as)
         status_var.set(f"Saved setup '{saved_as}'.")
 
     load_dialog = None
@@ -1954,7 +1923,7 @@ def consisterizer(asset_tag, _checked_values=None):
 
     def _load_click():
         """Open the list of saves: click a name to load it, trash icon to delete."""
-        nonlocal load_dialog, load_sort
+        nonlocal load_dialog
         if load_dialog is not None and load_dialog.winfo_exists():
             load_dialog.lift()
             load_dialog.focus_force()
@@ -1993,6 +1962,8 @@ def consisterizer(asset_tag, _checked_values=None):
         bind_canvas_scroll(canvas)
 
         def _load(name):
+            """Apply the named save to the Consisterizer and close the dialog."""
+            logger.debug("_load: loading save state %r", name)
             state = saveStates.get_state(name)
             if state is None:
                 messagebox.showerror("Load Setup", f"Save '{name}' no longer exists.", parent=dlg)
@@ -2002,6 +1973,8 @@ def consisterizer(asset_tag, _checked_values=None):
                 dlg.destroy()
 
         def _delete(name):
+            """Delete the named save after confirmation, then redraw the list."""
+            logger.debug("_delete: delete requested for save state %r", name)
             if not messagebox.askyesno(
                 "Delete Save",
                 f"Delete the save '{name}'?\n\nThis can't be undone.",
@@ -2048,6 +2021,7 @@ def consisterizer(asset_tag, _checked_values=None):
                 sb.pack_forget()
 
         def _on_sort_change(_e=None):
+            """Remember the chosen sort order and redraw the list."""
             nonlocal load_sort
             load_sort = next(v for lbl, v in _SORT_CHOICES if lbl == sort_var.get())
             _populate()
@@ -2198,7 +2172,7 @@ def consisterizer(asset_tag, _checked_values=None):
 
         Scripts receive (asset_tag, checked_values) where checked_values is a list
         built from the reset-checked rows (same format the main window passes to
-        printSelected). Scripts that only accept asset_tag fall back via TypeError.
+        printSelected). Scripts that only accept asset_tag are called with just that.
 
         Args:
             asset_tag_for_scripts: Asset tag to pass to each script.
@@ -2212,17 +2186,7 @@ def consisterizer(asset_tag, _checked_values=None):
                 continue
             logger.info("_run_selected_submit_scripts: running script=%s for asset_tag=%s", submit_func_listTXT[i], asset_tag_for_scripts)
             try:
-                ret = submit_func_list[i](asset_tag_for_scripts, checked_values)
-            except TypeError:
-                # Script doesn't accept a second argument — fall back to tag-only call.
-                logger.debug("_run_selected_submit_scripts: script=%s does not accept checked_values, retrying tag-only", submit_func_listTXT[i])
-                try:
-                    ret = submit_func_list[i](asset_tag_for_scripts)
-                except Exception as e:
-                    logger.exception("_run_selected_submit_scripts: script=%s failed", submit_func_listTXT[i])
-                    had_error = True
-                    lines.append(f"✗ {submit_func_listTXT[i]}: {e}")
-                    continue
+                ret = call_with_optional_second_arg(submit_func_list[i], asset_tag_for_scripts, checked_values)
             except Exception as e:
                 logger.exception("_run_selected_submit_scripts: script=%s failed", submit_func_listTXT[i])
                 had_error = True
@@ -2436,31 +2400,7 @@ def consisterizer(asset_tag, _checked_values=None):
                 logger.debug("_switch_asset_in_place: assigned_to is {empty}, clearing username")
                 runtime_username.set("")
             elif sel and sel.get("type") == "user":
-                def _from_sel(s):
-                    """Extract a username from a selection dict.
-
-                    Args:
-                        s: Selection dict from autocomplete.
-
-                    Returns:
-                        Username string, or empty string if none found.
-                    """
-                    logger.debug("_from_sel: extracting username from sel")
-                    u = (s.get("username") or "").strip()
-                    if u:
-                        return u
-                    em = (s.get("email") or "").strip()
-                    if "@" in em:
-                        return em.split("@", 1)[0]
-                    meta = s.get("meta") or {}
-                    u = (meta.get("username") or "").strip()
-                    if u:
-                        return u
-                    em = (s.get("email") or "").strip()
-                    if "@" in em:
-                        return em.split("@", 1)[0]
-                    return ""
-                uname = _from_sel(sel) or current_map.get("_assigned_username", "")
+                uname = _username_from_option(sel) or current_map.get("_assigned_username", "")
                 logger.debug("_switch_asset_in_place: setting runtime_username=%s", uname)
                 runtime_username.set(uname)
             else:

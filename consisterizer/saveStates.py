@@ -53,6 +53,7 @@ def _read_all(path: str) -> dict:
 
 def _write_all(path: str, saves: dict) -> None:
     """Atomically write {name: state} to disk (temp file + rename)."""
+    logger.debug("_write_all: writing %s save(s) to %s", len(saves), path)
     directory = os.path.dirname(path) or "."
     fd, tmp = tempfile.mkstemp(dir=directory, prefix=".saveStates-", suffix=".tmp")
     try:
@@ -86,6 +87,7 @@ def list_entries(sort: str = SORT_ALPHA, path: str = SAVES_PATH) -> list[tuple[s
     Args:
         sort: SORT_ALPHA, SORT_NEWEST or SORT_OLDEST.
     """
+    logger.debug("list_entries: sort=%s", sort)
     entries = [(n, str(st.get("saved_at") or "")) for n, st in _read_all(path).items()]
     entries.sort(key=lambda e: e[0].lower())
     if sort == SORT_NEWEST:

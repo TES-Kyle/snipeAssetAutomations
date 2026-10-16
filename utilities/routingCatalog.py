@@ -24,9 +24,10 @@ single path.
 
 import ast
 import logging
+import os
 from dataclasses import dataclass
 
-from utilities.keyDependencyGraph import resolve_local_module
+from utilities.keyDependencyGraph import read_source, resolve_local_module
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +115,7 @@ def render_trimmed_routing_file(repo_root: str, spec: RoutingFileSpec, selected_
     """
     selected_indices = set(selected_indices)
     abs_path = _abs(repo_root, spec.rel_path)
-    source = _read(abs_path)
+    source = read_source(abs_path)
     tree = ast.parse(source, filename=abs_path)
 
     import_nodes = _module_level_import_nodes(tree)
@@ -161,17 +162,13 @@ def render_trimmed_routing_file(repo_root: str, spec: RoutingFileSpec, selected_
 # Internals
 # ---------------------------------------------------------------------------
 
-def _read(abs_path):
-    with open(abs_path, "r", encoding="utf-8") as f:
-        return f.read()
-
-
 def _abs(repo_root, rel_path):
-    import os
+    """Absolute path for a repo-relative "/"-separated path."""
     return os.path.join(repo_root, *rel_path.split("/"))
 
 
 def _module_level_import_nodes(tree):
+    """Top-level import / from-import statements of a parsed module."""
     return [n for n in tree.body if isinstance(n, (ast.Import, ast.ImportFrom))]
 
 
@@ -206,6 +203,11 @@ def _referenced_names(elt_node):
 
 
 def _find_list_and_labels_assigns(tree, spec, abs_path):
+    """Find the two module-level assignments (function list, label list) a routing file must define.
+
+    Raises:
+        RoutingFileParseError: if either is missing or not a plain list literal.
+    """
     list_assign = labels_assign = None
     for node in tree.body:
         if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
@@ -227,8 +229,9 @@ def _find_list_and_labels_assigns(tree, spec, abs_path):
 
 
 def _load_entries_for_spec(spec, repo_root):
+    """Parse one routing file into RoutingEntry objects (one per list element)."""
     abs_path = _abs(repo_root, spec.rel_path)
-    tree = ast.parse(_read(abs_path), filename=abs_path)
+    tree = ast.parse(read_source(abs_path), filename=abs_path)
     list_assign, labels_assign = _find_list_and_labels_assigns(tree, spec, abs_path)
     name_to_file = _imported_name_map(tree, repo_root)
 

@@ -1,7 +1,6 @@
 """Tests for utilities.settings read/write helpers (pure logic, no Tk/network)."""
 
 import json
-import os
 
 import utilities.settings as settings_mod
 

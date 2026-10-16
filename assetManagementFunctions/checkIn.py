@@ -156,7 +156,7 @@ def checkIn(asset_tag, checkOutOrigin=None):
 
     # Center the window on screen.
     center_window(checkin_window)
-    
+
     if checkOutOrigin is not None:
         flash_widget(w, duration=3000, interval=500)
 

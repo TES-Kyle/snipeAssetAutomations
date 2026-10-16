@@ -2,8 +2,6 @@
 
 import logging
 import os
-import platform
-import subprocess
 import sys
 import threading
 import time
@@ -18,33 +16,10 @@ if REPO_ROOT not in sys.path:
 from assetManagementFunctions.chargerSerial import get_computer_inventory_results, build_charger_history
 from utilities.logging_utils import configure_logging
 from utilities.api_user import get_api_key
+from utilities.chargerDetect import get_connected_charger_serial
 from utilities.tk_thread import ensure_tk_thread_pump, run_on_tk_thread
 
 logger = logging.getLogger(__name__)
-
-
-def _get_charger_serial_number():
-    """Return the local charger serial number on macOS, if available."""
-    logger.debug("_get_charger_serial_number: platform=%s", platform.system())
-    if platform.system() != "Darwin":
-        logger.debug("_get_charger_serial_number: non-Darwin platform, raising OSError")
-        raise OSError("Unsupported operating system")
-    logger.debug("_get_charger_serial_number: running system_profiler command")
-    try:
-        result = subprocess.run(
-            "system_profiler SPPowerDataType | awk '/AC Charger Information:/,/Charging/' | grep 'Serial Number'",
-            shell=True,
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            universal_newlines=True,
-        )
-        serial = (result.stdout.strip().split(": ", 1)[-1] or "").strip()
-        logger.debug("_get_charger_serial_number: detected serial=%s", serial)
-        return serial
-    except Exception:
-        logger.debug("_get_charger_serial_number: subprocess failed, returning empty string")
-        return ""
 
 
 def show_connected_charger_history():
@@ -54,7 +29,7 @@ def show_connected_charger_history():
 
     logger.debug("show_connected_charger_history: detecting charger serial")
     try:
-        serial_var = tk.StringVar(value=_get_charger_serial_number())
+        serial_var = tk.StringVar(value=get_connected_charger_serial())
     except OSError:
         logger.error("show_connected_charger_history: unsupported OS, aborting")
         messagebox.showerror("Charger History", "Unsupported Operating System")
@@ -162,7 +137,7 @@ def show_connected_charger_history():
         logger.debug("_poll_serial: background polling thread started")
         while True:
             try:
-                current = _get_charger_serial_number()
+                current = get_connected_charger_serial()
             except Exception:
                 logger.debug("_poll_serial: exception reading serial, using empty string")
                 current = ""

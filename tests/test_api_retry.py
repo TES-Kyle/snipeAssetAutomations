@@ -4,14 +4,17 @@ Dialog functions are monkeypatched to canned answers rather than exercising
 real Tk, since these tests run headless.
 """
 
+import pytest
+
 import utilities.api_retry as api_retry
 
 
 class FakeResponse:
-    def __init__(self, status_code, json_data=None, text="raw text"):
+    def __init__(self, status_code, json_data=None, text="raw text", headers=None):
         self.status_code = status_code
         self._json = json_data
         self.text = text
+        self.headers = headers or {}
 
     def json(self):
         if self._json is None:
@@ -153,3 +156,32 @@ def test_call_with_retry_busy_widget_toggled_around_each_attempt():
     )
     assert result == {"ok": True}
     assert calls == ["watch", ""]
+
+
+# --- request_with_backoff (dialog-free retry for worker threads) ---
+
+def test_backoff_returns_success_and_definitive_4xx_without_retrying():
+    calls = []
+    assert api_retry.request_with_backoff(lambda: calls.append(1) or FakeResponse(200), sleep=lambda s: None).status_code == 200
+    assert api_retry.request_with_backoff(lambda: calls.append(1) or FakeResponse(422), sleep=lambda s: None).status_code == 422
+    assert len(calls) == 2
+
+
+def test_backoff_retries_429_honouring_retry_after_then_succeeds():
+    seq = [FakeResponse(429, headers={"Retry-After": "7"}), FakeResponse(200)]
+    sleeps = []
+    resp = api_retry.request_with_backoff(lambda: seq.pop(0), sleep=sleeps.append)
+    assert resp.status_code == 200 and sleeps == [7.0]
+
+
+def test_backoff_retries_exceptions_then_raises_last():
+    def boom():
+        raise OSError("down")
+    sleeps = []
+    with pytest.raises(OSError):
+        api_retry.request_with_backoff(boom, attempts=3, sleep=sleeps.append)
+    assert len(sleeps) == 2
+
+
+def test_backoff_returns_last_5xx_after_exhausting_attempts():
+    assert api_retry.request_with_backoff(lambda: FakeResponse(503), attempts=2, sleep=lambda s: None).status_code == 503

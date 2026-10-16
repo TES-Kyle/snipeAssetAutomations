@@ -137,7 +137,7 @@ except Exception:
     _TK_OK = False
 
 
-def _warn(title: str, message: str) -> None:
+def show_warning(title: str, message: str) -> None:
     """Show a warning dialog, or log the message when Tk is unavailable.
 
     Args:
@@ -155,7 +155,7 @@ def _warn(title: str, message: str) -> None:
     logger.warning("%s: %s", title, message)
 
 
-def _confirm_action(title: str, message: str) -> bool:
+def confirm_action(title: str, message: str) -> bool:
     """Show a yes/no confirmation dialog and return the user's choice.
 
     Falls back to False (cancel) when Tk is unavailable or headless.
@@ -205,7 +205,7 @@ def _pp(obj: Any, limit: int = 1600) -> str:
 # ==============================
 # Snipe + Jamf lookups
 # ==============================
-def _get_serial_from_snipe(asset_tag: str) -> Optional[str]:
+def get_serial_from_snipe(asset_tag: str) -> Optional[str]:
     """Load Snipe-IT asset and return its serial (or None).
 
     Args:
@@ -214,10 +214,10 @@ def _get_serial_from_snipe(asset_tag: str) -> Optional[str]:
     Returns:
         Serial number string, or None if not found or on error.
     """
-    logger.debug("_get_serial_from_snipe: asset_tag=%s", asset_tag)
+    logger.debug("get_serial_from_snipe: asset_tag=%s", asset_tag)
     try:
         _vars, asset = getAssetInfo(asset_tag)
-        logger.debug("_get_serial_from_snipe: asset info retrieved for %s", asset_tag)
+        logger.debug("get_serial_from_snipe: asset info retrieved for %s", asset_tag)
     except Exception as e:
         logger.error("SNIPE: Failed to load asset '%s': %s", asset_tag, e)
         return None
@@ -226,11 +226,11 @@ def _get_serial_from_snipe(asset_tag: str) -> Optional[str]:
     if not serial:
         logger.error("SNIPE: Asset '%s' has no serial.", asset_tag)
         return None
-    logger.debug("_get_serial_from_snipe: found serial=%s for asset_tag=%s", serial, asset_tag)
+    logger.debug("get_serial_from_snipe: found serial=%s for asset_tag=%s", serial, asset_tag)
     return serial
 
 
-def _find_jamf_computer_by_serial(
+def find_jamf_computer_by_serial(
     jamf_client: JamfProClient,
     serial: str,
     settings: Dict[str, Any],
@@ -555,7 +555,7 @@ def _put_prestage_scope_v2(
         return False
 
 
-def _remove_from_all_prestages(
+def remove_from_all_prestages(
     jamf_client: JamfProClient,
     serial: str,
     settings: Dict[str, Any],
@@ -718,7 +718,7 @@ def _remove_from_all_prestages(
         logger.info("No scope updates were necessary.")
 
     if candidate_ids and changed == 0:
-        _warn("PreStage removal",
+        show_warning("PreStage removal",
               "Jamf reported candidate PreStages for this device, but I could not "
               "remove it from any of them.\n\n"
               "You may wish to retry updates, or inspect the PreStages manually.")
@@ -726,7 +726,7 @@ def _remove_from_all_prestages(
     return (seen, changed, len(candidate_ids))
 
 
-def _get_prestage_list(
+def get_prestage_list(
     jamf_client: JamfProClient,
     settings: Dict[str, Any],
 ) -> List[Dict[str, Any]]:
@@ -838,7 +838,7 @@ def _get_prestage_list(
     return out
 
 
-def _prompt_prestage_choice(
+def prompt_prestage_choice(
     prestages: List[Dict[str, Any]],
     on_scan=None,
     initial_tag: str = "",
@@ -865,7 +865,7 @@ def _prompt_prestage_choice(
         logger.error("Tk root unavailable; cannot prompt for PreStage selection.")
         return None
     if not prestages:
-        _warn("PreStage selection", "No PreStages were returned from Jamf.")
+        show_warning("PreStage selection", "No PreStages were returned from Jamf.")
         return None
 
     win = _tk.Toplevel(root)
@@ -965,7 +965,7 @@ def _prompt_prestage_choice(
     return result["choice"]
 
 
-def _add_serial_to_prestage(
+def add_serial_to_prestage(
     jamf_client: JamfProClient,
     prestage_id: int,
     serial: str,
@@ -1173,7 +1173,7 @@ def delete_computer_with_retry(jamf_client, cid, cname, settings, success_messag
         cname: Display name for the computer, used in the failure return message.
         settings: Prestage settings dict (dry_run flag respected by _delete_computer_pro).
         success_message: Message to return when deletion succeeds.
-        failure_warn_message: Message shown via _warn() when the user gives up retrying.
+        failure_warn_message: Message shown via show_warning() when the user gives up retrying.
 
     Returns:
         success_message on success, or "[ERROR] JAMF: Delete failed for {cname}
@@ -1190,5 +1190,5 @@ def delete_computer_with_retry(jamf_client, cid, cname, settings, success_messag
                              f"Could not delete Jamf computer ID {cid}.\n\nRetry?"):
             logger.debug("delete_computer_with_retry: user chose retry for delete of ID %s", cid)
             continue
-        _warn("Jamf delete failed", failure_warn_message)
+        show_warning("Jamf delete failed", failure_warn_message)
         return f"[ERROR] JAMF: Delete failed for {cname} (ID {cid})."

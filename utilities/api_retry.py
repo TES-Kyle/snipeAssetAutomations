@@ -12,6 +12,7 @@ Windmill jobs).
 """
 
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -235,3 +236,51 @@ def call_with_retry(op_name, fn, *, allow_skip=False, is_success=default_is_succ
         if choice is False and allow_skip:
             return SKIPPED
         return None
+
+
+def request_with_backoff(send, *, attempts: int = 4, sleep=time.sleep, max_wait: float = 60.0):
+    """Call send() with automatic retries and no dialogs (safe on a worker thread).
+
+    The background-thread counterpart of call_with_retry(): retries on
+    exceptions, HTTP 429 (honouring Retry-After) and 5xx, pausing a little
+    longer each time. Any other response -- success or a definitive 4xx --
+    is returned immediately for the caller to judge.
+
+    Args:
+        send: Zero-arg callable returning a requests.Response; re-invoked per attempt.
+        attempts: Total tries before giving up.
+        sleep: Pause function (injectable for tests).
+        max_wait: Cap, in seconds, on any single pause.
+
+    Returns:
+        The first non-retryable response, or the last response if every
+        attempt got a 429/5xx.
+
+    Raises:
+        Exception: the last exception if every attempt raised.
+    """
+    last_exc = None
+    resp = None
+    for i in range(attempts):
+        wait = 2.0 * (i + 1)
+        try:
+            resp = send()
+            last_exc = None
+        except Exception as exc:  # network error, timeout, ...
+            last_exc = exc
+            resp = None
+            logger.debug("request_with_backoff: attempt %s/%s raised %s", i + 1, attempts, exc)
+        else:
+            if resp.status_code == 429:
+                try:
+                    wait = float(resp.headers.get("Retry-After", wait))
+                except (TypeError, ValueError):
+                    pass
+            elif resp.status_code < 500:
+                return resp
+            logger.debug("request_with_backoff: attempt %s/%s got HTTP %s", i + 1, attempts, resp.status_code)
+        if i < attempts - 1:
+            sleep(min(wait, max_wait))
+    if last_exc is not None:
+        raise last_exc
+    return resp

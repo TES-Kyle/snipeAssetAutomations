@@ -7,14 +7,14 @@ import logging
 
 from utilities.logging_utils import configure_logging
 from utilities.jamfPrestageCommon import (
-    _confirm_action,
-    _find_jamf_computer_by_serial,
-    _get_serial_from_snipe,
-    _remove_from_all_prestages,
-    _warn,
+    confirm_action,
     create_jamf_client,
     delete_computer_with_retry,
+    find_jamf_computer_by_serial,
     get_prestage_settings,
+    get_serial_from_snipe,
+    remove_from_all_prestages,
+    show_warning,
 )
 
 logger = logging.getLogger(__name__)
@@ -38,7 +38,7 @@ def jamf_remove_prestage_and_delete(asset_tag: str, safety=True) -> str:
     logger.debug("jamf_remove_prestage_and_delete: settings loaded dry_run=%s delete_after_remove=%s", settings.get("dry_run"), settings.get("delete_after_remove"))
 
     if safety:
-        if not _confirm_action(
+        if not confirm_action(
             "Confirm Jamf Delete",
             "This will remove the device from all Jamf PreStages and delete its Jamf record.\n\nContinue?",
         ):
@@ -51,7 +51,7 @@ def jamf_remove_prestage_and_delete(asset_tag: str, safety=True) -> str:
     logger.info("Asset Tag: %s", asset_tag)
     logger.info("Mode: %s", "DRY RUN" if settings["dry_run"] else "LIVE")
 
-    serial = _get_serial_from_snipe(asset_tag)
+    serial = get_serial_from_snipe(asset_tag)
     if not serial:
         return f"[ERROR] SNIPE: No serial for asset {asset_tag}."
     logger.info("Serial: %s", serial)
@@ -65,7 +65,7 @@ def jamf_remove_prestage_and_delete(asset_tag: str, safety=True) -> str:
         return f"[ERROR] JAMF: Client init failed: {e}"
 
     logger.debug("jamf_remove_prestage_and_delete: searching for Jamf computer by serial=%s", serial)
-    comp = _find_jamf_computer_by_serial(jamf_client, serial, settings)
+    comp = find_jamf_computer_by_serial(jamf_client, serial, settings)
     cid = comp["id"] if comp else None
     cname = comp["name"] if comp else None
     if comp:
@@ -74,7 +74,7 @@ def jamf_remove_prestage_and_delete(asset_tag: str, safety=True) -> str:
         logger.warning("No Jamf computer inventory record found for serial %s.", serial)
 
     logger.info("jamf_remove_prestage_and_delete: removing serial=%s from all prestages", serial)
-    seen, modified, candidates = _remove_from_all_prestages(jamf_client, serial, settings)
+    seen, modified, candidates = remove_from_all_prestages(jamf_client, serial, settings)
     logger.info("PreStages seen: %s, modified: %s, candidates: %s", seen, modified, candidates)
 
     if not settings["delete_after_remove"]:
@@ -89,7 +89,7 @@ def jamf_remove_prestage_and_delete(asset_tag: str, safety=True) -> str:
         msg = (f"Skipped delete: PreStage removal incomplete "
                f"({modified}/{candidates}).\n\n"
                "Delete is guarded to prevent orphaned PreStage assignments.")
-        _warn("Deletion skipped (safe-guard)", msg)
+        show_warning("Deletion skipped (safe-guard)", msg)
         return (f"[SAFEGUARD] Skipped delete; PreStage removal incomplete "
                 f"({modified}/{candidates} updated).")
 

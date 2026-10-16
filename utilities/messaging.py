@@ -553,7 +553,7 @@ def repair_notice_no_fine(full_name):
 
 We are sending this to let you know that {full_name} has submitted their computer for repair.
 
-There will not be any fine associated with this, regardless of whether we determine the student to be at fault for the damage. Please help us make sure that {full_name} is careful with their computer in the future. 
+There will not be any fine associated with this, regardless of whether we determine the student to be at fault for the damage. Please help us make sure that {full_name} is careful with their computer in the future.
 
 We will send you another update once the computer repair is complete and available for pickup.
 
@@ -578,7 +578,7 @@ def ready_no_fine(full_name):
     logger.debug("ready_no_fine: full_name=%s", full_name)
     return f"""Hello,
 
-We are pleased to inform you that the Macbook Air for {full_name} has been repaired and is now ready for pickup. 
+We are pleased to inform you that the Macbook Air for {full_name} has been repaired and is now ready for pickup.
 
 {full_name} should schedule an appointment for laptop pickup using the following link:
 https://calendly.com/trinitytech/support
@@ -605,12 +605,12 @@ def ready_fine(full_name, fine_amount):
     logger.debug("ready_fine: full_name=%s, fine_amount=%s", full_name, fine_amount)
     return f"""Hello,
 
-We are pleased to inform you that the Macbook Air for {full_name} has been repaired and is now ready for pickup. 
+We are pleased to inform you that the Macbook Air for {full_name} has been repaired and is now ready for pickup.
 
 {full_name} should schedule an appointment for laptop pickup using the following link:
 https://calendly.com/trinitytech/support
 
-Please note: the Business Office will issue a fine of ${fine_amount} associated with this repair. 
+Please note: the Business Office will issue a fine of ${fine_amount} associated with this repair.
 
 Thank you for your attention.
 

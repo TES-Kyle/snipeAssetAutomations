@@ -1,5 +1,8 @@
 """Box Number Cleanup: browse every asset's box number and clear the stale ones.
 
+Box numbers follow "<LETTERS>-<digits>" (e.g. "SG-05", "WD-112"); anything
+else -- the old plain-number boxes -- is "malformed" and grouped under N/A.
+
 Flow:
   1. Full scan of all Snipe-IT assets (background thread, progress bar).
   2. Overview: collapsed tree  PREFIX-XX  ->  PREFIX-NN  ->  assets, with
@@ -16,6 +19,7 @@ hand-off to the UI goes through utilities/tk_thread.py.
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import tkinter as tk
 from tkinter import font as tkfont, messagebox, ttk
@@ -23,9 +27,8 @@ from tkinter import font as tkfont, messagebox, ttk
 import requests
 
 from assetManagementFunctions.dropOff import STREAMS, update_box_tracker
-from otherManagementFunctions import boxNumberLogic as bl
 from utilities import Key
-from utilities.api_retry import default_is_success
+from utilities.api_retry import default_is_success, request_with_backoff
 from utilities.api_user import get_api_key
 from utilities.logging_utils import configure_logging
 from utilities.otherApiBits import get_headers
@@ -40,6 +43,109 @@ logger = logging.getLogger(__name__)
 PAGE_LIMIT = 500
 INDENT_PX = 28
 
+_BOX_RE = re.compile(r"^([A-Za-z]+)-(\d+)$")
+NA_KEY = "N/A"
+
+
+# -----------------------------------------------------------------------------
+# Pure logic: parsing, grouping, tracker maths (no Tk, no network)
+# -----------------------------------------------------------------------------
+
+def parse_box_value(raw) -> tuple[str, int] | None:
+    """Parse "SG-05" -> ("SG", 5); return None for anything malformed.
+
+    Prefix is upper-cased so "sg-05" and "SG-05" are the same box.
+    """
+    m = _BOX_RE.match(str(raw or "").strip())
+    if not m:
+        logger.debug("parse_box_value: %r is not <LETTERS>-<digits>", raw)
+        return None
+    return m.group(1).upper(), int(m.group(2))
+
+
+def format_box_label(prefix: str, number: int) -> str:
+    """Canonical label: 2 digits below 100, 3+ otherwise (matches dropOff's labels)."""
+    return f"{prefix}-{number:02d}"
+
+
+def _natural_key(text: str):
+    """Sort digits numerically before text: "2" < "10" < "abc"."""
+    t = str(text or "").strip()
+    return (0, int(t), "") if t.isdigit() else (1, 0, t.lower())
+
+
+def group_assets(assets: list[dict]) -> list[dict]:
+    """Group assets into a prefix -> box -> assets hierarchy, sorted for display.
+
+    Returns:
+        List of category dicts, alphabetical with N/A last:
+        {"key", "label", "count", "boxes": [{"key", "label", "assets": [...]}]}
+        The category label is "<PREFIX>-XX" or "N/A-XX". Malformed boxes keep
+        their raw value as the box label.
+    """
+    cats: dict[str, dict[str, dict]] = {}
+    for a in assets:
+        parsed = parse_box_value(a.get("box"))
+        if parsed:
+            cat_key = parsed[0]
+            box_key = format_box_label(*parsed)
+            box_sort = (0, parsed[1], "")
+        else:
+            cat_key = NA_KEY
+            box_key = str(a.get("box") or "").strip()
+            box_sort = _natural_key(box_key)
+        box = cats.setdefault(cat_key, {}).setdefault(box_key, {"key": box_key, "label": box_key, "sort": box_sort, "assets": []})
+        box["assets"].append(a)
+
+    out = []
+    for cat_key in sorted(cats, key=lambda k: (k == NA_KEY, k)):
+        boxes = sorted(cats[cat_key].values(), key=lambda b: b["sort"])
+        for b in boxes:
+            b["assets"].sort(key=lambda a: _natural_key(a.get("tag")))
+        out.append({
+            "key": cat_key,
+            "label": f"{cat_key}-XX",
+            "count": sum(len(b["assets"]) for b in boxes),
+            "boxes": [{"key": b["key"], "label": b["label"], "assets": b["assets"]} for b in boxes],
+        })
+    return out
+
+
+def tracker_removals(assets_before: list[dict], cleared_ids: set, streams: list[str]) -> dict:
+    """Work out what the drop-off tracker needs to hear about.
+
+    Args:
+        assets_before: Every asset with a box number, before clearing.
+        cleared_ids: IDs whose box number was successfully cleared.
+        streams: The stream codes the tracker knows (e.g. SG, SM, ...).
+
+    Returns:
+        {stream: {"killed": bool, "removed_by_box": {box_number: count}}} for
+        each tracked stream that lost at least one asset. "killed" means the
+        stream had assets and now has none left.
+    """
+    total: dict[str, int] = {}
+    removed: dict[str, dict[int, int]] = {}
+    removed_total: dict[str, int] = {}
+    for a in assets_before:
+        parsed = parse_box_value(a.get("box"))
+        if not parsed or parsed[0] not in streams:
+            continue
+        prefix, number = parsed
+        total[prefix] = total.get(prefix, 0) + 1
+        if a["id"] in cleared_ids:
+            removed.setdefault(prefix, {})
+            removed[prefix][number] = removed[prefix].get(number, 0) + 1
+            removed_total[prefix] = removed_total.get(prefix, 0) + 1
+    return {
+        prefix: {"killed": removed_total[prefix] == total[prefix], "removed_by_box": removed[prefix]}
+        for prefix in removed
+    }
+
+
+# -----------------------------------------------------------------------------
+# Snipe-IT calls
+# -----------------------------------------------------------------------------
 
 def _box_field_key() -> str:
     """Custom-field DB column for Box Number (same setting the drop-off flow writes)."""
@@ -79,18 +185,21 @@ def _scan_assets(box_key: str, on_progress, cancel: threading.Event):
     Raises:
         RuntimeError: on an API error or an incomplete scan.
     """
+    logger.info("_scan_assets: starting full scan (box field %s)", box_key)
     base = Key.API_URL_Base.rstrip("/")
     assets, scanned, offset, total = [], 0, 0, None
     while True:
         if cancel.is_set():
+            logger.info("_scan_assets: cancelled at offset=%s", offset)
             return None
         url = f"{base}/hardware?limit={PAGE_LIMIT}&offset={offset}&sort=id&order=asc"
-        resp = bl.request_with_backoff(lambda u=url: requests.get(u, headers=get_headers(), timeout=60))
+        resp = request_with_backoff(lambda u=url: requests.get(u, headers=get_headers(), timeout=60))
         if not default_is_success(resp):
             raise RuntimeError(_http_error(resp))
         data = resp.json()
         rows = data.get("rows") or []
         total = data.get("total", total)
+        logger.debug("_scan_assets: offset=%s returned %s rows (total=%s)", offset, len(rows), total)
         for row in rows:
             scanned += 1
             box = _extract_box(row, box_key)
@@ -108,14 +217,16 @@ def _scan_assets(box_key: str, on_progress, cancel: threading.Event):
         offset += PAGE_LIMIT
     if total is not None and scanned < total:
         raise RuntimeError(f"Scan incomplete: got {scanned} of {total} assets.")
+    logger.info("_scan_assets: done, %s scanned, %s with a box number", scanned, len(assets))
     return assets, scanned
 
 
 def _clear_box_number(asset_id, box_key: str) -> str | None:
     """PATCH one asset's box number to blank. Returns None on success, else an error string."""
     url = f"{Key.API_URL_Base.rstrip('/')}/hardware/{asset_id}"
+    logger.debug("_clear_box_number: PATCH asset_id=%s field=%s", asset_id, box_key)
     try:
-        resp = bl.request_with_backoff(
+        resp = request_with_backoff(
             lambda: requests.patch(url, json={box_key: ""}, headers=get_headers(), timeout=25)
         )
     except Exception as exc:
@@ -127,6 +238,7 @@ class _BoxCleanupWindow:
     """The Box Number Cleanup window (loading view, then the overview)."""
 
     def __init__(self):
+        """Build the window shell and kick off the asset scan."""
         self.theme = get_ui_colors()
         self.box_key = _box_field_key()
         self.win = tk.Toplevel()
@@ -163,10 +275,13 @@ class _BoxCleanupWindow:
 
     # ------------------------------------------------------------------ scan
     def _reset_content(self):
+        """Remove whatever view (loading, error, overview) is currently showing."""
         for child in self.content.winfo_children():
             child.destroy()
 
     def _start_scan(self):
+        """Show the loading view and scan every asset on a background thread."""
+        logger.info("_start_scan: starting asset scan")
         self._reset_content()
         self._cancel_scan.clear()
         box = ttk.Frame(self.content)
@@ -183,7 +298,9 @@ class _BoxCleanupWindow:
         get_api_key()
 
         def on_progress(scanned, total):
+            """Worker-thread callback: queue a progress-bar update onto the Tk thread."""
             def apply():
+                """Update the progress bar and count text (Tk thread)."""
                 if not self.win.winfo_exists():
                     return
                 if total:
@@ -195,11 +312,12 @@ class _BoxCleanupWindow:
             run_on_tk_thread(self.win, apply)
 
         def worker():
+            """Run the scan; hand the result (or the error) back to the Tk thread."""
             configure_logging()
             try:
                 result = _scan_assets(self.box_key, on_progress, self._cancel_scan)
             except Exception as exc:
-                logger.exception("box cleanup: scan failed")
+                logger.exception("worker: asset scan failed")
                 msg = str(exc)
                 run_on_tk_thread(self.win, lambda m=msg: self._show_scan_error(m))
                 return
@@ -210,6 +328,8 @@ class _BoxCleanupWindow:
         threading.Thread(target=worker, daemon=True).start()
 
     def _show_scan_error(self, message: str):
+        """Replace the loading view with the error text plus Retry / Exit."""
+        logger.warning("_show_scan_error: %s", message)
         self._reset_content()
         box = ttk.Frame(self.content)
         box.place(relx=0.5, rely=0.4, anchor="center")
@@ -221,13 +341,15 @@ class _BoxCleanupWindow:
         ttk.Button(btns, text="Exit", command=self._exit).pack(side="left", padx=6)
 
     def _scan_done(self, assets: list[dict], scanned: int):
-        logger.info("box cleanup: scan done, %s assets scanned, %s with a box number", scanned, len(assets))
+        """Store the scan result and switch to the overview."""
+        logger.info("_scan_done: %s assets scanned, %s with a box number", scanned, len(assets))
         self.assets = assets
         self.scanned = scanned
         self._build_overview()
 
     # -------------------------------------------------------------- overview
     def _build_overview(self):
+        """Build the overview: summary, the tree text view, progress strip and bottom bar."""
         self._reset_content()
         t = self.theme
         self.summary_var = tk.StringVar()
@@ -291,7 +413,8 @@ class _BoxCleanupWindow:
         self._render()
 
     def _regroup(self):
-        self.cats = bl.group_assets(self.assets)
+        """Recompute the category/box grouping and the summary line from self.assets."""
+        self.cats = group_assets(self.assets)
         boxes = sum(len(c["boxes"]) for c in self.cats)
         self.summary_var.set(
             f"{self.scanned:,} assets scanned — {len(self.assets):,} have a box number, in {boxes:,} boxes."
@@ -313,6 +436,7 @@ class _BoxCleanupWindow:
         line = 1
 
         def emit(segments, row=None):
+            """Append one line of (text, tags) segments and remember its row data for clicks."""
             nonlocal line
             for txt, tags in segments:
                 t.insert("end", txt, tags)
@@ -399,6 +523,7 @@ class _BoxCleanupWindow:
         return line, self._rows.get(line), "chk" in self.text.tag_names(idx)
 
     def _on_click(self, event):
+        """Select (checkbox glyph, or any asset row) or expand/collapse (group row) the clicked line."""
         if not self._clearing:
             _line, row, on_chk = self._row_at(event)
             if row is not None:
@@ -409,10 +534,12 @@ class _BoxCleanupWindow:
         return "break"
 
     def _on_motion(self, event):
+        """Highlight the clickable row under the pointer."""
         line, row, _ = self._row_at(event)
         self._set_hover(line if row is not None else None)
 
     def _set_hover(self, line):
+        """Move the hover highlight to line (or clear it when None)."""
         if line == self._hover_line:
             return
         if self._hover_line is not None:
@@ -422,10 +549,12 @@ class _BoxCleanupWindow:
             self.text.tag_add("hover", f"{line}.0", f"{line + 1}.0")
 
     def _toggle_expand(self, key):
+        """Flip one group's expanded state and redraw."""
         self.expanded.symmetric_difference_update({key})
         self._render()
 
     def _toggle_select(self, ids):
+        """Select every id in a group, or deselect them all if they were all selected; redraw."""
         # All selected -> deselect; anything less -> select the lot.
         if ids <= self.selected:
             self.selected -= ids
@@ -434,12 +563,14 @@ class _BoxCleanupWindow:
         self._render()
 
     def _update_selection_ui(self):
+        """Refresh the selected-count text and enable/disable the Clear button."""
         n = len(self.selected)
         self.selected_var.set(f"{n:,} selected" if n else "")
         self.clear_btn.configure(state="normal" if (n and not self._clearing) else "disabled")
 
     # ----------------------------------------------------------------- clear
     def _on_clear(self):
+        """Confirm, then clear the box number on every selected asset on a background thread."""
         if self._clearing or not self.selected:
             return
         n = len(self.selected)
@@ -456,9 +587,10 @@ class _BoxCleanupWindow:
         items = [a for a in self.assets if a["id"] in self.selected]
         self._set_clearing(True, total=len(items))
         self._stop_clear.clear()
-        logger.info("box cleanup: clearing %s assets (tracker=%s)", len(items), self.tracker_var.get())
+        logger.info("_on_clear: clearing %s assets (tracker=%s)", len(items), self.tracker_var.get())
 
         def worker():
+            """Clear the selected assets one by one, reporting progress to the Tk thread."""
             configure_logging()
             cleared, failures, stopped = set(), [], False
             for i, a in enumerate(items):
@@ -470,13 +602,14 @@ class _BoxCleanupWindow:
                     cleared.add(a["id"])
                 else:
                     failures.append((a["tag"], err))
-                    logger.warning("box cleanup: failed to clear %s: %s", a["tag"], err)
+                    logger.warning("worker: failed to clear %s: %s", a["tag"], err)
                 run_on_tk_thread(self.win, lambda d=i + 1: self._on_progress(d, len(items)))
             run_on_tk_thread(self.win, lambda: self._clear_done(cleared, failures, stopped))
 
         threading.Thread(target=worker, daemon=True).start()
 
     def _set_clearing(self, on: bool, total: int = 0):
+        """Enter or leave the 'clearing in progress' state (progress strip, frozen controls)."""
         self._clearing = on
         if on:
             self.progress_bar.configure(maximum=max(total, 1), value=0)
@@ -491,17 +624,22 @@ class _BoxCleanupWindow:
         self._update_selection_ui()
 
     def _on_progress(self, done: int, total: int):
+        """Advance the clearing progress bar (Tk thread)."""
         if not self.win.winfo_exists():
             return
         self.progress_bar.configure(value=done)
         self.progress_var.set(f"Clearing {done:,} of {total:,}…")
 
     def _request_stop(self):
+        """Ask the clearing worker to stop after the asset it is on."""
+        logger.info("_request_stop: user asked to stop clearing")
         self._stop_clear.set()
         self.stop_btn.configure(state="disabled")
         self.progress_var.set("Stopping after the current asset…")
 
     def _clear_done(self, cleared: set, failures: list, stopped: bool):
+        """Apply the clear results: update the model and tracker, redraw, and report (Tk thread)."""
+        logger.info("_clear_done: cleared=%s failed=%s stopped=%s", len(cleared), len(failures), stopped)
         if not self.win.winfo_exists():
             return
         before = list(self.assets)
@@ -510,7 +648,7 @@ class _BoxCleanupWindow:
 
         tracker_lines = []
         if self.tracker_var.get() and cleared:
-            removals = bl.tracker_removals(before, cleared, STREAMS)
+            removals = tracker_removals(before, cleared, STREAMS)
             if removals:
                 _ok, tracker_lines = update_box_tracker(removals)
             else:
@@ -536,6 +674,7 @@ class _BoxCleanupWindow:
 
     # ------------------------------------------------------------------ exit
     def _exit(self):
+        """Close the window (refused while a clear is running; cancels a scan in progress)."""
         if self._clearing:
             messagebox.showinfo("Clearing in Progress", "Press Stop first, then wait for it to finish.", parent=self.win)
             return

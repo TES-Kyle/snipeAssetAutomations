@@ -219,7 +219,3 @@ def show_charger_results_tk(assetTag):
     close_button.pack(pady=5)
 
     # The user can also close the window using the window's close button
-
-# Example usage:
-# Suppose this is triggered by another tkinter window passing an assetTag:
-# show_charger_results_tk("6245")

@@ -2,7 +2,7 @@
 widget itself needs a live Tk display and isn't unit-tested here, matching
 this codebase's convention of leaving Tk window-building code untested)."""
 
-from utilities.autocomplete import _label_matches_any_option, _option_identity
+from utilities.autocomplete import _label_matches_any_option, _option_identity, option_id
 
 
 def test_empty_text_is_never_invalid():
@@ -45,3 +45,18 @@ def test_option_identity_differs_for_a_genuinely_different_option():
     a = {"label": "In Storage", "id": 7, "meta": {}}
     b = {"label": "In Repair", "id": 8, "meta": {}}
     assert _option_identity(a) != _option_identity(b)
+
+
+def test_option_id_prefers_the_options_own_id():
+    assert option_id({"id": 7, "meta": {"id": 99}}) == 7
+
+
+def test_option_id_falls_back_to_typed_ids_then_meta():
+    assert option_id({"user_id": 3}) == 3
+    assert option_id({"id": None, "meta": {"location_id": 12}}) == 12
+
+
+def test_option_id_none_for_missing_or_non_dict_selection():
+    assert option_id(None) is None
+    assert option_id({"label": "x"}) is None
+    assert option_id("not a dict") is None

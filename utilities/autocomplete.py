@@ -20,6 +20,30 @@ _IGNORE_KEYS = {
 _HIDE_DELAY_MS = 400
 
 
+def option_id(sel):
+    """Extract the Snipe-IT ID from an autocomplete selection dict.
+
+    Looks at the option's own keys first, then its raw API object under
+    "meta". Shared by every form that turns a picked option into an API id.
+
+    Args:
+        sel: Selection dict from AutoCompleteEntry.get_selected(), or None.
+
+    Returns:
+        The ID value, or None if there is no selection or no id in it.
+    """
+    if not isinstance(sel, dict):
+        return None
+    for k in ("id", "value", "user_id", "model_id", "status_id", "location_id"):
+        if sel.get(k) is not None:
+            return sel[k]
+    meta = sel.get("meta") or {}
+    for k in ("id", "user_id", "model_id", "status_id", "location_id"):
+        if meta.get(k) is not None:
+            return meta[k]
+    return None
+
+
 def _option_identity(opt):
     """Return a stable identity key for an option dict.
 

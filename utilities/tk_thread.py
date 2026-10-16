@@ -47,6 +47,7 @@ def ensure_tk_thread_pump(window):
     q = _queues[key] = queue.Queue()
 
     def _drain():
+        """Run everything queued so far, then reschedule; stop once the window is gone."""
         if not window.winfo_exists():
             _queues.pop(key, None)
             return

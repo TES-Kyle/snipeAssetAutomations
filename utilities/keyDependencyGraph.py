@@ -87,7 +87,7 @@ def load_known_key_names(repo_root: str) -> frozenset:
         Frozenset of non-private top-level assignment target names.
     """
     path = os.path.join(repo_root, "utilities", "keyExample.py")
-    tree = ast.parse(_read(path), filename=path)
+    tree = ast.parse(read_source(path), filename=path)
     names = set()
     for node in tree.body:
         if isinstance(node, ast.Assign):
@@ -146,7 +146,7 @@ def trace_module(
         seen_files.add(rel_path)
 
         abs_path = os.path.join(repo_root, *rel_path.split("/"))
-        tree = ast.parse(_read(abs_path), filename=abs_path)
+        tree = ast.parse(read_source(abs_path), filename=abs_path)
 
         key_aliases = set()
         for node in ast.walk(tree):
@@ -185,7 +185,8 @@ def trace_selection(entry_rel_paths, repo_root: str, stop_at_files: frozenset = 
 # Internals
 # ---------------------------------------------------------------------------
 
-def _read(abs_path):
+def read_source(abs_path):
+    """Return a source file's text (UTF-8). Shared with routingCatalog."""
     with open(abs_path, "r", encoding="utf-8") as f:
         return f.read()
 
@@ -231,6 +232,7 @@ def _dotted_for_importfrom(node, current_rel_path, repo_root):
 
 
 def _handle_import_from(node, current_rel_path, repo_root, queue, key_names, key_aliases, known_key_names, stop_at_files=frozenset()):
+    """Process one `from X import Y`: record Key.py names, or queue local modules to follow."""
     module_dotted = _dotted_for_importfrom(node, current_rel_path, repo_root)
 
     if module_dotted == "utilities.Key":
@@ -275,6 +277,7 @@ def _handle_import_from(node, current_rel_path, repo_root, queue, key_names, key
 
 
 def _handle_import(node, current_rel_path, repo_root, queue, known_key_names, stop_at_files=frozenset()):
+    """Process one `import X`: reject `import utilities.Key`, queue local modules to follow."""
     for alias in node.names:
         dotted = alias.name
         if dotted == "utilities.Key" or dotted.startswith("utilities.Key."):
@@ -300,6 +303,7 @@ def _add_key_name(name, current_rel_path, key_names, known_key_names):
 
 
 def _scan_key_attribute_accesses(tree, key_aliases, current_rel_path, key_names, known_key_names):
+    """Record Key.py names used as `Key.NAME` or `getattr(Key, "NAME")` via an imported Key alias."""
     for node in ast.walk(tree):
         if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id in key_aliases:
             _add_key_name(node.attr, current_rel_path, key_names, known_key_names)

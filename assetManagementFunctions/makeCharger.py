@@ -4,8 +4,9 @@ from __future__ import annotations
 
 # makeCharger.py (full-width layout + YYYY-MM-DD entry + inline "loading…" placeholders)
 import logging
-from utilities.otherApiBits import getAssetInfo
-from utilities.autocomplete import AutoCompleteEntry
+from utilities.otherApiBits import getAssetInfo, require_snipe_config
+from utilities.autocomplete import AutoCompleteEntry, option_id
+from utilities.chargerDetect import get_connected_charger_serial
 from utilities import optionsCache
 from utilities.Key import API_URL_Base
 from utilities.api_user import get_api_headers, get_api_key
@@ -19,8 +20,6 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 import requests
-import subprocess
-import platform
 import threading
 import time
 import re
@@ -53,33 +52,12 @@ def makeCharger(asset_tag):
     name_default = settings.get("chargerNameDefault", "Charger")
     logger.debug("makeCharger: charger_category_id=%s name_prefix=%s name_default=%s", charger_category_id, name_prefix, name_default)
     # ------------------------ serial autodetect (macOS) ------------------------
-    def get_charger_serial_number():
-        """Return the local charger serial number on macOS, if available."""
-        logger.debug("get_charger_serial_number: platform=%s", platform.system())
-        if platform.system() != "Darwin":
-            raise OSError("Unsupported operating system")
-        try:
-            result = subprocess.run(
-                "system_profiler SPPowerDataType | awk '/AC Charger Information:/,/Charging/' | grep 'Serial Number'",
-                shell=True,
-                check=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                universal_newlines=True,
-            )
-            serial = (result.stdout.strip().split(': ', 1)[-1] or "").strip()
-            logger.debug("get_charger_serial_number: detected serial=%s", serial)
-            return serial
-        except Exception:
-            logger.debug("get_charger_serial_number: failed to detect serial, returning empty")
-            return ""
-
     def serial_updater():
         """Continuously refresh the serial number entry from the system."""
         logger.debug("serial_updater: starting continuous serial refresh loop")
         while True:
             try:
-                new_serial = get_charger_serial_number()
+                new_serial = get_connected_charger_serial()
                 logger.debug("serial_updater: refreshed serial=%s", new_serial)
                 serial_number.set(new_serial)
                 time.sleep(0.25)
@@ -94,48 +72,6 @@ def makeCharger(asset_tag):
         threading.Thread(target=serial_updater, daemon=True).start()
 
     # ------------------------ helpers ------------------------
-    def _id_from_sel(sel: dict | None):
-        """Extract an ID value from a selection dict.
-
-        Args:
-            sel: Selection dict from an AutoCompleteEntry widget.
-
-        Returns:
-            ID value or None if not found.
-        """
-        logger.debug("_id_from_sel: sel=%s", sel)
-        if not isinstance(sel, dict):
-            return None
-        for k in ("id", "value", "user_id", "model_id", "status_id", "location_id"):
-            if sel.get(k) is not None:
-                logger.debug("_id_from_sel: found id via key=%s value=%s", k, sel[k])
-                return sel[k]
-        meta = sel.get("meta") or {}
-        for k in ("id", "user_id", "model_id", "status_id", "location_id"):
-            if meta.get(k) is not None:
-                logger.debug("_id_from_sel: found id via meta key=%s value=%s", k, meta[k])
-                return meta[k]
-        logger.debug("_id_from_sel: no id found in sel")
-        return None
-
-    def _api_headers():
-        """Return Snipe-IT headers using the active API user."""
-        logger.debug("_api_headers: returning API headers")
-        return get_api_headers()
-
-    def _require_api_creds():
-        """Validate that API URL and key are available.
-
-        Returns:
-            True if credentials are present, False otherwise.
-        """
-        logger.debug("_require_api_creds: checking SNIPE_BASE=%s", bool(SNIPE_BASE))
-        if not SNIPE_BASE or not get_api_key():
-            logger.error("Missing API_URL_Base or API key in utilities.Key")
-            messagebox.showerror("Snipe-IT", "Missing API_URL_Base or API key in utilities.Key.")
-            return False
-        return True
-
     def _serial_exists_in_snipe(serial: str) -> tuple[bool | None, str | None]:
         """Return (exists, asset_tag) for a serial lookup, or (None, None) on errors.
 
@@ -149,7 +85,7 @@ def makeCharger(asset_tag):
         url = f"{SNIPE_BASE}/hardware/byserial/{serial}"
         try:
             logger.info("_serial_exists_in_snipe: querying Snipe-IT for serial=%s", serial)
-            r = requests.get(url, headers=_api_headers(), timeout=20)
+            r = requests.get(url, headers=get_api_headers(), timeout=20)
             r.raise_for_status()
             data = r.json() or {}
             logger.debug("_serial_exists_in_snipe: response data keys=%s", list(data.keys()) if isinstance(data, dict) else type(data).__name__)
@@ -229,7 +165,7 @@ def makeCharger(asset_tag):
             logger.warning("_require_ac_pick: validation failed for field=%s txt=%s", field_name, txt)
             messagebox.showerror("Validation", f"{field_name} is required — pick from the suggestions.")
             return None, False
-        resolved_id = _id_from_sel(sel)
+        resolved_id = option_id(sel)
         logger.debug("_require_ac_pick: resolved id=%s for field=%s", resolved_id, field_name)
         return resolved_id, True
 
@@ -274,7 +210,7 @@ def makeCharger(asset_tag):
     # ------------------------ submit flow ------------------------
     def submit(_e=None):
         """Validate entries and create/check out the charger asset."""
-        if not _require_api_creds():
+        if not require_snipe_config("makeCharger"):
             return
         logger.info("Starting makeCharger submit for %s", asset_number.get())
 
@@ -348,10 +284,10 @@ def makeCharger(asset_tag):
         logger.debug("submit: assn_sel=%s assn_type=%s", assn_sel, assn_type)
         if assn_sel:
             if assn_type == "user":
-                user_id = _id_from_sel(assn_sel)
+                user_id = option_id(assn_sel)
                 logger.debug("submit: assigning to user_id=%s", user_id)
             elif assn_type == "location":
-                location_id = _id_from_sel(assn_sel)
+                location_id = option_id(assn_sel)
                 logger.debug("submit: assigning to location_id=%s", location_id)
             else:
                 logger.warning("submit: unknown assn_type=%s", assn_type)
@@ -414,7 +350,7 @@ def makeCharger(asset_tag):
         create_url = f"{SNIPE_BASE}/hardware"
         data = call_with_retry(
             "Create charger asset",
-            lambda: requests.post(create_url, json=payload, headers=_api_headers(), timeout=25),
+            lambda: requests.post(create_url, json=payload, headers=get_api_headers(), timeout=25),
             busy_widget=charger_window,
         )
         if data is None:
@@ -442,7 +378,7 @@ def makeCharger(asset_tag):
             # matching the original loop's break-not-return on cancel.
             call_with_retry(
                 "Charger checkout",
-                lambda: requests.post(co_url, json=body, headers=_api_headers(), timeout=25),
+                lambda: requests.post(co_url, json=body, headers=get_api_headers(), timeout=25),
                 busy_widget=charger_window,
             )
 
@@ -474,7 +410,7 @@ def makeCharger(asset_tag):
 
     # ------------------------ UI ------------------------
     try:
-        serial_number = tk.StringVar(value=get_charger_serial_number())
+        serial_number = tk.StringVar(value=get_connected_charger_serial())
     except OSError:
         messagebox.showerror(title="Process Failed", message="Unsupported Operating System")
         return "makeCharger failed due to unsupported operating system"

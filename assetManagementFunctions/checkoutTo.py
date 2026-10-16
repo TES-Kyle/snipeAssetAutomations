@@ -119,7 +119,7 @@ def checkoutTo(asset_tag):
     exists2 = assetData['assigned_to']
     logger.debug("Assigned_to for %s: %s", asset_tag, exists2)
     logger.debug("Assigned_to raw value for %s: %s", asset_tag, assetData['assigned_to'])
-        
+
 
     # Frame for the "Asset Tag" question
     asset_frame, asset_number, asset_entry = build_asset_tag_frame(checkout_window, asset_tag, on_enter_pressed)
