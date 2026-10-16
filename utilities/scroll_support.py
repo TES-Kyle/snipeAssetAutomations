@@ -95,3 +95,42 @@ def bind_canvas_scroll(canvas: tk.Canvas, subtree_root: tk.Misc | None = None):
 
     _bind_recursive(subtree_root if subtree_root is not None else canvas)
     logger.debug("bind_canvas_scroll: wired scroll handling for canvas=%s", canvas)
+
+
+def bind_text_scroll(text: tk.Text):
+    """Wire mousewheel + trackpad scrolling onto a tk.Text widget.
+
+    Same two Tk 9 quirks as bind_canvas_scroll (module docstring): a trackpad
+    only fires <TouchpadScroll>, and the discrete wheel needs binding
+    directly on the widget. A Text already has its own class-level wheel
+    binding, so these handlers return "break" to stop it scrolling a second
+    time. Scrolls in pixels, and does nothing while all the content fits.
+
+    Args:
+        text: The Text widget to wire up (bind once; no subtree to walk).
+    """
+    def _on_mousewheel(event):
+        if text.yview() != (0.0, 1.0):
+            if event.num == 4 or event.delta > 0:
+                text.yview_scroll(-PIXELS_PER_WHEEL_NOTCH, "pixels")
+            elif event.num == 5 or event.delta < 0:
+                text.yview_scroll(PIXELS_PER_WHEEL_NOTCH, "pixels")
+        return "break"
+
+    def _on_touchpad_scroll(event):
+        if text.yview() != (0.0, 1.0):
+            try:
+                _dx, dy = text.tk.call("tk::PreciseScrollDeltas", event.delta)
+                dy = int(dy)
+            except Exception:
+                logger.debug("bind_text_scroll: could not unpack delta=%s", event.delta)
+                return "break"
+            if dy:
+                text.yview_scroll(-dy, "pixels")
+        return "break"
+
+    text.bind("<MouseWheel>", _on_mousewheel)
+    text.bind("<Button-4>", _on_mousewheel)
+    text.bind("<Button-5>", _on_mousewheel)
+    text.bind("<TouchpadScroll>", _on_touchpad_scroll)
+    logger.debug("bind_text_scroll: wired scroll handling for text=%s", text)

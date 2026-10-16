@@ -439,6 +439,79 @@ def _assign_from_remote_state(stream_code: str, default_capacity: int):
     logger.info("_assign_from_remote_state: assigned label=%s", label)
     return True, label
 
+def apply_removals_to_state(state, removals):
+    """Adjust tracker state for assets that were taken out of boxes. Mutates state.
+
+    Used by the Box Number Cleanup tool, which clears box numbers after the fact.
+    Per stream:
+      - "killed" (no assets of that stream remain at all): back to the fresh
+        starting state, box 1 / computer 0. (Writing "box 0" would be read back
+        as box 1 anyway -- _parse_state_from_notes clamps box to >= 1 -- so the
+        fresh state is stored directly.) The next drop-off is then <STREAM>-01.
+      - otherwise, if assets were removed from the stream's CURRENT (last) box,
+        its computer count drops by that many (never below 0).
+      - removals from earlier boxes change nothing: the tracker only counts
+        the box it is currently filling.
+
+    Args:
+        state: Parsed tracker state (see _parse_state_from_notes).
+        removals: {stream: {"killed": bool, "removed_by_box": {box_number: n}}},
+            as built by boxNumberLogic.tracker_removals().
+
+    Returns:
+        Human-readable list of the changes made (empty if nothing changed).
+    """
+    changes = []
+    for code in STREAMS:
+        r = removals.get(code)
+        if not r:
+            continue
+        s = state["streams"][code]
+        if r.get("killed"):
+            if (s["box"], s["count"]) != (1, 0):
+                changes.append(f"{code}: all boxes cleared, reset from box {s['box']} / computer {s['count']} to box 1 / computer 0")
+                state["streams"][code] = {"box": 1, "count": 0}
+            continue
+        removed_here = int((r.get("removed_by_box") or {}).get(s["box"], 0))
+        if removed_here and s["count"] > 0:
+            new_count = max(0, s["count"] - removed_here)
+            changes.append(f"{code}: removed {removed_here} from current box {s['box']}, computer count {s['count']} -> {new_count}")
+            s["count"] = new_count
+    return changes
+
+
+def update_box_tracker(removals):
+    """Apply apply_removals_to_state() to the live tracker asset's notes.
+
+    Runs on the Tk thread (Retry/Cancel dialogs on network trouble). Leaves
+    empty or unrecognisable tracker notes untouched rather than resetting them.
+
+    Args:
+        removals: See apply_removals_to_state().
+
+    Returns:
+        (ok, lines): ok False if the tracker couldn't be read/written; lines is
+        a list of messages describing what happened, for the caller to show.
+    """
+    tracker_tag, fallback_cap = _get_box_state_asset_tag_and_capacity()
+    if not tracker_tag:
+        return False, ["No tracker asset configured (boxStateAssetTag)."]
+    ok, tracker = _get_asset_by_tag_with_retry(tracker_tag)
+    if not ok or not tracker:
+        return False, ["Could not read the drop-off tracker."]
+    notes = tracker.get("notes", "")
+    if not isinstance(notes, str) or not notes.strip() or _detect_malformed_notes(notes):
+        return True, ["Drop-off tracker notes are empty or unrecognised; left untouched."]
+    state = _parse_state_from_notes(notes, fallback_cap)
+    changes = apply_removals_to_state(state, removals)
+    if not changes:
+        return True, ["Drop-off tracker needed no changes."]
+    if not _put_asset_notes_with_retry(str(tracker["id"]), _format_state_notes(state)):
+        return False, ["Could not write the updated drop-off tracker."]
+    logger.info("update_box_tracker: %s", "; ".join(changes))
+    return True, changes
+
+
 # ----------------------------
 # PUT/POST (device) with Retry/Cancel
 # ----------------------------

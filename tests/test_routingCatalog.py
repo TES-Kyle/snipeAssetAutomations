@@ -29,9 +29,9 @@ def _exec_rendered(rendered, tmp_path, name):
     return mod
 
 
-def test_load_catalog_finds_all_nineteen_entries():
+def test_load_catalog_finds_all_twenty_entries():
     catalog = rc.load_catalog(REPO_ROOT)
-    assert len(catalog) == 19
+    assert len(catalog) == 20
     groups = {e.group for e in catalog}
     assert groups == {"asset", "other", "consisterizer_submit"}
 
@@ -81,11 +81,11 @@ def test_render_trimmed_file_with_zero_selected_entries_is_valid_and_empty(tmp_p
 
 def test_render_trimmed_file_with_all_entries_matches_original_count(tmp_path):
     spec = _spec_by_group("other")
-    all_indices = range(3)
+    all_indices = range(4)
     rendered = rc.render_trimmed_routing_file(REPO_ROOT, spec, all_indices)
     mod = _exec_rendered(rendered, tmp_path, "trimmed_full_other_routing")
-    assert len(mod.other_func_list) == 3
-    assert mod.other_func_listTXT == ["Sync Jamf Asset Tags", "Sync Snipe Battery Data", "Connected Charger Data"]
+    assert len(mod.other_func_list) == 4
+    assert mod.other_func_listTXT == ["Sync Jamf Asset Tags", "Sync Snipe Battery Data", "Connected Charger Data", "Box Number Cleanup"]
 
 
 def test_malformed_routing_file_raises_parse_error(tmp_path):

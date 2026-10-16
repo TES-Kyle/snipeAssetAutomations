@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 # Functions executed without the handler.
 from otherManagementFunctions.chargerLiveHistory import show_connected_charger_history
+from otherManagementFunctions.boxNumberCleanup import box_number_cleanup
 from utilities.windmill import run_windmill_job
 
 
@@ -24,6 +25,7 @@ other_func_list = [
     lambda: run_windmill_job("https://app.windmill.dev/api/w/trinity-it-dept-test-space/jobs/run/f/f/Asset_Automations/asset_tag_sync"),
     lambda: run_windmill_job("https://app.windmill.dev/api/w/trinity-it-dept-test-space/jobs/run/f/f/Asset_Automations/sync_battery_data_from_jamf_to_snipe_it"),
     show_connected_charger_history,
+    box_number_cleanup,
 ]
 logger.info("otherFunctionsRouting: %s functions registered", len(other_func_list))
 
@@ -31,5 +33,6 @@ logger.info("otherFunctionsRouting: %s functions registered", len(other_func_lis
 other_func_listTXT = [
     "Sync Jamf Asset Tags",
     "Sync Snipe Battery Data",
-    "Connected Charger Data"
+    "Connected Charger Data",
+    "Box Number Cleanup",
 ]
