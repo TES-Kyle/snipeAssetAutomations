@@ -20,7 +20,7 @@
   "guiButtonColumns": "4",
   "emailWarnPattern": ".*@uprva.org; .*@contractor.trinityes.org",
   "boxStateAssetTag": "6248",
-  "defaultBoxCapacity": "12",
+  "defaultBoxCapacity": "15",
   "dropOffStatusId": "5",
   "dropOffPendingStatusId": "20",
   "macBookCategoryID": "24",
